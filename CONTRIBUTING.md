@@ -51,5 +51,5 @@ that can land in this repo. A few things worth knowing before you start:
 
 ## Licence
 
-The Unlicense, same as upstream. Contributing puts your work in the public domain
-along with the rest of it.
+GPL v3. Contributing puts your work under the same licence. Upstream BetterTerrain
+is released under The Unlicense.

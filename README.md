@@ -102,5 +102,5 @@ To track the latest changes instead, copy `addons/better-tile-editor` from
 - [Technical notes](addons/better-tile-editor/DESIGN.md)
 - [Contributing](CONTRIBUTING.md)
 - [Report a bug](https://github.com/cidwel/BetterTileEditor/issues) — please include a small reproduction project.
-- [The Unlicense](LICENSE.md), same as upstream
+- [GPL v3](LICENSE.md). Upstream BetterTerrain is released under The Unlicense
 - Godot logo by Andrea Calabró, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
