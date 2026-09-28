@@ -1,0 +1,214 @@
+[gd_resource type="TileSet" format=3]
+
+[ext_resource type="Texture2D" path="res://addons/better-tile-editor/demos/tilesets/cliffs.png" id="1_vkau6"]
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_3osd2"]
+texture = ExtResource("1_vkau6")
+0:0/0 = 0
+0:0/0/metadata/_better_terrain = {
+0: [0],
+3: [0],
+4: [0],
+&"type": 0
+}
+1:0/0 = 0
+1:0/0/metadata/_better_terrain = {
+0: [0],
+3: [0],
+4: [0],
+7: [0],
+8: [0],
+&"type": 0
+}
+2:0/0 = 0
+2:0/0/metadata/_better_terrain = {
+4: [0],
+7: [0],
+8: [0],
+&"type": 0
+}
+3:0/0 = 0
+3:0/0/metadata/_better_terrain = {
+0: [0],
+3: [0],
+4: [0],
+7: [0],
+8: [0],
+12: [0],
+15: [0],
+&"type": 0
+}
+4:0/0 = 0
+4:0/0/metadata/_better_terrain = {
+0: [0],
+3: [0],
+4: [0],
+7: [0],
+8: [0],
+11: [0],
+12: [0],
+&"type": 0
+}
+0:1/0 = 0
+0:1/0/metadata/_better_terrain = {
+0: [0],
+3: [0],
+4: [0],
+12: [0],
+15: [0],
+&"type": 0
+}
+1:1/0 = 0
+1:1/0/metadata/_better_terrain = {
+0: [0],
+3: [0],
+4: [0],
+7: [0],
+8: [0],
+11: [0],
+12: [0],
+15: [0],
+&"type": 0
+}
+2:1/0 = 0
+2:1/0/metadata/_better_terrain = {
+4: [0],
+7: [0],
+8: [0],
+11: [0],
+12: [0],
+&"type": 0
+}
+3:1/0 = 0
+3:1/0/metadata/_better_terrain = {
+0: [0],
+3: [0],
+4: [0],
+8: [0],
+11: [0],
+12: [0],
+15: [0],
+&"type": 0
+}
+4:1/0 = 0
+4:1/0/metadata/_better_terrain = {
+0: [0],
+4: [0],
+7: [0],
+8: [0],
+11: [0],
+12: [0],
+15: [0],
+&"type": 0
+}
+0:2/0 = 0
+0:2/0/metadata/_better_terrain = {
+0: [0],
+12: [0],
+15: [0],
+&"type": 0
+}
+1:2/0 = 0
+1:2/0/metadata/_better_terrain = {
+0: [0],
+8: [0],
+11: [0],
+12: [0],
+15: [0],
+&"type": 0
+}
+2:2/0 = 0
+2:2/0/metadata/_better_terrain = {
+8: [0],
+11: [0],
+12: [0],
+&"type": 0
+}
+3:2/0 = 0
+3:2/0/metadata/_better_terrain = {
+&"type": 0
+}
+5:0/0 = 0
+1:3/0 = 0
+2:3/0 = 0
+1:4/0 = 0
+2:4/0 = 0
+0:3/0 = 0
+0:4/0 = 0
+3:3/0 = 0
+3:4/0 = 0
+1:5/0 = 0
+2:5/0 = 0
+0:5/0 = 0
+3:5/0 = 0
+
+[resource]
+sources/0 = SubResource("TileSetAtlasSource_3osd2")
+metadata/_better_terrain = {
+&"decoration": ["Decoration", Color(0.4117647, 0.4117647, 0.4117647, 1), 3, [], {
+&"path": "res://addons/better-tile-editor/icons/Decoration.svg"
+}],
+&"groups": [],
+&"single": ["Single tile", Color(0.75, 0.78, 0.85, 1), 7, [], {
+&"path": "res://addons/better-tile-editor/icons/SingleTile.svg"
+}, "", {}],
+&"terrains": [["Highland", Color(0.4, 0.7, 0.25, 1), 0, [], {}, "", {}]],
+&"version": "0.3"
+}
+metadata/_better_terrain_cliffs = {
+"Highland": {
+"alone": {
+"rect": Rect2i(0, 0, 0, 0),
+"use": false
+},
+"alone_bottom": {
+"rect": Rect2i(0, 0, 0, 0),
+"use": false
+},
+"alone_top": {
+"rect": Rect2i(0, 0, 0, 0),
+"use": false
+},
+"body": {
+"col_offset": 0,
+"rect": Rect2i(1, 3, 2, 2),
+"row_offset": 0,
+"use": true
+},
+"bottom": {
+"rect": Rect2i(1, 5, 2, 1),
+"use": true
+},
+"bottom_left": {
+"rect": Rect2i(0, 5, 1, 1),
+"use": true
+},
+"bottom_right": {
+"rect": Rect2i(3, 5, 1, 1),
+"use": true
+},
+"left": {
+"rect": Rect2i(0, 3, 1, 2),
+"use": true
+},
+"mode": "pattern",
+"right": {
+"rect": Rect2i(3, 3, 1, 2),
+"use": true
+},
+"rows_up": true,
+"source_id": 0,
+"top": {
+"rect": Rect2i(0, 0, 0, 0),
+"use": false
+},
+"top_left": {
+"rect": Rect2i(0, 0, 0, 0),
+"use": false
+},
+"top_right": {
+"rect": Rect2i(0, 0, 0, 0),
+"use": false
+}
+}
+}

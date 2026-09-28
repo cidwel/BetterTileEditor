@@ -1,0 +1,30 @@
+name: An idea
+description: Something the addon does not do yet.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to draw?
+      description: |
+        Describe the map, not the feature. "I want a checkbox in the dock" is
+        hard to judge; "my cliffs have an inside corner and no tile fits it" can
+        be answered, sometimes with a feature, sometimes with a setup that
+        already works.
+    validations:
+      required: true
+
+  - type: textarea
+    id: art
+    attributes:
+      label: The art, if there is any
+      description: |
+        A screenshot of the tileset, or of the map going wrong, is worth several
+        paragraphs. Drag it in.
+
+  - type: checkboxes
+    id: contributing
+    attributes:
+      label: Building it
+      options:
+        - label: I would be up for having a go at this myself.

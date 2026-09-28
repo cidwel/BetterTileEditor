@@ -1,0 +1,100 @@
+name: Something is broken
+description: A terrain paints the wrong tile, the editor misbehaves, something errors out.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **The one thing that decides how fast this gets looked at: can I reproduce it on my machine?**
+
+        A tileset is a big piece of state. Terrain types, peering bits, atlas
+        coordinates, the shape of your art, a bug usually lives in the
+        combination, not in one setting, and a description of it is rarely enough
+        to rebuild. If I can open your project and see the wrong tile with my own
+        eyes, I can usually find the cause the same day. If I cannot, I am
+        guessing, and guessing takes weeks or goes nowhere.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happens, and what you expected instead
+    validations:
+      required: true
+
+  - type: dropdown
+    id: repro_kind
+    attributes:
+      label: How can I reproduce it?
+      options:
+        - A small demo project I can open and run (fastest)
+        - The tileset, plus step-by-step instructions
+        - Neither, description only (slowest, may not get anywhere)
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: The reproduction
+      description: |
+        **A demo project** is the quickest route by a long way. Cut it down to
+        just the problem: one scene, one TileMapLayer, the tileset, and nothing
+        else. Zip it and drag it into this box, GitHub accepts zips.
+
+        **Or the tileset plus instructions**, if you would rather not ship a
+        project: attach the tileset (the `.tres` and the atlas image) and write
+        out what to click, in order, from a blank scene.
+
+        Either way, say which terrain is involved and which cell goes wrong.
+      placeholder: |
+        Drag the .zip in here, or write the steps.
+
+        1. Open the tileset, select the "water" terrain (Exemplar)
+        2. Paint a 4x4 block on the layer
+        3. The cell at (2,1) gets the bank tile instead of open water
+    validations:
+      required: true
+
+  - type: input
+    id: godot
+    attributes:
+      label: Godot version
+      placeholder: "4.7.1.stable.mono"
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: BetterTileEditor version
+      placeholder: "0.1.0, or the commit you are on"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part?
+      multiple: true
+      options:
+        - Match tiles / Match vertices
+        - Category / Decoration
+        - Object (NxM)
+        - Exemplar
+        - Cliff faces
+        - The editor dock, the palette, the toolbar
+        - Something else / not sure
+
+  - type: textarea
+    id: errors
+    attributes:
+      label: Anything in the Output or Debugger panel
+      render: shell
+
+  - type: checkboxes
+    id: contributing
+    attributes:
+      label: Fixing it
+      options:
+        - label: I would be up for submitting a pull request for this, with a pointer in the right direction.
+        - label: I have read DESIGN.md for the part I am reporting on.

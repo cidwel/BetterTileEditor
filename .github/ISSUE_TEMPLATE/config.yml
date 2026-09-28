@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: A bug in BetterTerrain itself
+    url: https://github.com/Portponky/better-terrain/issues
+    about: If it happens with the original addon too, it belongs upstream, that is where it gets fixed for everyone.
+  - name: How a terrain type works, and why
+    url: https://github.com/cidwel/BetterTileEditor/blob/main/addons/better-tile-editor/DESIGN.md
+    about: DESIGN.md is the long version, every change, why it is there, and which decisions look odd but are not.

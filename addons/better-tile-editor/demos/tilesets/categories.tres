@@ -1,0 +1,272 @@
+[gd_resource type="TileSet" format=3]
+
+[ext_resource type="Texture2D" path="res://addons/better-tile-editor/demos/tilesets/categories.png" id="1_ht0yk"]
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_h1w54"]
+texture = ExtResource("1_ht0yk")
+0:0/0 = 0
+0:0/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+&"type": 2
+}
+1:0/0 = 0
+1:0/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+7: [1],
+8: [1],
+&"type": 2
+}
+2:0/0 = 0
+2:0/0/metadata/_better_terrain = {
+4: [1],
+7: [1],
+8: [1],
+&"type": 2
+}
+3:0/0 = 0
+3:0/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+7: [1],
+8: [1],
+12: [1],
+15: [1],
+&"type": 2
+}
+4:0/0 = 0
+4:0/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+7: [1],
+8: [1],
+11: [1],
+12: [1],
+&"type": 2
+}
+0:1/0 = 0
+0:1/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+12: [1],
+15: [1],
+&"type": 2
+}
+1:1/0 = 0
+1:1/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+7: [1],
+8: [1],
+11: [1],
+12: [1],
+15: [1],
+&"type": 2
+}
+2:1/0 = 0
+2:1/0/metadata/_better_terrain = {
+4: [1],
+7: [1],
+8: [1],
+11: [1],
+12: [1],
+&"type": 2
+}
+3:1/0 = 0
+3:1/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+8: [1],
+11: [1],
+12: [1],
+15: [1],
+&"type": 2
+}
+4:1/0 = 0
+4:1/0/metadata/_better_terrain = {
+0: [1],
+4: [1],
+7: [1],
+8: [1],
+11: [1],
+12: [1],
+15: [1],
+&"type": 2
+}
+0:2/0 = 0
+0:2/0/metadata/_better_terrain = {
+0: [1],
+12: [1],
+15: [1],
+&"type": 2
+}
+1:2/0 = 0
+1:2/0/metadata/_better_terrain = {
+0: [1],
+8: [1],
+11: [1],
+12: [1],
+15: [1],
+&"type": 2
+}
+2:2/0 = 0
+2:2/0/metadata/_better_terrain = {
+8: [1],
+11: [1],
+12: [1],
+&"type": 2
+}
+3:2/0 = 0
+3:2/0/metadata/_better_terrain = {
+&"type": 2
+}
+0:3/0 = 0
+0:3/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+&"type": 3
+}
+1:3/0 = 0
+1:3/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+7: [1],
+8: [1],
+&"type": 3
+}
+2:3/0 = 0
+2:3/0/metadata/_better_terrain = {
+4: [1],
+7: [1],
+8: [1],
+&"type": 3
+}
+3:3/0 = 0
+3:3/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+7: [1],
+8: [1],
+12: [1],
+15: [1],
+&"type": 3
+}
+4:3/0 = 0
+4:3/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+7: [1],
+8: [1],
+11: [1],
+12: [1],
+&"type": 3
+}
+0:4/0 = 0
+0:4/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+12: [1],
+15: [1],
+&"type": 3
+}
+1:4/0 = 0
+1:4/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+7: [1],
+8: [1],
+11: [1],
+12: [1],
+15: [1],
+&"type": 3
+}
+2:4/0 = 0
+2:4/0/metadata/_better_terrain = {
+4: [1],
+7: [1],
+8: [1],
+11: [1],
+12: [1],
+&"type": 3
+}
+3:4/0 = 0
+3:4/0/metadata/_better_terrain = {
+0: [1],
+3: [1],
+4: [1],
+8: [1],
+11: [1],
+12: [1],
+15: [1],
+&"type": 3
+}
+4:4/0 = 0
+4:4/0/metadata/_better_terrain = {
+0: [1],
+4: [1],
+7: [1],
+8: [1],
+11: [1],
+12: [1],
+15: [1],
+&"type": 3
+}
+0:5/0 = 0
+0:5/0/metadata/_better_terrain = {
+0: [1],
+12: [1],
+15: [1],
+&"type": 3
+}
+1:5/0 = 0
+1:5/0/metadata/_better_terrain = {
+0: [1],
+8: [1],
+11: [1],
+12: [1],
+15: [1],
+&"type": 3
+}
+2:5/0 = 0
+2:5/0/metadata/_better_terrain = {
+8: [1],
+11: [1],
+12: [1],
+&"type": 3
+}
+3:5/0 = 0
+3:5/0/metadata/_better_terrain = {
+&"type": 3
+}
+5:0/0 = 0
+5:0/0/metadata/_better_terrain = {
+&"type": 0
+}
+
+[resource]
+sources/0 = SubResource("TileSetAtlasSource_h1w54")
+metadata/_better_terrain = {
+&"decoration": ["Decoration", Color(0.4117647, 0.4117647, 0.4117647, 1), 3, [], {
+&"path": "res://addons/better-tile-editor/icons/Decoration.svg"
+}],
+&"groups": [],
+&"single": ["Single tile", Color(0.75, 0.78, 0.85, 1), 7, [], {
+&"path": "res://addons/better-tile-editor/icons/SingleTile.svg"
+}, "", {}],
+&"terrains": [["Dirt", Color(0.6, 0.45, 0.3, 1), 0, [], {}, "", {}], ["Lawn", Color(0.5, 0.6, 0.4, 1), 2, [], {}, "", {}], ["Grass", Color(0.4, 0.7, 0.25, 1), 0, [1], {}, "", {}], ["Lush grass", Color(0.25, 0.55, 0.3, 1), 0, [1], {}, "", {}]],
+&"version": "0.3"
+}

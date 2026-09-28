@@ -1,0 +1,275 @@
+[gd_resource type="TileSet" format=3]
+
+[ext_resource type="Texture2D" path="res://addons/better-tile-editor/demos/tilesets/patch.png" id="1_g37p6"]
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_56bcy"]
+texture = ExtResource("1_g37p6")
+7:0/0 = 0
+7:0/0/metadata/_better_terrain = {
+&"type": 0
+}
+0:0/0 = 0
+0:0/0/metadata/_better_terrain = {
+&"type": 1
+}
+1:0/0 = 0
+1:0/0/metadata/_better_terrain = {
+&"type": 1
+}
+2:0/0 = 0
+2:0/0/metadata/_better_terrain = {
+&"type": 1
+}
+3:0/0 = 0
+3:0/0/metadata/_better_terrain = {
+&"type": 1
+}
+4:0/0 = 0
+4:0/0/metadata/_better_terrain = {
+&"type": 1
+}
+5:0/0 = 0
+5:0/0/metadata/_better_terrain = {
+&"type": 1
+}
+6:0/0 = 0
+6:0/0/metadata/_better_terrain = {
+&"type": 1
+}
+0:1/0 = 0
+0:1/0/metadata/_better_terrain = {
+&"type": 1
+}
+1:1/0 = 0
+1:1/0/metadata/_better_terrain = {
+&"type": 1
+}
+2:1/0 = 0
+2:1/0/metadata/_better_terrain = {
+&"type": 1
+}
+3:1/0 = 0
+3:1/0/metadata/_better_terrain = {
+&"type": 1
+}
+4:1/0 = 0
+4:1/0/metadata/_better_terrain = {
+&"type": 1
+}
+5:1/0 = 0
+5:1/0/metadata/_better_terrain = {
+&"type": 1
+}
+6:1/0 = 0
+6:1/0/metadata/_better_terrain = {
+&"type": 1
+}
+0:2/0 = 0
+0:2/0/metadata/_better_terrain = {
+&"type": 1
+}
+1:2/0 = 0
+1:2/0/metadata/_better_terrain = {
+&"type": 1
+}
+2:2/0 = 0
+2:2/0/metadata/_better_terrain = {
+&"type": 1
+}
+3:2/0 = 0
+3:2/0/metadata/_better_terrain = {
+&"type": 1
+}
+4:2/0 = 0
+4:2/0/metadata/_better_terrain = {
+&"type": 1
+}
+5:2/0 = 0
+5:2/0/metadata/_better_terrain = {
+&"type": 1
+}
+6:2/0 = 0
+6:2/0/metadata/_better_terrain = {
+&"type": 1
+}
+0:3/0 = 0
+0:3/0/metadata/_better_terrain = {
+&"type": 1
+}
+1:3/0 = 0
+1:3/0/metadata/_better_terrain = {
+&"type": 1
+}
+2:3/0 = 0
+2:3/0/metadata/_better_terrain = {
+&"type": 1
+}
+3:3/0 = 0
+3:3/0/metadata/_better_terrain = {
+&"type": 1
+}
+4:3/0 = 0
+4:3/0/metadata/_better_terrain = {
+&"type": 1
+}
+5:3/0 = 0
+5:3/0/metadata/_better_terrain = {
+&"type": 1
+}
+6:3/0 = 0
+6:3/0/metadata/_better_terrain = {
+&"type": 1
+}
+0:4/0 = 0
+0:4/0/metadata/_better_terrain = {
+&"type": 1
+}
+1:4/0 = 0
+1:4/0/metadata/_better_terrain = {
+&"type": 1
+}
+2:4/0 = 0
+2:4/0/metadata/_better_terrain = {
+&"type": 1
+}
+3:4/0 = 0
+3:4/0/metadata/_better_terrain = {
+&"type": 1
+}
+4:4/0 = 0
+4:4/0/metadata/_better_terrain = {
+&"type": 1
+}
+5:4/0 = 0
+5:4/0/metadata/_better_terrain = {
+&"type": 1
+}
+6:4/0 = 0
+6:4/0/metadata/_better_terrain = {
+&"type": 1
+}
+0:5/0 = 0
+0:5/0/metadata/_better_terrain = {
+&"type": 1
+}
+1:5/0 = 0
+1:5/0/metadata/_better_terrain = {
+&"type": 1
+}
+2:5/0 = 0
+2:5/0/metadata/_better_terrain = {
+&"type": 1
+}
+3:5/0 = 0
+3:5/0/metadata/_better_terrain = {
+&"type": 1
+}
+4:5/0 = 0
+4:5/0/metadata/_better_terrain = {
+&"type": 1
+}
+5:5/0 = 0
+5:5/0/metadata/_better_terrain = {
+&"type": 1
+}
+6:5/0 = 0
+6:5/0/metadata/_better_terrain = {
+&"type": 1
+}
+
+[resource]
+sources/0 = SubResource("TileSetAtlasSource_56bcy")
+metadata/_better_terrain = {
+&"decoration": ["Decoration", Color(0.4117647, 0.4117647, 0.4117647, 1), 3, [], {
+&"path": "res://addons/better-tile-editor/icons/Decoration.svg"
+}],
+&"groups": [],
+&"single": ["Single tile", Color(0.75, 0.78, 0.85, 1), 7, [], {
+&"path": "res://addons/better-tile-editor/icons/SingleTile.svg"
+}, "", {}],
+&"terrains": [["Grass", Color(0.4, 0.7, 0.25, 1), 0, [], {}, "", {}], ["Pond", Color(0.3, 0.5, 0.85, 1), 5, [], {}, "", {
+"exemplar": {
+"rect": [0, 0, 7, 6],
+"source": 0
+}
+}]],
+&"version": "0.3"
+}
+metadata/_better_terrain_exemplar = {
+"Pond": {
+"block": [0, 0, 7, 6],
+"corners_read": true,
+"lines": {
+"CORNER_NE": [[6, 0]],
+"CORNER_NW": [[0, 0]],
+"CORNER_SE": [[6, 5]],
+"CORNER_SW": [[0, 5]],
+"IN_C": [[2, 2], [2, 3], [3, 2], [3, 3], [4, 2], [4, 3]],
+"IN_E": [[5, 2], [5, 3]],
+"IN_N": [[2, 1], [3, 1], [4, 1]],
+"IN_NE": [[5, 1]],
+"IN_NW": [[1, 1]],
+"IN_S": [[2, 4], [3, 4], [4, 4]],
+"IN_SE": [[5, 4]],
+"IN_SW": [[1, 4]],
+"IN_W": [[1, 2], [1, 3]],
+"OUT_E": [[6, 1], [6, 2], [6, 3], [6, 4]],
+"OUT_N": [[2, 0], [3, 0], [4, 0]],
+"OUT_NE": [[5, 0]],
+"OUT_NW": [[1, 0]],
+"OUT_S": [[2, 5], [3, 5], [4, 5]],
+"OUT_SE": [[5, 5]],
+"OUT_SW": [[1, 5]],
+"OUT_W": [[0, 1], [0, 2], [0, 3], [0, 4]]
+},
+"roles": {
+"CORNER_NE": [6, 0],
+"CORNER_NW": [0, 0],
+"CORNER_SE": [6, 5],
+"CORNER_SW": [0, 5],
+"IN_C": [2, 2],
+"IN_E": [5, 2],
+"IN_N": [2, 1],
+"IN_NE": [5, 1],
+"IN_NW": [1, 1],
+"IN_S": [2, 4],
+"IN_SE": [5, 4],
+"IN_SW": [1, 4],
+"IN_W": [1, 2],
+"OUT_E": [6, 1],
+"OUT_N": [2, 0],
+"OUT_NE": [5, 0],
+"OUT_NW": [1, 0],
+"OUT_S": [2, 5],
+"OUT_SE": [5, 5],
+"OUT_SW": [1, 5],
+"OUT_W": [0, 1]
+},
+"slots": {
+"CORNER_NE": [[6, 0]],
+"CORNER_NW": [[0, 0]],
+"CORNER_SE": [[6, 5]],
+"CORNER_SW": [[0, 5]],
+"IN_C": [[2, 2], [2, 3], [3, 2], [3, 3], [4, 2], [4, 3]],
+"IN_E": [[5, 2], [5, 3]],
+"IN_N": [[2, 1], [3, 1], [4, 1]],
+"IN_NE": [[5, 1]],
+"IN_NW": [[1, 1]],
+"IN_S": [[2, 4], [3, 4], [4, 4]],
+"IN_SE": [[5, 4]],
+"IN_SW": [[1, 4]],
+"IN_W": [[1, 2], [1, 3]],
+"OUT_E": [[6, 1], [6, 2], [6, 3], [6, 4]],
+"OUT_N": [[2, 0], [3, 0], [4, 0]],
+"OUT_NE": [[5, 0]],
+"OUT_NW": [[1, 0]],
+"OUT_S": [[2, 5], [3, 5], [4, 5]],
+"OUT_SE": [[5, 5]],
+"OUT_SW": [[1, 5]],
+"OUT_W": [[0, 1], [0, 2], [0, 3], [0, 4]]
+},
+"source": 0,
+"tiles": 42,
+"water": [1, 1, 5, 4]
+}
+}

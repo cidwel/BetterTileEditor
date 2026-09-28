@@ -1,0 +1,116 @@
+[gd_resource type="TileSet" format=3]
+
+[ext_resource type="Texture2D" path="res://addons/better-tile-editor/demos/tilesets/match_vertices.png" id="1_x28pe"]
+
+[sub_resource type="TileSetAtlasSource" id="TileSetAtlasSource_0l4wu"]
+texture = ExtResource("1_x28pe")
+1:0/0 = 0
+1:0/0/metadata/_better_terrain = {
+11: [1],
+&"type": 1
+}
+2:0/0 = 0
+2:0/0/metadata/_better_terrain = {
+15: [1],
+&"type": 1
+}
+3:0/0 = 0
+3:0/0/metadata/_better_terrain = {
+11: [1],
+15: [1],
+&"type": 1
+}
+4:0/0 = 0
+4:0/0/metadata/_better_terrain = {
+7: [1],
+&"type": 1
+}
+5:0/0 = 0
+5:0/0/metadata/_better_terrain = {
+7: [1],
+11: [1],
+&"type": 1
+}
+6:0/0 = 0
+6:0/0/metadata/_better_terrain = {
+7: [1],
+15: [1],
+&"type": 1
+}
+7:0/0 = 0
+7:0/0/metadata/_better_terrain = {
+7: [1],
+11: [1],
+15: [1],
+&"type": 1
+}
+0:1/0 = 0
+0:1/0/metadata/_better_terrain = {
+3: [1],
+&"type": 1
+}
+1:1/0 = 0
+1:1/0/metadata/_better_terrain = {
+3: [1],
+11: [1],
+&"type": 1
+}
+2:1/0 = 0
+2:1/0/metadata/_better_terrain = {
+3: [1],
+15: [1],
+&"type": 1
+}
+3:1/0 = 0
+3:1/0/metadata/_better_terrain = {
+3: [1],
+11: [1],
+15: [1],
+&"type": 1
+}
+4:1/0 = 0
+4:1/0/metadata/_better_terrain = {
+3: [1],
+7: [1],
+&"type": 1
+}
+5:1/0 = 0
+5:1/0/metadata/_better_terrain = {
+3: [1],
+7: [1],
+11: [1],
+&"type": 1
+}
+6:1/0 = 0
+6:1/0/metadata/_better_terrain = {
+3: [1],
+7: [1],
+15: [1],
+&"type": 1
+}
+7:1/0 = 0
+7:1/0/metadata/_better_terrain = {
+3: [1],
+7: [1],
+11: [1],
+15: [1],
+&"type": 1
+}
+0:0/0 = 0
+0:0/0/metadata/_better_terrain = {
+&"type": 0
+}
+
+[resource]
+sources/0 = SubResource("TileSetAtlasSource_0l4wu")
+metadata/_better_terrain = {
+&"decoration": ["Decoration", Color(0.4117647, 0.4117647, 0.4117647, 1), 3, [], {
+&"path": "res://addons/better-tile-editor/icons/Decoration.svg"
+}],
+&"groups": [],
+&"single": ["Single tile", Color(0.75, 0.78, 0.85, 1), 7, [], {
+&"path": "res://addons/better-tile-editor/icons/SingleTile.svg"
+}, "", {}],
+&"terrains": [["Sand", Color(0.85, 0.78, 0.55, 1), 0, [], {}, "", {}], ["Water", Color(0.3, 0.5, 0.85, 1), 1, [], {}, "", {}]],
+&"version": "0.3"
+}
