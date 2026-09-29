@@ -15,24 +15,24 @@ var _picker_cursor_on := false
 
 var _integration: RefCounted
 var _integration_attempted := false
+var _enabled_by_user := false
 const TileMapIntegration := preload("res://addons/better-tile-editor/editor/TileMapIntegration.gd")
+
+func _enable_plugin() -> void:
+	_enabled_by_user = true
+
 
 func _enter_tree() -> void:
 	# Wait for autoloads to register
 	await get_tree().process_frame
 
 	if !_autoload_is_loaded():
-		# Autoload wasn't present on plugin init, which means plugin won't have loaded correctly
 		add_autoload_singleton(AUTOLOAD_NAME, "res://addons/better-tile-editor/BetterTerrain.gd")
 		ProjectSettings.save()
-
-		var confirm = ConfirmationDialog.new()
-		confirm.dialog_text = "The editor needs to be restarted for BetterTileEditor to load correctly. Restart now? Note: Unsaved changes will be lost."
-		confirm.confirmed.connect(func():
-			OS.set_restart_on_exit(true, ["-e"])
-			get_tree().quit()
-		)
-		get_editor_interface().popup_dialog_centered(confirm)
+		# Enabled just now: nothing that uses the autoload has been compiled yet, so
+		# it works right away. Loaded at startup without it: scripts already failed.
+		if !_enabled_by_user:
+			_ask_restart()
 
 	_support_editor = preload("res://addons/better-tile-editor/editor/SupportLayerEditor.gd").new()
 	add_child(_support_editor)
@@ -80,6 +80,16 @@ func _try_integrate() -> void:
 		_apply_options()
 	else:
 		_add_bottom_panel()
+
+
+func _ask_restart() -> void:
+	var confirm = ConfirmationDialog.new()
+	confirm.dialog_text = "The editor needs to be restarted for BetterTileEditor to load correctly. Restart now? Note: Unsaved changes will be lost."
+	confirm.confirmed.connect(func():
+		OS.set_restart_on_exit(true, ["-e"])
+		get_tree().quit()
+	)
+	get_editor_interface().popup_dialog_centered(confirm)
 
 
 # Godot 4.7 editor autoloads may be unnamed; match the script as a fallback.
