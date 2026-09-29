@@ -206,18 +206,18 @@ func is_tile_in_source(source: TileSetAtlasSource, coord: Vector2i) -> bool:
 		return false
 	
 	# Animation frames are not needed
-	var size := source.get_tile_size_in_atlas(origin)
-	return coord.x < origin.x + size.x and coord.y < origin.y + size.y
+	var span := source.get_tile_size_in_atlas(origin)
+	return coord.x < origin.x + span.x and coord.y < origin.y + span.y
 
 
-func _build_tile_part_from_position(result: Dictionary, position: Vector2i, rect: Rect2) -> void:
+func _build_tile_part_from_position(result: Dictionary, pos: Vector2i, rect: Rect2) -> void:
 	result.rect = rect
 	var type := BetterTerrain.get_tile_terrain_type(result.data)
 	if type == BetterTerrain.TileCategory.NON_TERRAIN:
 		return
 	result.terrain_type = type
 	
-	var normalize_position := (Vector2(position) - rect.position) / rect.size
+	var normalize_position := (Vector2(pos) - rect.position) / rect.size
 	
 	var terrain := BetterTerrain.get_terrain(tileset, type)
 	if !terrain.valid:
@@ -241,7 +241,7 @@ func _pick_target() -> Vector2i:
 
 
 ## Atlas grid cell under the position, tile or not, or {}.
-func _atlas_cell_at(position: Vector2) -> Dictionary:
+func _atlas_cell_at(pos: Vector2) -> Dictionary:
 	if tileset == null:
 		return {}
 	var offset := Vector2.ZERO
@@ -253,9 +253,9 @@ func _atlas_cell_at(position: Vector2) -> Dictionary:
 		if source == null or source.texture == null:
 			continue
 		var area := Rect2(offset, zoom_level * Vector2(source.texture.get_size()))
-		if area.has_point(position):
+		if area.has_point(pos):
 			var step := Vector2(source.texture_region_size + source.separation)
-			var local := (position - offset) / zoom_level - Vector2(source.margins)
+			var local := (pos - offset) / zoom_level - Vector2(source.margins)
 			var coord := Vector2i((local / step).floor())
 			var grid := source.get_atlas_grid_size()
 			if coord.x < 0 or coord.y < 0 or coord.x >= grid.x or coord.y >= grid.y:
@@ -282,18 +282,18 @@ func _trim_to_tiles(source_id: int, box: Rect2i) -> Rect2i:
 	return used if used.size != Vector2i.ZERO else Rect2i(box.position, Vector2i.ONE)
 
 
-func tile_part_from_position(position: Vector2i) -> Dictionary:
+func tile_part_from_position(pos: Vector2i) -> Dictionary:
 	if !tileset:
 		return { valid = false }
 	
 	var offset := Vector2.ZERO
 	var alt_offset := Vector2.RIGHT * (zoom_level * tiles_size.x + ALTERNATE_TILE_MARGIN)
-	if Rect2(alt_offset, zoom_level * alternate_size).has_point(position):
+	if Rect2(alt_offset, zoom_level * alternate_size).has_point(pos):
 		for a in alternate_lookup:
 			if a[1] in disabled_sources:
 				continue
 			var next_offset_y = alt_offset.y + zoom_level * a[0].y
-			if position.y > next_offset_y:
+			if pos.y > next_offset_y:
 				alt_offset.y = next_offset_y
 				continue
 			
@@ -302,7 +302,7 @@ func tile_part_from_position(position: Vector2i) -> Dictionary:
 				break
 			
 			var count := source.get_alternative_tiles_count(a[2])
-			var index := int((position.x - alt_offset.x) / (zoom_level * a[0].x)) + 1
+			var index := int((pos.x - alt_offset.x) / (zoom_level * a[0].x)) + 1
 			
 			if index < count:
 				var alt_id := source.get_alternative_tile_id(a[2], index)
@@ -318,7 +318,7 @@ func tile_part_from_position(position: Vector2i) -> Dictionary:
 					alternate = alt_id,
 					data = source.get_tile_data(a[2], alt_id)
 				}
-				_build_tile_part_from_position(result, position, target_rect)
+				_build_tile_part_from_position(result, pos, target_rect)
 				return result
 	
 	else:
@@ -333,7 +333,7 @@ func tile_part_from_position(position: Vector2i) -> Dictionary:
 				var coord := source.get_tile_id(t)
 				var rect := source.get_tile_texture_region(coord, 0)
 				var target_rect := Rect2(offset + zoom_level * rect.position, zoom_level * rect.size)
-				if !target_rect.has_point(position):
+				if !target_rect.has_point(pos):
 					continue
 				
 				var result := {
@@ -343,7 +343,7 @@ func tile_part_from_position(position: Vector2i) -> Dictionary:
 					alternate = 0,
 					data = source.get_tile_data(coord, 0)
 				}
-				_build_tile_part_from_position(result, position, target_rect)
+				_build_tile_part_from_position(result, pos, target_rect)
 				return result
 			
 			offset.y += zoom_level * source.texture.get_height()
@@ -351,18 +351,18 @@ func tile_part_from_position(position: Vector2i) -> Dictionary:
 	return { valid = false }
 
 
-func tile_rect_from_position(position: Vector2i) -> Rect2:
+func tile_rect_from_position(pos: Vector2i) -> Rect2:
 	if !tileset:
 		return Rect2(-1,-1,0,0)
 	
 	var offset := Vector2.ZERO
 	var alt_offset := Vector2.RIGHT * (zoom_level * tiles_size.x + ALTERNATE_TILE_MARGIN)
-	if Rect2(alt_offset, zoom_level * alternate_size).has_point(position):
+	if Rect2(alt_offset, zoom_level * alternate_size).has_point(pos):
 		for a in alternate_lookup:
 			if a[1] in disabled_sources:
 				continue
 			var next_offset_y = alt_offset.y + zoom_level * a[0].y
-			if position.y > next_offset_y:
+			if pos.y > next_offset_y:
 				alt_offset.y = next_offset_y
 				continue
 			
@@ -371,7 +371,7 @@ func tile_rect_from_position(position: Vector2i) -> Rect2:
 				break
 			
 			var count := source.get_alternative_tiles_count(a[2])
-			var index := int((position.x - alt_offset.x) / (zoom_level * a[0].x)) + 1
+			var index := int((pos.x - alt_offset.x) / (zoom_level * a[0].x)) + 1
 			
 			if index < count:
 				var target_rect := Rect2(
@@ -392,7 +392,7 @@ func tile_rect_from_position(position: Vector2i) -> Rect2:
 				var coord := source.get_tile_id(t)
 				var rect := source.get_tile_texture_region(coord, 0)
 				var target_rect := Rect2(offset + zoom_level * rect.position, zoom_level * rect.size)
-				if target_rect.has_point(position):
+				if target_rect.has_point(pos):
 					return target_rect
 			
 			offset.y += zoom_level * source.texture.get_height()
@@ -709,12 +709,12 @@ func _draw() -> void:
 		_draw_marked_blocks(source, source_id, offset)
 
 		# Blank out unused or uninteresting tiles
-		var size := source.get_atlas_grid_size()
+		var grid_size := source.get_atlas_grid_size()
 		var from := Vector2i.ZERO
-		var to := size
+		var to := grid_size
 		if cull:
 			if not band_seen:
-				from = size
+				from = grid_size
 			else:
 				var step := source.separation + source.texture_region_size
 				var local := Vector2(window.position - offset) / zoom_level
@@ -722,8 +722,8 @@ func _draw() -> void:
 					maxi(0, int(floor((local.x - source.margins.x) / step.x))),
 					maxi(0, int(floor((local.y - source.margins.y) / step.y))))
 				to = Vector2i(
-					mini(size.x, int(ceil((local.x + window.size.x / zoom_level - source.margins.x) / step.x)) + 1),
-					mini(size.y, int(ceil((local.y + window.size.y / zoom_level - source.margins.y) / step.y)) + 1))
+					mini(grid_size.x, int(ceil((local.x + window.size.x / zoom_level - source.margins.x) / step.x)) + 1),
+					mini(grid_size.y, int(ceil((local.y + window.size.y / zoom_level - source.margins.y) / step.y)) + 1))
 		for y in range(from.y, to.y):
 			for x in range(from.x, to.x):
 				var pos := Vector2i(x, y)
@@ -997,15 +997,15 @@ func _paint_object_block(is_lone: bool) -> void:
 	var cfg := ObjectTerrain.object_config(tileset, paint)
 	if cfg.is_empty():
 		return
-	var size := ObjectTerrain.object_size(tileset, paint)
+	var object_size := ObjectTerrain.object_size(tileset, paint)
 	var origin: Vector2i = highlighted_tile_part.coord
 	var src := tileset.get_source(highlighted_tile_part.source_id) as TileSetAtlasSource
 	if src == null:
 		return
 
 	var data := []
-	for dy in size.y:
-		for dx in size.x:
+	for dy in object_size.y:
+		for dx in object_size.x:
 			var c: Vector2i = origin + Vector2i(dx, dy)
 			if src.get_tile_at_coords(c) != c:
 				return
@@ -1018,7 +1018,7 @@ func _paint_object_block(is_lone: bool) -> void:
 		undo_manager.add_undo_method(BetterTerrain, &"set_tile_terrain_type", tileset, d, before)
 	if is_lone:
 		var updated := cfg.duplicate()
-		updated["size"] = [size.x, size.y]
+		updated["size"] = [object_size.x, object_size.y]
 		updated["lone"] = [origin.x, origin.y]
 		undo_manager.add_do_method(BetterTerrain, &"set_terrain_object", tileset, paint, updated)
 		undo_manager.add_undo_method(BetterTerrain, &"set_terrain_object", tileset, paint, cfg)
@@ -1031,15 +1031,15 @@ func _erase_object_block() -> void:
 	var cfg := ObjectTerrain.object_config(tileset, paint)
 	if cfg.is_empty():
 		return
-	var size := ObjectTerrain.object_size(tileset, paint)
+	var object_size := ObjectTerrain.object_size(tileset, paint)
 	var origin: Vector2i = highlighted_tile_part.coord
 	var src := tileset.get_source(highlighted_tile_part.source_id) as TileSetAtlasSource
 	if src == null:
 		return
 
 	var data := []
-	for dy in size.y:
-		for dx in size.x:
+	for dy in object_size.y:
+		for dx in object_size.x:
 			var c: Vector2i = origin + Vector2i(dx, dy)
 			if src.get_tile_at_coords(c) != c:
 				continue

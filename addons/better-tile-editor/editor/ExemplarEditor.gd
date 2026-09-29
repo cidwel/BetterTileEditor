@@ -34,13 +34,13 @@ var _palette_pick: Control
 var _panning := false
 
 
-func setup(ts: TileSet, index: int, name: String, color: Color) -> void:
+func setup(ts: TileSet, index: int, exemplar_name: String, color: Color) -> void:
 	tile_set = ts
 	terrain_index = index
-	terrain_name = name
+	terrain_name = exemplar_name
 	terrain_color = color
-	_table = ExemplarData.table_of(ts, name)
-	title = "Patch terrain: %s" % name
+	_table = ExemplarData.table_of(ts, exemplar_name)
+	title = "Patch terrain: %s" % exemplar_name
 	size = Vector2i(1060, 620)
 	_build()
 	if _table.roles.is_empty():
@@ -260,7 +260,7 @@ func _draw_preview() -> void:
 			"Press \"Read the drawing\".", HORIZONTAL_ALIGNMENT_LEFT, -1, 14,
 			Color(1, 1, 1, 0.5))
 		return
-	var size := tile_set.tile_size * PREVIEW_ZOOM
+	var preview_size := tile_set.tile_size * PREVIEW_ZOOM
 	var region := _preview_region()
 	var seen := {}
 	for c in region:
@@ -272,7 +272,7 @@ func _draw_preview() -> void:
 		if tile.is_empty():
 			continue
 		_draw_tile(_preview, [tile.coord.x, tile.coord.y],
-			Rect2(Vector2(c) * Vector2(size), Vector2(size)))
+			Rect2(Vector2(c) * Vector2(preview_size), Vector2(preview_size)))
 
 #endregion
 
@@ -432,6 +432,7 @@ func assign_tile(source_id: int, coord: Vector2i) -> bool:
 	else:
 		run = [[coord.x, coord.y]]
 	_table.lines[role] = run
+	@warning_ignore("integer_division")
 	_table.roles[role] = run[run.size() / 2]
 	_save()
 	_refresh()

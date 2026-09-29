@@ -206,6 +206,7 @@ func _draw_step() -> void:
 		var side := minf(left.size.x / per_row, left.size.y / rows) - 10.0
 		side = minf(side, 140.0)
 		for i in slots.size():
+			@warning_ignore("integer_division")
 			var at := left.position + Vector2((i % per_row) * (side + 10.0), (i / per_row) * (side + 10.0))
 			var rect := Rect2(at, Vector2(side, side))
 			_canvas.draw_rect(rect, Color(0.18, 0.19, 0.23))

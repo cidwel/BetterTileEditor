@@ -88,12 +88,12 @@ static func art_of(src: TileSetAtlasSource, origin: Vector2i, size: Vector2i) ->
 	if src == null or src.texture == null:
 		return null
 	var tile := src.texture_region_size
-	var sheet := src.texture.get_image()
-	if sheet == null:
+	var atlas_image := src.texture.get_image()
+	if atlas_image == null:
 		return null
-	if sheet.is_compressed():
-		sheet = sheet.duplicate()
-		sheet.decompress()
+	if atlas_image.is_compressed():
+		atlas_image = atlas_image.duplicate()
+		atlas_image.decompress()
 	var out := Image.create_empty(maxi(1, size.x * tile.x), maxi(1, size.y * tile.y), false, Image.FORMAT_RGBA8)
 	for dy in size.y:
 		for dx in size.x:
@@ -101,7 +101,7 @@ static func art_of(src: TileSetAtlasSource, origin: Vector2i, size: Vector2i) ->
 			if src.get_tile_at_coords(coord) != coord:
 				continue
 			var region := src.get_tile_texture_region(coord, 0)
-			out.blit_rect(sheet, region, Vector2i(dx * tile.x, dy * tile.y))
+			out.blit_rect(atlas_image, region, Vector2i(dx * tile.x, dy * tile.y))
 	return out
 
 
@@ -111,6 +111,7 @@ static func reboxed(art: Image, box_px: Vector2i, at := Vector2i(-1, -1)) -> Ima
 		return out
 	var put := at
 	if put.x < 0:
+		@warning_ignore("integer_division")
 		put.x = (box_px.x - art.get_width()) / 2
 	if put.y < 0:
 		put.y = box_px.y - art.get_height()
@@ -182,6 +183,7 @@ static func mass_end(art: Image, share := 0.6) -> int:
 	if widest == 0:
 		return h
 	var floor_ink: int = int(ceil(widest * share))
+	@warning_ignore("integer_division")
 	for y in range(h / 3, h):
 		if ink[y] < floor_ink:
 			return y
@@ -193,6 +195,7 @@ static func default_crop(art: Image, unit_px: Vector2i, pitch_px: Vector2i, stag
 		return 0
 	var h := art.get_height()
 	var low: int = clampi(pitch_px.y, 1, h)
+	@warning_ignore("integer_division")
 	var high: int = clampi(mini(mass_end(art), low + h / 4), low, h)
 	var best := low
 	var brightest := -1.0
@@ -332,7 +335,7 @@ static func source_of(ts: TileSet, terrain_id: int) -> int:
 	return id if id >= 0 and ts.has_source(id) else -1
 
 
-static func _mark(ts: TileSet, td: TileData, type: int) -> void:
+static func _mark(_ts: TileSet, td: TileData, type: int) -> void:
 	if td == null:
 		return
 	if type == -2:

@@ -210,9 +210,9 @@ func _icon_rect() -> Rect2:
 	var box := Vector2(44, 44)
 	if _terrain_texture_rect.size.x <= 0 or _terrain_texture_rect.size.y <= 0:
 		return Rect2(Vector2.ZERO, box)
-	var size := Vector2(_terrain_texture_rect.size)
-	size *= minf(box.x / size.x, box.y / size.y)
-	return Rect2((box - size) * 0.5, size)
+	var rect_size := Vector2(_terrain_texture_rect.size)
+	rect_size *= minf(box.x / rect_size.x, box.y / rect_size.y)
+	return Rect2((box - rect_size) * 0.5, rect_size)
 
 
 func _exemplar_block_region() -> Rect2i:
@@ -239,9 +239,9 @@ func _lone_block_region() -> Rect2i:
 	if lone.size() != 2:
 		return Rect2i()
 	var sz: Array = cfg.get("size", [2, 2])
-	var size := Vector2i(sz[0], sz[1])
+	var object_size := Vector2i(sz[0], sz[1])
 	var origin := Vector2i(lone[0], lone[1])
-	for b in ObjectTerrain.detect_blocks(tileset, terrain.id, size):
+	for b in ObjectTerrain.detect_blocks(tileset, terrain.id, object_size):
 		if b["rect"].position != origin:
 			continue
 		var src := tileset.get_source(b["source_id"]) as TileSetAtlasSource
@@ -249,7 +249,7 @@ func _lone_block_region() -> Rect2i:
 			return Rect2i()
 		_lone_source = src.texture
 		var one_tile := src.get_tile_texture_region(origin, 0)
-		return Rect2i(Vector2i(one_tile.position), Vector2i(one_tile.size) * size)
+		return Rect2i(Vector2i(one_tile.position), Vector2i(one_tile.size) * object_size)
 	return Rect2i()
 
 
@@ -416,24 +416,24 @@ func _terrain_preview_image() -> Image:
 	return null
 
 
-func _scatter_patch_image(size: int) -> Image:
+func _scatter_patch_image(side: int) -> Image:
 	var scatter = load("res://addons/better-tile-editor/ScatterTerrain.gd")
 	var scratch := TileMapLayer.new()
 	scratch.tile_set = tileset
 	var cells := PackedVector2Array()
-	for y in size:
-		for x in size:
+	for y in side:
+		for x in side:
 			cells.append(Vector2(x, y))
 	scatter.set_zone(scratch, terrain.id, cells)
 	scatter.rebuild(scratch)
 	var layer: TileMapLayer = scatter.find_layer(scratch)
-	var bounds := Rect2i(0, 0, size, size)
+	var bounds := Rect2i(0, 0, side, side)
 	if layer != null:
 		bounds = bounds.merge(layer.get_used_rect())
 	var cell := tileset.tile_size
 	var img := Image.create_empty(bounds.size.x * cell.x, bounds.size.y * cell.y, false, Image.FORMAT_RGBA8)
-	for y in size:
-		for x in size:
+	for y in side:
+		for x in side:
 			var color := Color("282c30") if (x + y) % 2 == 0 else Color("33383d")
 			img.fill_rect(Rect2i((Vector2i(x, y) - bounds.position) * cell, cell), color)
 	if layer != null:
@@ -446,18 +446,18 @@ func _scatter_patch_image(size: int) -> Image:
 	return img
 
 
-func _picture(img: Image, scale: float) -> TextureRect:
+func _picture(img: Image, zoom: float) -> TextureRect:
 	var pic := TextureRect.new()
 	pic.texture = ImageTexture.create_from_image(img)
 	pic.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	pic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	pic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT
 	var image_size := Vector2(img.get_width(), img.get_height())
-	pic.custom_minimum_size = image_size * minf(scale, 320.0 / maxf(image_size.x, image_size.y))
+	pic.custom_minimum_size = image_size * minf(zoom, 320.0 / maxf(image_size.x, image_size.y))
 	return pic
 
 
-func _terrain_patch_image(size: int, face_rows: int) -> Image:
+func _terrain_patch_image(side: int, face_rows: int) -> Image:
 	var cell: Vector2i = tileset.tile_size
 	if cell.x <= 0 or cell.y <= 0:
 		return null
@@ -465,11 +465,11 @@ func _terrain_patch_image(size: int, face_rows: int) -> Image:
 	var scratch := TileMapLayer.new()
 	scratch.tile_set = tileset
 	var cells := []
-	for y in size:
-		for x in size:
+	for y in side:
+		for x in side:
 			cells.append(Vector2i(x, y))
 	BetterTerrain.set_cells(scratch, cells, terrain.id)
-	BetterTerrain.update_terrain_area(scratch, Rect2i(0, 0, size, size), false)
+	BetterTerrain.update_terrain_area(scratch, Rect2i(0, 0, side, side), false)
 
 	var objects = load("res://addons/better-tile-editor/ObjectTerrain.gd")
 	if objects != null and objects.has_objects(tileset):
@@ -488,8 +488,8 @@ func _terrain_patch_image(size: int, face_rows: int) -> Image:
 			if not tile.is_empty():
 				faces[f] = tile
 
-	var rows := size + (face_rows if not faces.is_empty() else 0)
-	var img := Image.create(size * cell.x, rows * cell.y, false, Image.FORMAT_RGBA8)
+	var rows := side + (face_rows if not faces.is_empty() else 0)
+	var img := Image.create(side * cell.x, rows * cell.y, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 
 	# get_image copies the entire atlas; cache it per sourcj.

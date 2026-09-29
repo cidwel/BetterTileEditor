@@ -612,10 +612,10 @@ func _ensure_groups(ts_meta: Dictionary) -> Array:
 	return ts_meta.groups
 
 
-func _group_index(ts_meta: Dictionary, name: String) -> int:
+func _group_index(ts_meta: Dictionary, group_name: String) -> int:
 	var groups := _groups_of(ts_meta)
 	for i in groups.size():
-		if groups[i][0] == name:
+		if groups[i][0] == group_name:
 			return i
 	return -1
 
@@ -701,15 +701,15 @@ func has_terrain_groups(ts: TileSet) -> bool:
 	return false
 
 
-func add_terrain_group(ts: TileSet, name: String) -> bool:
-	if !ts or name.is_empty():
+func add_terrain_group(ts: TileSet, group_name: String) -> bool:
+	if !ts or group_name.is_empty():
 		return false
 
 	var ts_meta := _get_terrain_meta(ts)
-	if _group_index(ts_meta, name) != -1:
+	if _group_index(ts_meta, group_name) != -1:
 		return false
 
-	_ensure_groups(ts_meta).push_back([name, -1])
+	_ensure_groups(ts_meta).push_back([group_name, -1])
 	_set_terrain_meta(ts, ts_meta)
 	return true
 
@@ -722,39 +722,39 @@ func remove_terrain_group(ts: TileSet, index: int) -> bool:
 	if index >= _groups_of(ts_meta).size():
 		return false
 
-	var name : String = ts_meta.groups[index][0]
+	var group_name : String = ts_meta.groups[index][0]
 	for t in ts_meta.terrains:
-		if _terrain_group_of(t) == name:
+		if _terrain_group_of(t) == group_name:
 			t[5] = DEFAULT_GROUP
 
 	ts_meta.groups.remove_at(index)
-	_rename_scene_group(ts_meta, name, "")
+	_rename_scene_group(ts_meta, group_name, "")
 	_set_terrain_meta(ts, ts_meta)
 	return true
 
 
-func rename_terrain_group(ts: TileSet, index: int, name: String) -> bool:
-	if !ts or index < 0 or name.is_empty():
+func rename_terrain_group(ts: TileSet, index: int, group_name: String) -> bool:
+	if !ts or index < 0 or group_name.is_empty():
 		return false
 
 	var ts_meta := _get_terrain_meta(ts)
 	if index >= _groups_of(ts_meta).size():
 		return false
 
-	var existing := _group_index(ts_meta, name)
+	var existing := _group_index(ts_meta, group_name)
 	if existing != -1 and existing != index:
 		return false
 
 	var old_name : String = ts_meta.groups[index][0]
-	if old_name == name:
+	if old_name == group_name:
 		return true
 
 	for t in ts_meta.terrains:
 		if _terrain_group_of(t) == old_name:
-			t[5] = name
+			t[5] = group_name
 
-	ts_meta.groups[index][0] = name
-	_rename_scene_group(ts_meta, old_name, name)
+	ts_meta.groups[index][0] = group_name
+	_rename_scene_group(ts_meta, old_name, group_name)
 	_set_terrain_meta(ts, ts_meta)
 	return true
 
@@ -870,7 +870,6 @@ func get_terrain_icon_texture(ts: TileSet, index: int) -> Texture2D:
 
 
 func _object_lone_texture(ts: TileSet, index: int, terrain: Dictionary) -> AtlasTexture:
-	var ObjectTerrain = load("res://addons/better-tile-editor/ObjectTerrain.gd")
 	var cfg: Dictionary = terrain.get("object", {})
 	var sz: Array = cfg.get("size", [2, 2])
 	var size := Vector2i(sz[0], sz[1])
@@ -933,8 +932,8 @@ func set_terrain_group(ts: TileSet, index: int, group: String) -> bool:
 ## [code]icon[/code] is a [Dictionary] with either a [code]path[/code] string pointing
 ## to a resource, or a [code]source_id[/code] [int] and a [code]coord[/code] [Vector2i].
 ## The former takes priority if both are present.
-func add_terrain(ts: TileSet, name: String, color: Color, type: int, categories: Array = [], icon: Dictionary = {}, group: String = DEFAULT_GROUP, object: Dictionary = {}) -> bool:
-	if !ts or name.is_empty() or type < 0 or type == TerrainType.DECORATION or type >= TerrainType.MAX:
+func add_terrain(ts: TileSet, terrain_name: String, color: Color, type: int, categories: Array = [], icon: Dictionary = {}, group: String = DEFAULT_GROUP, object: Dictionary = {}) -> bool:
+	if !ts or terrain_name.is_empty() or type < 0 or type == TerrainType.DECORATION or type >= TerrainType.MAX:
 		return false
 
 	var ts_meta := _get_terrain_meta(ts)
@@ -952,7 +951,7 @@ func add_terrain(ts: TileSet, name: String, color: Color, type: int, categories:
 	if icon and not (icon.has("path") or (icon.has("source_id") and icon.has("coord"))):
 		return false
 	
-	ts_meta.terrains.push_back([name, color, type, categories, icon, group, object])
+	ts_meta.terrains.push_back([terrain_name, color, type, categories, icon, group, object])
 	_set_terrain_meta(ts, ts_meta)
 	_purge_cache(ts)
 	return true
@@ -966,7 +965,10 @@ func set_terrain_object(ts: TileSet, index: int, object: Dictionary) -> bool:
 		return false
 	var t: Array = ts_meta.terrains[index]
 	while t.size() < 7:
-		t.push_back(DEFAULT_GROUP if t.size() == 5 else {})
+		if t.size() == 5:
+			t.push_back(DEFAULT_GROUP)
+		else:
+			t.push_back({})
 	t[6] = object
 	_set_terrain_meta(ts, ts_meta)
 	return true
@@ -1099,8 +1101,8 @@ func get_terrain(ts: TileSet, index: int) -> Dictionary:
 ## type terrains.
 ## [code]icon[/code] is a [Dictionary] with either a [code]path[/code] string pointing
 ## to a resource, or a [code]source_id[/code] [int] and a [code]coord[/code] [Vector2i].
-func set_terrain(ts: TileSet, index: int, name: String, color: Color, type: int, categories: Array = [], icon: Dictionary = {valid = false}, group = null, object: Dictionary = {}) -> bool:
-	if !ts or name.is_empty() or index < 0 or type < 0 or type == TerrainType.DECORATION or type >= TerrainType.MAX:
+func set_terrain(ts: TileSet, index: int, terrain_name: String, color: Color, type: int, categories: Array = [], icon: Dictionary = {valid = false}, group = null, object: Dictionary = {}) -> bool:
+	if !ts or terrain_name.is_empty() or index < 0 or type < 0 or type == TerrainType.DECORATION or type >= TerrainType.MAX:
 		return false
 	
 	var ts_meta := _get_terrain_meta(ts)
@@ -1127,7 +1129,7 @@ func set_terrain(ts: TileSet, index: int, name: String, color: Color, type: int,
 	if !new_group.is_empty() and _group_index(ts_meta, new_group) == -1:
 		new_group = DEFAULT_GROUP
 
-	ts_meta.terrains[index] = [name, color, type, categories, icon, new_group, object]
+	ts_meta.terrains[index] = [terrain_name, color, type, categories, icon, new_group, object]
 	_set_terrain_meta(ts, ts_meta)
 	
 	_clear_invalid_peering_types(ts)

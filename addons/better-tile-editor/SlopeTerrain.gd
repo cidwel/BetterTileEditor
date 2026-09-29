@@ -618,12 +618,13 @@ static func make_example(bt, ts: TileSet, ground := -1) -> int:
 	var image := Image.create_empty(span.x * size.x, span.y * size.y, false, Image.FORMAT_RGBA8)
 	var solid := {}
 	for c in cells:
-		var shape := blueprint(cells[c])
+		var outline := blueprint(cells[c])
 		var at: Vector2i = (c - lo) * size
 		for y in size.y:
 			for x in size.x:
-				if Geometry2D.is_point_in_polygon(Vector2((x + 0.5) / size.x, (y + 0.5) / size.y), shape):
+				if Geometry2D.is_point_in_polygon(Vector2((x + 0.5) / size.x, (y + 0.5) / size.y), outline):
 					solid[at + Vector2i(x, y)] = true
+	@warning_ignore("integer_division")
 	var grass := maxi(2, size.y / 5)
 	for p in solid:
 		var sky := 0
@@ -1000,22 +1001,22 @@ static func snapshot(ts: TileSet) -> Array:
 	return [tiles, metas]
 
 
-static func restore(bt, ts: TileSet, snap: Array) -> void:
+static func restore(bt, ts: TileSet, saved: Array) -> void:
 	var keys := [&"_better_terrain"] + SET_METAS
 	for i in keys.size():
-		var value = snap[1][i]
+		var value = saved[1][i]
 		if value == null:
 			ts.remove_meta(keys[i])
 		else:
 			ts.set_meta(keys[i], value.duplicate(true) if value is Dictionary or value is Array else value)
-	for key in snap[0]:
+	for key in saved[0]:
 		var td := _tile_data(ts, key[0], key[1], key[2])
 		if td == null:
 			continue
-		if snap[0][key] == null:
+		if saved[0][key] == null:
 			td.remove_meta(&"_better_terrain")
 		else:
-			td.set_meta(&"_better_terrain", snap[0][key].duplicate(true))
+			td.set_meta(&"_better_terrain", saved[0][key].duplicate(true))
 	# flips are alternative tiles, rebuilt from their originals
 	if ts.get_meta(MODE_META, "") == "simple":
 		turn(bt, ts)

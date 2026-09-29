@@ -27,12 +27,12 @@ func _ready() -> void:
 	mouse_exited.connect(func(): _hover = -1; queue_redraw())
 
 
-func setup(ts: TileSet, blocks: Array, lone: Vector2i, size: Vector2i, base_config := {}) -> void:
+func setup(ts: TileSet, blocks: Array, lone: Vector2i, object_size: Vector2i, base_config := {}) -> void:
 	_ts = ts
 	_base_config = base_config
 	_blocks = blocks
 	_lone = lone
-	_size = Vector2i(maxi(1, size.x), maxi(1, size.y))
+	_size = Vector2i(maxi(1, object_size.x), maxi(1, object_size.y))
 	queue_redraw()
 
 

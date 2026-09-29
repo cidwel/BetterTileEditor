@@ -258,11 +258,11 @@ static func _step_fallback(side: String) -> String:
 	return side
 
 static func south_edges(cells: Array) -> Array:
-	var set := {}
-	for c in cells: set[c] = true
+	var cell_set := {}
+	for c in cells: cell_set[c] = true
 	var out := []
 	for c in cells:
-		if not set.has(c + Vector2i(0, 1)): out.append(c)
+		if not cell_set.has(c + Vector2i(0, 1)): out.append(c)
 	out.sort()
 	return out
 

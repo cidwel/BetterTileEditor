@@ -309,11 +309,11 @@ func _refresh() -> void:
 	var found := SlopeTerrain.roles(tileset)
 	var needed := _all_slots().filter(func(slot): return not _optional(slot))
 	var done := needed.filter(func(slot): return not _tiles[slot].is_empty()).size()
-	var ready := SlopeTerrain.is_complete(found)
-	_status.text = "%d of %d pieces  ·  %s" % [done, needed.size(), "the slope tool is ready" if ready else "the slope tool shows once every piece has a tile"]
+	var is_ready := SlopeTerrain.is_complete(found)
+	_status.text = "%d of %d pieces  ·  %s" % [done, needed.size(), "the slope tool is ready" if is_ready else "the slope tool shows once every piece has a tile"]
 	if found.has("ground") and not SlopeTerrain.has_edges(BetterTerrain, tileset, found.ground):
 		_status.text += "  ·  Ground has no edge tiles yet: set its edges and corners as for any terrain"
-	_rules.disabled = not ready
+	_rules.disabled = not is_ready
 	_sync_ground_choice(found)
 	_slot_label.text = _describe(_selected)
 	_render(found)
@@ -798,8 +798,8 @@ func _on_example_pressed() -> void:
 	undo_manager.add_do_method(self, &"_redo_example", box, ground)
 	undo_manager.add_undo_method(self, &"_undo_example", box, before)
 	undo_manager.commit_action(false)
-	var name := String(BetterTerrain.get_terrain(tileset, SlopeTerrain.roles(tileset).ground).name)
-	_after_example("Example atlas added as source %d; %s is set up with it." % [id, name])
+	var ground_name := String(BetterTerrain.get_terrain(tileset, SlopeTerrain.roles(tileset).ground).name)
+	_after_example("Example atlas added as source %d; %s is set up with it." % [id, ground_name])
 
 
 # Redo recreates the atlas; keep its new id for the next undo

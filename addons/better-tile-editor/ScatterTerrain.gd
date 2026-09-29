@@ -59,7 +59,10 @@ static func set_config(ts: TileSet, id: int, cfg: Dictionary, notify := true) ->
 		return
 	var t: Array = terrains[id]
 	while t.size() < 7:
-		t.push_back("" if t.size() == 5 else {})
+		if t.size() == 5:
+			t.push_back("")
+		else:
+			t.push_back({})
 	t[6] = cfg
 	ts.set_meta(TERRAIN_META, meta)
 	if notify:

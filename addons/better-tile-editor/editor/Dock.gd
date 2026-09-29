@@ -342,11 +342,11 @@ func _build_group_bar() -> void:
 	terrains_column.move_child(group_bar, 0)
 
 
-func _group_abbreviation(name: String) -> String:
-	var words := name.split(" ", false)
+func _group_abbreviation(group_name: String) -> String:
+	var words := group_name.split(" ", false)
 	if words.size() >= 2:
 		return (words[0].substr(0, 1) + words[1].substr(0, 1)).to_upper()
-	return name.substr(0, 2).to_upper()
+	return group_name.substr(0, 2).to_upper()
 
 
 func _rebuild_group_bar() -> void:
@@ -481,16 +481,16 @@ func _make_group_chip(g: Dictionary) -> Button:
 	return chip
 
 
-func _on_group_chip_toggled(pressed: bool, name: String) -> void:
+func _on_group_chip_toggled(pressed: bool, group_name: String) -> void:
 	if _search_box and _search_box.visible:
 		_search_box.visible = false
 		_search_box.text = ""
 		_search_text = ""
 
-	group_filter = name if pressed else ""
+	group_filter = group_name if pressed else ""
 	_group_filter_before_search = group_filter
-	if pressed and _collapsed.has(name):
-		_expand_group(name)
+	if pressed and _collapsed.has(group_name):
+		_expand_group(group_name)
 
 	for c in group_bar_items.get_children():
 		if c.has_method("set_pressed_no_signal"):
@@ -664,7 +664,7 @@ func _store_view_mode(setting: String, value: bool) -> void:
 	settings.set_setting(setting, value)
 
 
-func _process(delta):
+func _process(_delta):
 	scroll_container.scroll_horizontal = 0
 
 
@@ -751,22 +751,22 @@ func tiles_changed() -> void:
 		if !(source is TileSetAtlasSource):
 			continue
 		
-		var name := source.resource_name
-		if name.is_empty():
+		var source_name := source.resource_name
+		if source_name.is_empty():
 			var texture := (source as TileSetAtlasSource).texture
 			var texture_name := texture.resource_name if texture else ""
 			if !texture_name.is_empty():
-				name = texture_name
+				source_name = texture_name
 			else:
 				var texture_path := texture.resource_path if texture else ""
 				if !texture_path.is_empty():
-					name = texture_path.get_file()
+					source_name = texture_path.get_file()
 		
-		if !name.is_empty():
-			name += " "
-		name += " (ID: %d)" % source_id
+		if !source_name.is_empty():
+			source_name += " "
+		source_name += " (ID: %d)" % source_id
 		
-		source_selector_popup.add_check_item(name, source_id)
+		source_selector_popup.add_check_item(source_name, source_id)
 		
 		source_selector_popup.set_item_checked(
 			source_selector_popup.get_item_index(source_id),
@@ -790,8 +790,8 @@ func tiles_changed() -> void:
 	update_overlay.emit()
 
 
-func about_to_be_visible(visible: bool) -> void:
-	if !visible:
+func about_to_be_visible(becoming_visible: bool) -> void:
+	if !becoming_visible:
 		return
 	
 	if tilemap and tileset != tilemap.tile_set:
@@ -1053,10 +1053,10 @@ func update_tile_view_paint() -> void:
 	var is_object : bool = mode == BetterTerrain.TerrainType.OBJECT
 	var is_exemplar : bool = mode == BetterTerrain.TerrainType.EXEMPLAR
 
-	for name in TOOL_MODES:
-		var button: Button = _tool_button(name)
+	for mode_name in TOOL_MODES:
+		var button: Button = _tool_button(mode_name)
 		if button != null:
-			button.visible = mode in TOOL_MODES[name]
+			button.visible = mode in TOOL_MODES[mode_name]
 
 	if _slope_button != null:
 		_slope_button.visible = t.valid and SLOPE_TERRAIN.uses_terrain(tileset, selected_entry)
@@ -1086,8 +1086,8 @@ func update_tile_view_paint() -> void:
 	_sync_oven_button()
 
 
-func _tool_button(name: String) -> Button:
-	match name:
+func _tool_button(mode_name: String) -> Button:
+	match mode_name:
 		"live_test": return live_test_button
 		"paint_type": return paint_type
 		"paint_terrain": return paint_terrain
@@ -1234,11 +1234,11 @@ func _on_move_pressed(down: bool) -> void:
 		return
 	
 	var siblings := _group_siblings(selected_entry)
-	var position := siblings.find(selected_entry)
-	if position < 0:
+	var sibling_index := siblings.find(selected_entry)
+	if sibling_index < 0:
 		return
 
-	var target := position + (1 if down else -1)
+	var target := sibling_index + (1 if down else -1)
 	if target < 0 or target >= siblings.size():
 		return
 
@@ -1454,9 +1454,9 @@ func _scene_tiles() -> Array:
 			var scene := source.get_scene_tile_scene(scene_id)
 			if scene == null:
 				continue
-			var name := scene.resource_path.get_file().get_basename()
+			var scene_name := scene.resource_path.get_file().get_basename()
 			result.push_back({source = source_id, id = scene_id, scene = scene,
-				name = name if not name.is_empty() else "Scene %d" % scene_id})
+				name = scene_name if not scene_name.is_empty() else "Scene %d" % scene_id})
 	return result
 
 
@@ -1541,6 +1541,7 @@ static func _sprite_frame(props: Dictionary) -> Texture2D:
 	var frames := Vector2i(maxi(1, int(props.get("hframes", 1))), maxi(1, int(props.get("vframes", 1))))
 	var cell := area.size / Vector2(frames)
 	var frame := int(props.get("frame", 0))
+	@warning_ignore("integer_division")
 	var at: Vector2i = props.get("frame_coords", Vector2i(frame % frames.x, frame / frames.x))
 	var atlas := AtlasTexture.new()
 	atlas.atlas = texture
@@ -1684,15 +1685,15 @@ func _group_siblings(id: int) -> Array:
 	return result
 
 
-func perform_add_terrain(name: String, color: Color, type: int, categories: Array, icon:Dictionary = {}, group: String = "", object: Dictionary = {}) -> void:
+func perform_add_terrain(terrain_name: String, color: Color, type: int, categories: Array, icon:Dictionary = {}, group: String = "", object: Dictionary = {}) -> void:
 	# Undo may restore a terrain after its group was deleted; restore it ungrouped.
 	if !group.is_empty() and !_known_groups.has(group):
 		group = ""
 
-	if BetterTerrain.add_terrain(tileset, name, color, type, categories, icon, group, object):
+	if BetterTerrain.add_terrain(tileset, terrain_name, color, type, categories, icon, group, object):
 		rebuild_terrain_list()
 		_select_terrain(BetterTerrain.terrain_count(tileset) - 1)
-		_warn_duplicate_name(name)
+		_warn_duplicate_name(terrain_name)
 
 
 func _select_terrain(id: int) -> void:
@@ -1728,7 +1729,7 @@ func perform_swap_terrain(index1: int, index2: int) -> void:
 		update_tile_view_paint()
 
 
-func perform_edit_terrain(index: int, name: String, color: Color, type: int, categories: Array, icon: Dictionary = {}, group = null, object: Dictionary = {}) -> void:
+func perform_edit_terrain(index: int, terrain_name: String, color: Color, type: int, categories: Array, icon: Dictionary = {}, group = null, object: Dictionary = {}) -> void:
 	if index >= BetterTerrain.terrain_count(tileset):
 		return
 	# don't overwrite empty icon
@@ -1736,17 +1737,17 @@ func perform_edit_terrain(index: int, name: String, color: Color, type: int, cat
 	if icon.has("path") and icon.path.is_empty():
 		var terrain = BetterTerrain.get_terrain(tileset, index)
 		valid_icon = terrain.icon
-	if BetterTerrain.set_terrain(tileset, index, name, color, type, categories, valid_icon, group, object):
+	if BetterTerrain.set_terrain(tileset, index, terrain_name, color, type, categories, valid_icon, group, object):
 		rebuild_terrain_list()
 		tile_view.queue_redraw()
-	_warn_duplicate_name(name)
+	_warn_duplicate_name(terrain_name)
 
 
 func _on_shuffle_random_pressed():
 	BetterTerrain.use_seed = !shuffle_random.button_pressed 
 
 
-func _on_bit_button_pressed(button: BaseButton) -> void:
+func _on_bit_button_pressed(_button: BaseButton) -> void:
 	match select_tiles.button_group.get_pressed_button():
 		select_tiles: tile_view.paint_mode = tile_view.PaintMode.SELECT
 		paint_type: tile_view.paint_mode = tile_view.PaintMode.PAINT_TYPE
@@ -1907,11 +1908,11 @@ func canvas_draw(overlay: Control) -> void:
 		return
 	elif paint_action == PaintAction.LINE and paint_mode != PaintMode.NO_PAINT:
 		var cells := _object_brush_cells(type, _get_tileset_line(initial_click, current_position, tileset))
-		var shape = BetterTerrain.data.cell_polygon(tileset)
+		var line_shape = BetterTerrain.data.cell_polygon(tileset)
 		for c in cells:
 			var tile_transform := Transform2D(0.0, tilemap.tile_set.tile_size, 0.0, tilemap.map_to_local(c))
-			overlay.draw_colored_polygon(transform * tile_transform * shape, Color(tint, 0.5))
-			_draw_outline(overlay, transform * tile_transform * shape, tint)
+			overlay.draw_colored_polygon(transform * tile_transform * line_shape, Color(tint, 0.5))
+			_draw_outline(overlay, transform * tile_transform * line_shape, tint)
 	elif fill_button.button_pressed:
 		tiles = _get_fill_cells(current_position)
 		if tiles.size() > MAX_CANVAS_RENDER_TILES:
@@ -1955,13 +1956,13 @@ func _draw_single_preview(overlay: Control, transform: Transform2D, cells: Array
 	var block: Dictionary = BetterTerrain.single_block_of(tileset, selected_entry)
 	if block.is_empty() or cells.is_empty():
 		return false
-	var size := Vector2(tilemap.tile_set.tile_size)
+	var cell_size := Vector2(tilemap.tile_set.tile_size)
 	if tileset.get_source(block.source) is TileSetScenesCollectionSource:
 		var key := _scene_key(block.source, block.alt)
 		var thumbnail: Texture2D = _scene_thumbnails.get(key)
 		if thumbnail == null:
 			return false
-		var drawn := thumbnail.get_size() if _scene_sprite_keys.has(key) else size
+		var drawn := thumbnail.get_size() if _scene_sprite_keys.has(key) else cell_size
 		overlay.draw_set_transform_matrix(transform)
 		for c: Vector2i in cells:
 			overlay.draw_texture_rect(thumbnail, Rect2(tilemap.map_to_local(c) - drawn * 0.5, drawn), false, Color(1, 1, 1, 0.7))
@@ -1977,7 +1978,7 @@ func _draw_single_preview(overlay: Control, transform: Transform2D, cells: Array
 		if src.get_tile_at_coords(atlas) != atlas:
 			continue
 		var region: Rect2i = src.get_tile_texture_region(atlas, block.alt)
-		var at := Rect2(tilemap.map_to_local(c) - size * 0.5, size)
+		var at := Rect2(tilemap.map_to_local(c) - cell_size * 0.5, cell_size)
 		overlay.draw_texture_rect_region(src.texture, at, region, Color(1, 1, 1, 0.7))
 	overlay.draw_set_transform_matrix(Transform2D.IDENTITY)
 	return true
@@ -2020,8 +2021,8 @@ func canvas_input(event: InputEvent) -> bool:
 	
 	draw_overlay = true
 	if event is InputEventMouseMotion or event is InputEventMouseButton:
-		var tr := canvas_tilemap_transform()
-		var pos := tr.affine_inverse() * Vector2(event.position)
+		var canvas_xform := canvas_tilemap_transform()
+		var pos := canvas_xform.affine_inverse() * Vector2(event.position)
 		var event_position := tilemap.local_to_map(pos)
 		_mouse_local = pos
 		if paint_action == PaintAction.SLOPE and paint_mode != PaintMode.NO_PAINT and _freehand():
@@ -2366,6 +2367,7 @@ func _get_line(from:Vector2i, to:Vector2i) -> Array[Vector2i]:
 	var current := from
 	
 	if delta.x > delta.y:
+		@warning_ignore("integer_division")
 		var err:int = delta.x / 2
 		while current.x != to.x:
 			points.push_back(current);
@@ -2375,6 +2377,7 @@ func _get_line(from:Vector2i, to:Vector2i) -> Array[Vector2i]:
 				err += delta.x
 			current.x += step.x
 	else:
+		@warning_ignore("integer_division")
 		var err:int = delta.y / 2
 		while current.y != to.y:
 			points.push_back(current)
@@ -2389,20 +2392,20 @@ func _get_line(from:Vector2i, to:Vector2i) -> Array[Vector2i]:
 
 
 ## half-offset bresenham alg ported from TileMapEditor::get_line
-func _get_tileset_line(from:Vector2i, to:Vector2i, tileset:TileSet) -> Array[Vector2i]:
-	if tileset.tile_shape == TileSet.TILE_SHAPE_SQUARE:
+func _get_tileset_line(from:Vector2i, to:Vector2i, ts:TileSet) -> Array[Vector2i]:
+	if ts.tile_shape == TileSet.TILE_SHAPE_SQUARE:
 		return _get_line(from, to)
 	
 	var points:Array[Vector2i] = []
 	
-	var transposed := tileset.get_tile_offset_axis() == TileSet.TILE_OFFSET_AXIS_VERTICAL
+	var transposed := ts.get_tile_offset_axis() == TileSet.TILE_OFFSET_AXIS_VERTICAL
 	if transposed:
 		from = Vector2i(from.y, from.x)
 		to = Vector2i(to.y, to.x)
 
 	var delta:Vector2i = to - from
 	delta = Vector2i(2 * delta.x + abs(posmod(to.y, 2)) - abs(posmod(from.y, 2)), delta.y)
-	var sign:Vector2i = delta.sign()
+	var step:Vector2i = delta.sign()
 
 	var current := from;
 	points.push_back(Vector2i(current.y, current.x) if transposed else current)
@@ -2413,13 +2416,13 @@ func _get_tileset_line(from:Vector2i, to:Vector2i, tileset:TileSet) -> Array[Vec
 		while current != to:
 			err += err_step.y
 			if err > abs(delta.x):
-				if sign.x == 0:
-					current += Vector2i(sign.y, 0)
+				if step.x == 0:
+					current += Vector2i(step.y, 0)
 				else:
-					current += Vector2i(sign.x if bool(current.y % 2) != (sign.x < 0) else 0, sign.y)
+					current += Vector2i(step.x if bool(current.y % 2) != (step.x < 0) else 0, step.y)
 				err -= err_step.x
 			else:
-				current += Vector2i(sign.x, 0)
+				current += Vector2i(step.x, 0)
 				err += err_step.y
 			points.push_back(Vector2i(current.y, current.x) if transposed else current)
 	else:
@@ -2427,16 +2430,16 @@ func _get_tileset_line(from:Vector2i, to:Vector2i, tileset:TileSet) -> Array[Vec
 		while current != to:
 			err += err_step.x
 			if err > 0:
-				if sign.x == 0:
-					current += Vector2i(0, sign.y)
+				if step.x == 0:
+					current += Vector2i(0, step.y)
 				else:
-					current += Vector2i(sign.x if bool(current.y % 2) != (sign.x < 0) else 0, sign.y)
+					current += Vector2i(step.x if bool(current.y % 2) != (step.x < 0) else 0, step.y)
 				err -= err_step.y;
 			else:
-				if sign.x == 0:
-					current += Vector2i(0, sign.y)
+				if step.x == 0:
+					current += Vector2i(0, step.y)
 				else:
-					current += Vector2i(-sign.x if bool(current.y % 2) != (sign.x > 0) else 0, sign.y)
+					current += Vector2i(-step.x if bool(current.y % 2) != (step.x > 0) else 0, step.y)
 				err += err_step.y
 			points.push_back(Vector2i(current.y, current.x) if transposed else current)
 	
@@ -2618,6 +2621,7 @@ func _object_brush_cells(type: int, cells: Array) -> Array:
 func _brush_cells(cells: Array) -> Array:
 	if _brush_size <= 1:
 		return cells
+	@warning_ignore("integer_division")
 	var half := _brush_size / 2
 	var seen := {}
 	var out := []
@@ -3077,11 +3081,11 @@ func _draw_slope_preview(overlay: Control, transform: Transform2D, plan: Diction
 	if key != _slope_preview_key:
 		_slope_preview_key = key
 		_slope_preview = _slope_result(plan)
-	var size := Vector2(tilemap.tile_set.tile_size)
+	var cell_size := Vector2(tilemap.tile_set.tile_size)
 	overlay.draw_set_transform_matrix(transform)
 	for c: Vector2i in _slope_preview:
 		var tile: Array = _slope_preview[c]
-		var at := Rect2(tilemap.map_to_local(c) - size * 0.5, size)
+		var at := Rect2(tilemap.map_to_local(c) - cell_size * 0.5, cell_size)
 		overlay.draw_rect(at, Color(0.1, 0.1, 0.12, 0.55))
 		var src := tileset.get_source(tile[0]) as TileSetAtlasSource
 		if src != null and src.texture != null and src.has_alternative_tile(tile[1], tile[2]):
@@ -3089,19 +3093,19 @@ func _draw_slope_preview(overlay: Control, transform: Transform2D, plan: Diction
 			var td := src.get_tile_data(tile[1], tile[2])
 			var flip := Vector2(-1.0 if td.flip_h else 1.0, -1.0 if td.flip_v else 1.0)
 			overlay.draw_set_transform_matrix(transform * Transform2D(0.0, flip, 0.0, at.get_center()))
-			overlay.draw_texture_rect_region(src.texture, Rect2(-size * 0.5, size), src.get_tile_texture_region(tile[1]), Color(1, 1, 1, 0.85))
+			overlay.draw_texture_rect_region(src.texture, Rect2(-cell_size * 0.5, cell_size), src.get_tile_texture_region(tile[1]), Color(1, 1, 1, 0.85))
 			overlay.draw_set_transform_matrix(transform)
 	for c: Vector2i in plan.erase:
-		var at := Rect2(tilemap.map_to_local(c) - size * 0.5, size)
+		var at := Rect2(tilemap.map_to_local(c) - cell_size * 0.5, cell_size)
 		overlay.draw_rect(at, Color(0.95, 0.3, 0.25, 0.35))
 		overlay.draw_rect(at, Color(0.95, 0.3, 0.25), false, 1.0)
 	overlay.draw_set_transform_matrix(Transform2D.IDENTITY)
 	var label: String = plan.label if not plan.label.is_empty() else "Drag across rows and columns to draw a slope"
 	var font := get_theme_font("font", "Label")
-	var at := transform * tilemap.map_to_local(current_position) + Vector2(18, -14)
+	var label_at := transform * tilemap.map_to_local(current_position) + Vector2(18, -14)
 	var width := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x
-	overlay.draw_rect(Rect2(at - Vector2(6, 16), Vector2(width + 12, 22)), Color(0, 0, 0, 0.7))
-	overlay.draw_string(font, at, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.95, 0.7))
+	overlay.draw_rect(Rect2(label_at - Vector2(6, 16), Vector2(width + 12, 22)), Color(0, 0, 0, 0.7))
+	overlay.draw_string(font, label_at, label, HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 0.95, 0.7))
 
 
 # The plan is applied to a copy of the cells around it, so the preview shows the tiles it will end with
@@ -3514,11 +3518,11 @@ const OVEN_WAITING := \
 func _sync_oven_button() -> void:
 	if _oven_button == null:
 		return
-	var ready := false
+	var is_ready := false
 	if tileset != null and _oven_button.visible and selected_entry >= 0:
-		ready = ObjectTerrain.object_config(tileset, selected_entry).get("lone", []).size() == 2
-	_oven_button.disabled = not ready
-	_oven_button.tooltip_text = OVEN_READY if ready else OVEN_WAITING
+		is_ready = ObjectTerrain.object_config(tileset, selected_entry).get("lone", []).size() == 2
+	_oven_button.disabled = not is_ready
+	_oven_button.tooltip_text = OVEN_READY if is_ready else OVEN_WAITING
 
 
 func _on_oven_pressed() -> void:
@@ -4196,15 +4200,15 @@ func _mark_cliffs_dirty() -> void:
 		_order_watch_timer.start()
 
 
-func _warn_duplicate_name(name: String) -> void:
-	if tileset == null or name.is_empty():
+func _warn_duplicate_name(terrain_name: String) -> void:
+	if tileset == null or terrain_name.is_empty():
 		return
 	var n := 0
 	for i in BetterTerrain.terrain_count(tileset):
-		if BetterTerrain.get_terrain(tileset, i).get("name", "") == name:
+		if BetterTerrain.get_terrain(tileset, i).get("name", "") == terrain_name:
 			n += 1
 	if n > 1:
-		_say("%d terrains are called \"%s\". That is allowed, but a cliff sheet goes by name, so they would share one. Rename one of them if that is not what you meant." % [n, name])
+		_say("%d terrains are called \"%s\". That is allowed, but a cliff sheet goes by name, so they would share one. Rename one of them if that is not what you meant." % [n, terrain_name])
 
 
 func _say(message: String) -> void:
@@ -4269,11 +4273,11 @@ func _build_fill_scope() -> void:
 	fill_button.toggled.connect(func(_on): _sync_fill_scope())
 
 
-func _fill_scope_button(toolbar: Node, group: ButtonGroup, name: String, text: String,
+func _fill_scope_button(toolbar: Node, group: ButtonGroup, scope_name: String, text: String,
 		tip: String) -> Button:
 	var b := Button.new()
-	b.name = name
-	_icon_or_text(b, ICON_DIR + name + ".svg", [], text)
+	b.name = scope_name
+	_icon_or_text(b, ICON_DIR + scope_name + ".svg", [], text)
 	b.tooltip_text = "%s\n\n%s" % [text, tip]
 	b.toggle_mode = true
 	b.button_group = group
@@ -4394,12 +4398,12 @@ func _sync_scatter_outlines() -> void:
 	tile_view.queue_redraw()
 
 
-func _on_scatter_picked(source_id: int, origin: Vector2i, size: Vector2i) -> void:
+func _on_scatter_picked(source_id: int, origin: Vector2i, block_size: Vector2i) -> void:
 	if _is_single(selected_entry):
-		_set_single_tile(source_id, origin, size)
+		_set_single_tile(source_id, origin, block_size)
 		return
 	if _scatter_bag != null and _scatter_bag.visible:
-		_scatter_bag.add_entry(source_id, origin, size)
+		_scatter_bag.add_entry(source_id, origin, block_size)
 
 
 func _on_scatter_dropped(source_id: int, coord: Vector2i) -> void:
@@ -4426,15 +4430,15 @@ func _is_single(type: int) -> bool:
 	return t.valid and int(t.type) == BetterTerrain.TerrainType.SINGLE
 
 
-func _set_single_tile(source_id: int, coord: Vector2i, size := Vector2i.ONE, alternate := 0) -> void:
+func _set_single_tile(source_id: int, coord: Vector2i, tile_size := Vector2i.ONE, alternate := 0) -> void:
 	if tileset == null or not _is_single(selected_entry):
 		return
 	var id := selected_entry
 	var was: Dictionary = BetterTerrain.single_block_of(tileset, id)
-	if not was.is_empty() and was.source == source_id and was.origin == coord and was.alt == alternate and was.size == size:
+	if not was.is_empty() and was.source == source_id and was.origin == coord and was.alt == alternate and was.size == tile_size:
 		return
 	undo_manager.create_action(tr("Pick the tile"), UndoRedo.MERGE_DISABLE, tileset)
-	undo_manager.add_do_method(BetterTerrain, &"set_single_tile", tileset, source_id, coord, alternate, size, false)
+	undo_manager.add_do_method(BetterTerrain, &"set_single_tile", tileset, source_id, coord, alternate, tile_size, false)
 	if was.is_empty():
 		undo_manager.add_undo_method(BetterTerrain, &"set_single_tile", tileset, -1, Vector2i.ZERO, 0, Vector2i.ONE, false)
 	else:
@@ -4776,7 +4780,7 @@ func _map_selection_mesh(visible_rect: Rect2, transform: Transform2D) -> Diction
 			continue
 		var layer_transform := transform * active_inverse * layer.global_transform
 		var shape: PackedVector2Array = BetterTerrain.data.cell_polygon(layer.tile_set)
-		var size := Vector2(layer.tile_set.tile_size)
+		var cell_size := Vector2(layer.tile_set.tile_size)
 		for moved in ([false, true] if _map_drag_delta != Vector2i.ZERO else [false]):
 			var tint := Color(0.4, 1.0, 0.6, 0.30) if moved else Color(0.4, 0.8, 1.0, 0.28 if _map_drag_delta == Vector2i.ZERO else 0.10)
 			for cell: Vector2i in layers[layer]:
@@ -4785,7 +4789,7 @@ func _map_selection_mesh(visible_rect: Rect2, transform: Transform2D) -> Diction
 				var center := layer.map_to_local(cell)
 				var polygon := PackedVector2Array()
 				for corner in shape:
-					polygon.append(layer_transform * (center + corner * size))
+					polygon.append(layer_transform * (center + corner * cell_size))
 				var bounds := Rect2(polygon[0], Vector2.ZERO)
 				for corner in polygon:
 					bounds = bounds.expand(corner)
@@ -4920,12 +4924,12 @@ func _quick_terrain_name(source_id: int, kind: int) -> String:
 	var taken := {}
 	for i in BetterTerrain.terrain_count(tileset):
 		taken[str(BetterTerrain.get_terrain(tileset, i).name)] = true
-	var name := base
+	var candidate := base
 	var n := 2
-	while taken.has(name):
-		name = "%s %d" % [base, n]
+	while taken.has(candidate):
+		candidate = "%s %d" % [base, n]
 		n += 1
-	return name
+	return candidate
 
 
 func _create_quick_terrain(kind: int) -> void:
@@ -4958,15 +4962,15 @@ func _create_quick_terrain(kind: int) -> void:
 		if tileset.has_meta(BetterTerrain.TERRAIN_META) else null
 	var before_tables = tileset.get_meta(EXEMPLAR_DATA.META).duplicate(true) \
 		if tileset.has_meta(EXEMPLAR_DATA.META) else null
-	var name := _quick_terrain_name(block.source, kind)
+	var terrain_name := _quick_terrain_name(block.source, kind)
 	var color := Color.from_hsv(randf(), 0.3 + 0.7 * randf(), 0.6 + 0.4 * randf())
-	undo_manager.create_action(tr("Create %s") % name, UndoRedo.MERGE_DISABLE, tileset)
-	undo_manager.add_do_method(self, &"perform_quick_terrain", kind, name, color, block.source, rect, block.alt, tiles, new_tiles)
+	undo_manager.create_action(tr("Create %s") % terrain_name, UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(self, &"perform_quick_terrain", kind, terrain_name, color, block.source, rect, block.alt, tiles, new_tiles)
 	undo_manager.add_undo_method(self, &"_restore_quick_terrain", before_meta, before_tables, tile_metas, block.source, new_tiles)
 	undo_manager.commit_action()
 
 
-func perform_quick_terrain(kind: int, name: String, color: Color, source_id: int, rect: Rect2i, alt: int, tiles: Array, new_tiles: Array = []) -> void:
+func perform_quick_terrain(kind: int, terrain_name: String, color: Color, source_id: int, rect: Rect2i, alt: int, tiles: Array, new_tiles: Array = []) -> void:
 	var src := tileset.get_source(source_id) as TileSetAtlasSource
 	tiles = tiles.duplicate()
 	for c: Vector2i in new_tiles:
@@ -4983,7 +4987,7 @@ func perform_quick_terrain(kind: int, name: String, color: Color, source_id: int
 			for c: Vector2i in tiles:
 				bag.append(SCATTER_TERRAIN.make_entry(source_id, c, src.get_tile_size_in_atlas(c)))
 			object = {bag = bag}
-	if not BetterTerrain.add_terrain(tileset, name, color, QUICK_TYPES[kind], [], {}, group, object):
+	if not BetterTerrain.add_terrain(tileset, terrain_name, color, QUICK_TYPES[kind], [], {}, group, object):
 		return
 	var id := BetterTerrain.terrain_count(tileset) - 1
 	if kind != QuickKind.SCATTER:
@@ -5010,7 +5014,7 @@ func perform_quick_terrain(kind: int, name: String, color: Color, source_id: int
 			# Same reading as the Patch editor: outer ring is the bank, inside is water (see "lake").
 			var table := EXEMPLAR_DATA.learn_from_block(tileset, id, source_id)
 			if not table.is_empty():
-				EXEMPLAR_DATA.store_table(tileset, name, table)
+				EXEMPLAR_DATA.store_table(tileset, terrain_name, table)
 	rebuild_terrain_list()
 	_select_terrain(id)
 

@@ -168,11 +168,11 @@ func _swatch(color: Color) -> ImageTexture:
 
 
 func _on_add() -> void:
-	var name := _name_edit.text.strip_edges()
-	if name.is_empty():
+	var group_name := _name_edit.text.strip_edges()
+	if group_name.is_empty():
 		return
 
-	if BetterTerrain.add_terrain_group(tileset, name):
+	if BetterTerrain.add_terrain_group(tileset, group_name):
 		_name_edit.text = ""
 		refresh()
 		groups_changed.emit()
@@ -183,40 +183,40 @@ func _on_rename() -> void:
 	if index < 0:
 		return
 
-	var name := _name_edit.text.strip_edges()
-	if name.is_empty():
+	var group_name := _name_edit.text.strip_edges()
+	if group_name.is_empty():
 		_name_edit.text = selected_group()
 		_name_edit.grab_focus()
 		return
 
-	if BetterTerrain.rename_terrain_group(tileset, index, name):
+	if BetterTerrain.rename_terrain_group(tileset, index, group_name):
 		_name_edit.text = ""
 		refresh()
 		groups_changed.emit()
 
 
 func _on_remove() -> void:
-	var name := selected_group()
-	if name.is_empty():
+	var group_name := selected_group()
+	if group_name.is_empty():
 		return
-	var count := BetterTerrain.get_terrains_in_group(tileset, name).size()
+	var count := BetterTerrain.get_terrains_in_group(tileset, group_name).size()
 	if count == 0:
-		_remove_group(name)
+		_remove_group(group_name)
 		return
 	var confirmation := ConfirmationDialog.new()
 	confirmation.title = "Remove terrain group"
-	confirmation.dialog_text = "Remove '%s'?\n\nIts %d terrain(s) will move to General. The terrains and their tiles will not be deleted." % [name, count]
+	confirmation.dialog_text = "Remove '%s'?\n\nIts %d terrain(s) will move to General. The terrains and their tiles will not be deleted." % [group_name, count]
 	add_child(confirmation)
 	confirmation.confirmed.connect(func():
-		_remove_group(name)
+		_remove_group(group_name)
 		confirmation.queue_free())
 	confirmation.canceled.connect(confirmation.queue_free)
 	confirmation.popup_centered()
 
 
-func _remove_group(name: String) -> void:
+func _remove_group(group_name: String) -> void:
 	var groups := BetterTerrain.get_terrain_groups(tileset)
-	var index := groups.find_custom(func(group): return group.name == name)
+	var index := groups.find_custom(func(group): return group.name == group_name)
 	if index >= 0 and BetterTerrain.remove_terrain_group(tileset, index):
 		refresh()
 		groups_changed.emit()

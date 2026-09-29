@@ -40,7 +40,7 @@ func _enter_tree() -> void:
 	_support_editor.prepare_scene(EditorInterface.get_edited_scene_root())
 	dock = load("res://addons/better-tile-editor/editor/Dock.tscn").instantiate()
 	dock.update_overlay.connect(self.update_overlays)
-	get_editor_interface().get_editor_main_screen().mouse_exited.connect(dock.canvas_mouse_exit)
+	EditorInterface.get_editor_main_screen().mouse_exited.connect(dock.canvas_mouse_exit)
 	dock.undo_manager = get_undo_redo()
 	dock.force_show_terrains.connect(_show_terrain_panel)
 	dock.make_floating_toggled.connect(_on_make_floating_toggled)
@@ -89,7 +89,7 @@ func _ask_restart() -> void:
 		OS.set_restart_on_exit(true, ["-e"])
 		get_tree().quit()
 	)
-	get_editor_interface().popup_dialog_centered(confirm)
+	EditorInterface.popup_dialog_centered(confirm)
 
 
 # Godot 4.7 editor autoloads may be unnamed; match the script as a fallback.
@@ -106,6 +106,9 @@ func _autoload_is_loaded() -> bool:
 
 
 func _exit_tree() -> void:
+	# Removed before _enter_tree finished its first frame: nothing was set up
+	if dock == null:
+		return
 	_set_picker_cursor(false)
 	_support_editor.queue_free()
 	dock.tilemap = null
@@ -372,7 +375,7 @@ func _dock_to_floating_window() -> void:
 	floating_window.add_child(dock)
 	dock.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
-	get_editor_interface().get_base_control().add_child(floating_window)
+	EditorInterface.get_base_control().add_child(floating_window)
 	floating_window.popup_centered()
 	dock.show()
 	dock.about_to_be_visible(true)

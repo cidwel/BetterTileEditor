@@ -116,22 +116,22 @@ var _height_spin: SpinBox
 var initial_height := -1
 
 
-func setup(ts: TileSet, index: int, name: String, height := -1) -> void:
+func setup(ts: TileSet, index: int, cliff_name: String, height := -1) -> void:
 	initial_height = height
 	_bt = get_node_or_null("/root/BetterTerrain")
 	if _bt == null:
 		_bt = load("res://addons/better-tile-editor/BetterTerrain.gd").new()
 	tile_set = ts
 	terrain_index = index
-	terrain_name = name
-	_cfg = CliffData.config_of(ts, name)
+	terrain_name = cliff_name
+	_cfg = CliffData.config_of(ts, cliff_name)
 	if CliffPattern.is_pattern(_cfg):
 		_kind = KIND_PATTERN
 		_simple_mode = false
-	_migrate_orphan_slots(name)
+	_migrate_orphan_slots(cliff_name)
 	_puff_tex = _make_puff_texture()
 	_refresh_mask()
-	title = "Cliff face: %s" % name
+	title = "Cliff face: %s" % cliff_name
 	size = Vector2i(1200, 760)
 	_build()
 	_refresh()
@@ -687,7 +687,6 @@ func _refresh() -> void:
 
 	_update_info()
 
-	var missing := CliffData.missing_slots(_cfg, _height())
 	var total := 0
 	for r in used:
 		for c in CliffData.CASES:
@@ -863,8 +862,8 @@ func _update_marker() -> void:
 func _tile_texture(tile: Dictionary) -> Texture2D:
 	if tile.is_empty() or tile_set == null:
 		return null
-	var size := CliffData.block_size(tile)
-	var key := "%s:%s:%s" % [tile.get("source_id", -1), tile.get("coord", Vector2i.ZERO), size]
+	var block_size := CliffData.block_size(tile)
+	var key := "%s:%s:%s" % [tile.get("source_id", -1), tile.get("coord", Vector2i.ZERO), block_size]
 	if _tex_cache.has(key):
 		return _tex_cache[key]
 	var src := tile_set.get_source(tile.get("source_id", -1))
@@ -874,8 +873,8 @@ func _tile_texture(tile: Dictionary) -> Texture2D:
 	var at := AtlasTexture.new()
 	at.atlas = src.texture
 	var region: Rect2i = src.get_tile_texture_region(coord)
-	if size != Vector2i.ONE and src.has_tile(coord + size - Vector2i.ONE):
-		region = region.merge(src.get_tile_texture_region(coord + size - Vector2i.ONE))
+	if block_size != Vector2i.ONE and src.has_tile(coord + block_size - Vector2i.ONE):
+		region = region.merge(src.get_tile_texture_region(coord + block_size - Vector2i.ONE))
 	at.region = region
 	_tex_cache[key] = at
 	return at
@@ -1103,7 +1102,7 @@ func _cell_at(pos: Vector2) -> Vector2i:
 
 
 func _set_matrix_target(lo: Vector2i, hi: Vector2i) -> void:
-	var size := hi - lo + Vector2i.ONE
+	var span := hi - lo + Vector2i.ONE
 	var slots := {}
 	var rows := {}
 	for y in range(lo.y, hi.y + 1):
@@ -1121,7 +1120,7 @@ func _set_matrix_target(lo: Vector2i, hi: Vector2i) -> void:
 			foot = mini(foot, int(_last_faces[c].rise))
 	if foot == 9999:
 		foot = 0
-	_matrix_target = {"size": size, "slots": slots.keys(), "foot": foot}
+	_matrix_target = {"size": span, "slots": slots.keys(), "foot": foot}
 	_status.text = _pending_unit_text()
 	_preview_overlay.queue_redraw()
 
@@ -1475,7 +1474,7 @@ func _rect_texture(source_id: int, rect: Rect2i) -> Texture2D:
 	return at
 
 
-func assign_tile(source_id: int, coord: Vector2i, size := Vector2i.ONE) -> bool:
+func assign_tile(source_id: int, coord: Vector2i, tile_size := Vector2i.ONE) -> bool:
 	if _refuse_if_inherited(): return true
 	if _kind == KIND_PATTERN:
 		if _pattern_armed == "":
@@ -1487,12 +1486,12 @@ func assign_tile(source_id: int, coord: Vector2i, size := Vector2i.ONE) -> bool:
 			return true
 		_cfg["source_id"] = source_id
 		var piece := _pattern_piece(_pattern_armed)
-		piece["rect"] = Rect2i(coord, size)
+		piece["rect"] = Rect2i(coord, tile_size)
 		if _pattern_armed != "body":
 			piece["use"] = true
 		_save()
 		_refresh()
-		_status.text = "[b]%s[/b] is now %dx%d at %d,%d." % [_pattern_armed, size.x, size.y, coord.x, coord.y]
+		_status.text = "[b]%s[/b] is now %dx%d at %d,%d." % [_pattern_armed, tile_size.x, tile_size.y, coord.x, coord.y]
 		return true
 	if not _matrix_target.is_empty():
 		var target: Dictionary = _matrix_target
@@ -1515,8 +1514,8 @@ func assign_tile(source_id: int, coord: Vector2i, size := Vector2i.ONE) -> bool:
 		return true
 	if _selected == "": return false
 	var tile := {"source_id": source_id, "coord": coord}
-	if size.x > 1 or size.y > 1:
-		tile["size"] = size
+	if tile_size.x > 1 or tile_size.y > 1:
+		tile["size"] = tile_size
 	for k in _selected_slots():
 		var parts: PackedStringArray = str(k).split("/")
 		CliffData.set_slot_tile(_cfg, parts[0], parts[1], tile.duplicate())
@@ -1545,7 +1544,7 @@ func _draw_pattern_pieces() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, col)
 
 
-func _palette_rect_of(source_id: int, coord: Vector2i, size: Vector2i) -> Rect2:
+func _palette_rect_of(source_id: int, coord: Vector2i, tile_size: Vector2i) -> Rect2:
 	var tv = _palette_view
 	if tv == null or tv.tileset == null:
 		return Rect2()
@@ -1560,8 +1559,8 @@ func _palette_rect_of(source_id: int, coord: Vector2i, size: Vector2i) -> Rect2:
 			continue
 		if sid == source_id and src.has_tile(coord):
 			var r: Rect2i = src.get_tile_texture_region(coord, 0)
-			var last := coord + size - Vector2i.ONE
-			if size != Vector2i.ONE and src.has_tile(last):
+			var last := coord + tile_size - Vector2i.ONE
+			if tile_size != Vector2i.ONE and src.has_tile(last):
 				r = r.merge(src.get_tile_texture_region(last, 0))
 			return Rect2(offset + tv.zoom_level * Vector2(r.position), tv.zoom_level * Vector2(r.size))
 		offset.y += tv.zoom_level * src.texture.get_height()
@@ -1587,15 +1586,15 @@ func _draw_palette_current() -> void:
 		borrowed = true
 	if tile.is_empty():
 		return
-	var size := CliffData.block_size(tile)
-	var r := _palette_rect_of(int(tile.source_id), tile.coord, size)
+	var block_size := CliffData.block_size(tile)
+	var r := _palette_rect_of(int(tile.source_id), tile.coord, block_size)
 	if r.size.x <= 0.0:
 		return
 	var col := Color(1, 0.85, 0.3, 0.9) if not borrowed else Color(1, 0.85, 0.3, 0.45)
 	_palette_pick.draw_rect(r, Color(col.r, col.g, col.b, 0.12), true)
 	_palette_pick.draw_rect(r, col, false, 2.0)
 	var f := get_theme_default_font()
-	var label := "%dx%d" % [size.x, size.y] if size != Vector2i.ONE else ""
+	var label := "%dx%d" % [block_size.x, block_size.y] if block_size != Vector2i.ONE else ""
 	if borrowed:
 		label = ("borrowed " + label).strip_edges()
 	if label != "":
@@ -1684,8 +1683,8 @@ func _on_palette_input(event: InputEvent) -> void:
 	_on_palette_pressed(int(anchor.source_id), lo, hi - lo + Vector2i.ONE)
 
 
-func _on_palette_pressed(source_id: int, coord: Vector2i, size := Vector2i.ONE) -> void:
-	if not assign_tile(source_id, coord, size):
+func _on_palette_pressed(source_id: int, coord: Vector2i, tile_size := Vector2i.ONE) -> void:
+	if not assign_tile(source_id, coord, tile_size):
 		_status.text = "[color=#e0a34a]Pick a slot in the sheet first.[/color]"
 
 
@@ -1790,12 +1789,12 @@ func _pending_unit_text() -> String:
 	if _matrix_target.is_empty():
 		return ""
 	var names := ", ".join(PackedStringArray(_matrix_target.slots))
-	var size: Vector2i = _matrix_target.size
+	var target_size: Vector2i = _matrix_target.size
 	var note := ""
-	if size.y > 1 and not bool(_cfg.get("from_bottom", false)):
+	if target_size.y > 1 and not bool(_cfg.get("from_bottom", false)):
 		note = "  [color=#e0a34a]Taller than one row, so “repeat from the bottom” will be turned on.[/color]"
 	return "[b]Repeating unit %dx%d[/b] over %s.%s\nNow pick its top-left tile in the palette, or drag the same rectangle there." % [
-		size.x, size.y, names, note]
+		target_size.x, target_size.y, names, note]
 
 
 func _refuse_if_inherited() -> bool:
@@ -1840,12 +1839,12 @@ func _on_make_local() -> void:
 
 
 func _make_puff_texture() -> Texture2D:
-	var size := 32
-	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
-	var centre := (size - 1) * 0.5
-	for y in size:
-		for x in size:
-			var d: float = Vector2(x - centre, y - centre).length() / (size * 0.5)
+	var swatch := 32
+	var img := Image.create(swatch, swatch, false, Image.FORMAT_RGBA8)
+	var centre := (swatch - 1) * 0.5
+	for y in swatch:
+		for x in swatch:
+			var d: float = Vector2(x - centre, y - centre).length() / (swatch * 0.5)
 			var a: float = clampf(1.0 - d, 0.0, 1.0)
 			a = a * a * a
 			img.set_pixel(x, y, Color(1.0, 1.0, 1.0, a))
@@ -1955,8 +1954,8 @@ func _ask_shape_name() -> void:
 	if _built.is_empty():
 		_status.text = "[color=#e0a34a]Nothing drawn yet.[/color]  Turn on Build and paint something first."
 		return
-	var popup := ConfirmationDialog.new()
-	popup.title = "Save as shape"
+	var dialog := ConfirmationDialog.new()
+	dialog.title = "Save as shape"
 	var box := VBoxContainer.new()
 	var lab := Label.new()
 	lab.text = "Name for the new shape:"
@@ -1965,13 +1964,13 @@ func _ask_shape_name() -> void:
 	field.text = _editing_shape if _editing_shape != "" else "My shape"
 	field.custom_minimum_size.x = 280
 	box.add_child(field)
-	popup.add_child(box)
-	add_child(popup)
-	popup.confirmed.connect(func() -> void:
+	dialog.add_child(box)
+	add_child(dialog)
+	dialog.confirmed.connect(func() -> void:
 		_save_as_shape(field.text.strip_edges())
-		popup.queue_free())
-	popup.canceled.connect(popup.queue_free)
-	popup.popup_centered()
+		dialog.queue_free())
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.popup_centered()
 	field.grab_focus()
 	field.select_all()
 
@@ -2227,7 +2226,7 @@ func _useless_slots() -> Array:
 
 
 ## Remove obsolete slots only from owned sheets; inherited data belongs to another terrain.
-func _migrate_orphan_slots(name: String) -> void:
+func _migrate_orphan_slots(cliff_name: String) -> void:
 	if _inherited_from() != "":
 		return
 	var orphans := _useless_slots()
@@ -2237,20 +2236,20 @@ func _migrate_orphan_slots(name: String) -> void:
 		_cfg["slots"].erase(k)
 	_save()
 	print("[BetterTerrain] %s: dropped %d slot(s) no version of the table can use: %s" % [
-		name, orphans.size(), ", ".join(orphans)])
+		cliff_name, orphans.size(), ", ".join(orphans)])
 
 
 func _on_clear_all() -> void:
-	var popup := ConfirmationDialog.new()
-	popup.dialog_text = tr("Remove the cliff configuration for '%s'?\n\nThis clears the sheet, its height settings and any inheritance link. You can undo this change.") % terrain_name
-	popup.title = tr("Clear the sheet")
-	add_child(popup)
-	popup.confirmed.connect(func() -> void:
+	var dialog := ConfirmationDialog.new()
+	dialog.dialog_text = tr("Remove the cliff configuration for '%s'?\n\nThis clears the sheet, its height settings and any inheritance link. You can undo this change.") % terrain_name
+	dialog.title = tr("Clear the sheet")
+	add_child(dialog)
+	dialog.confirmed.connect(func() -> void:
 		clear_requested.emit(tile_set, terrain_name)
 		reload_config()
-		popup.queue_free())
-	popup.canceled.connect(popup.queue_free)
-	popup.popup_centered()
+		dialog.queue_free())
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.popup_centered()
 
 
 ## Re-read the sheet after it was cleared or restored from outside.

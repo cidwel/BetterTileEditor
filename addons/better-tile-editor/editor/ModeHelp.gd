@@ -611,20 +611,20 @@ func _project_tilesets() -> Array:
 		if dir == null:
 			continue
 		dir.list_dir_begin()
-		var name := dir.get_next()
-		while name != "":
-			var path := at.path_join(name)
+		var entry := dir.get_next()
+		while entry != "":
+			var path := at.path_join(entry)
 			if dir.current_is_dir():
-				if not name.begins_with(".") and name != "addons":
+				if not entry.begins_with(".") and entry != "addons":
 					pending.append(path)
-			elif name.ends_with(".tres"):
+			elif entry.ends_with(".tres"):
 				var f := FileAccess.open(path, FileAccess.READ)
 				if f != null:
 					var head := f.get_buffer(120).get_string_from_utf8()
 					f.close()
 					if head.contains('type="TileSet"'):
 						found.append(path)
-			name = dir.get_next()
+			entry = dir.get_next()
 		dir.list_dir_end()
 	return found
 
@@ -697,15 +697,15 @@ func _lone_example() -> Dictionary:
 	var bt := _better_terrain()
 	if index < 0 or bt == null or _example_ts == null:
 		return _lone
-	var size := ObjectTerrain.object_size(_example_ts, index)
-	if size.x <= 0:
-		size = Vector2i(2, 2)
+	var object_size := ObjectTerrain.object_size(_example_ts, index)
+	if object_size.x <= 0:
+		object_size = Vector2i(2, 2)
 	var layer := TileMapLayer.new()
 	layer.tile_set = _example_ts
 	add_child(layer)
 	var cells := []
-	for y in size.y:
-		for x in size.x:
+	for y in object_size.y:
+		for x in object_size.x:
 			cells.append(Vector2i(x, y))
 	bt.set_cells(layer, cells, index)
 	bt.update_terrain_cells(layer, cells)
@@ -737,19 +737,20 @@ func _area_example() -> Array:
 	var cfg: Dictionary = t.get("object", {}).duplicate()
 	cfg["mass"] = true
 	bt.set_terrain_object(ts, _example_index, cfg)
-	var size := ObjectTerrain.object_size(ts, _example_index)
-	if size.x <= 0:
-		size = Vector2i(2, 2)
+	var object_size := ObjectTerrain.object_size(ts, _example_index)
+	if object_size.x <= 0:
+		object_size = Vector2i(2, 2)
 	var layer := TileMapLayer.new()
 	layer.tile_set = ts
 	add_child(layer)
-	var w: int = size.x * 3
-	var h: int = size.y * 2
+	var w: int = object_size.x * 3
+	var h: int = object_size.y * 2
 	var cells := []
 	for y in h:
 		for x in w:
 			if (x == 0 or x == w - 1) and (y == 0 or y == h - 1):
 				continue
+			@warning_ignore("integer_division")
 			if x >= w / 2 - 1 and x <= w / 2 and y >= h / 2 - 1 and y <= h / 2:
 				continue
 			cells.append(Vector2i(x, y))
@@ -1048,6 +1049,7 @@ func _draw_all_tiles() -> bool:
 		var coord: Vector2i = entry.coord
 		if not src.has_tile(coord):
 			continue
+		@warning_ignore("integer_division")
 		var where := Rect2(origin + Vector2(i % cols, i / cols) * step, Vector2(box, box))
 		_canvas.draw_texture_rect_region(src.texture, where, src.get_tile_texture_region(coord))
 		var at := Transform2D(0.0, where.size, 0.0, where.position)
@@ -1117,10 +1119,10 @@ func _draw_not_sides() -> void:
 	if bt == null:
 		return
 	var font := get_theme_default_font()
-	var size := 110.0
+	var diagram_size := 110.0
 	var captions := ["first click: must match", "second click: must not"]
 	for i in 2:
-		var box := Rect2(Vector2(40 + i * (size + 70), 50), Vector2(size, size))
+		var box := Rect2(Vector2(40 + i * (diagram_size + 70), 50), Vector2(diagram_size, diagram_size))
 		_canvas.draw_rect(box, terrain_color.darkened(0.55))
 		_canvas.draw_rect(box, Color(1, 1, 1, 0.25), false, 1.0)
 		var at := Transform2D(0.0, box.size, 0.0, box.position)
@@ -1129,9 +1131,9 @@ func _draw_not_sides() -> void:
 			_mark(top, Color(terrain_color, 0.55), Color(terrain_color, 0.95))
 		else:
 			_not_mark(top, terrain_color, bt)
-		_canvas.draw_string(font, box.position + Vector2(0, size + 22), captions[i],
+		_canvas.draw_string(font, box.position + Vector2(0, diagram_size + 22), captions[i],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.7))
-	_canvas.draw_string(font, Vector2(40, 50 + size + 48), "right click clears either one",
+	_canvas.draw_string(font, Vector2(40, 50 + diagram_size + 48), "right click clears either one",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.55))
 
 
@@ -1266,9 +1268,9 @@ func _draw_decoration() -> void:
 func _draw_object(joined: bool) -> void:
 	var lone := _lone_example()
 	var patch := _real_example()
-	var size := ObjectTerrain.object_size(_example_ts, _example_index) if _example_ts else Vector2i(2, 2)
-	if size.x <= 0:
-		size = Vector2i(2, 2)
+	var object_size := ObjectTerrain.object_size(_example_ts, _example_index) if _example_ts else Vector2i(2, 2)
+	if object_size.x <= 0:
+		object_size = Vector2i(2, 2)
 	var font := get_theme_default_font()
 	var cs := _cell_size() * 1.5
 	var origin := Vector2(34, 44)
@@ -1276,31 +1278,31 @@ func _draw_object(joined: bool) -> void:
 	if lone.is_empty():
 		var blocks := 3 if joined else 1
 		for bi in blocks:
-			var at: Vector2 = origin + Vector2(bi * cs.x * float(size.x), 0)
-			for y in size.y:
-				for x in size.x:
+			var at: Vector2 = origin + Vector2(bi * cs.x * float(object_size.x), 0)
+			for y in object_size.y:
+				for x in object_size.x:
 					var where := Rect2(at + Vector2(x, y) * cs, cs)
 					_canvas.draw_rect(where, terrain_color)
 					_canvas.draw_rect(where, Color(0, 0, 0, 0.3), false, 1.0)
-			_canvas.draw_rect(Rect2(at, cs * Vector2(size)), Color(1.0, 0.85, 0.3), false, 2.0)
-		_canvas.draw_string(font, origin + Vector2(0, cs.y * float(size.y) + 26),
+			_canvas.draw_rect(Rect2(at, cs * Vector2(object_size)), Color(1.0, 0.85, 0.3), false, 2.0)
+		_canvas.draw_string(font, origin + Vector2(0, cs.y * float(object_size.y) + 26),
 			"this tileset has no object terrain to show", HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
 			Color(1, 1, 1, 0.6))
 		return
 
-	var span := cs * Vector2(size)
-	_draw_block(lone, Vector2i.ZERO, size, origin, cs)
+	var span := cs * Vector2(object_size)
+	_draw_block(lone, Vector2i.ZERO, object_size, origin, cs)
 	_canvas.draw_rect(Rect2(origin, span), Color(1.0, 0.85, 0.3), false, 2.0)
 	_canvas.draw_string(font, origin + Vector2(0, span.y + 22), "LONE",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1.0, 0.85, 0.3))
 	if not joined:
 		_canvas.draw_string(font, origin + Vector2(0, span.y + 46),
-			"one block, %dx%d cells, placed as a single piece" % [size.x, size.y],
+			"one block, %dx%d cells, placed as a single piece" % [object_size.x, object_size.y],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(1, 1, 1, 0.55))
 		return
 
 	var second := origin + Vector2(span.x + 46, 0)
-	_draw_block(patch, size, size, second, cs)
+	_draw_block(patch, object_size, object_size, second, cs)
 	_canvas.draw_rect(Rect2(second, span), Color(0.45, 0.8, 1.0), false, 2.0)
 	_canvas.draw_string(font, second + Vector2(0, span.y + 22), "JOINED",
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(0.45, 0.8, 1.0))
@@ -1312,9 +1314,9 @@ func _draw_object(joined: bool) -> void:
 		HORIZONTAL_ALIGNMENT_LEFT, int(maxf(_canvas.size.x - 50.0, 300.0)), 12, Color(1, 1, 1, 0.5))
 
 
-func _draw_block(cells: Dictionary, from: Vector2i, size: Vector2i, at: Vector2, cs: Vector2) -> void:
-	for y in size.y:
-		for x in size.x:
+func _draw_block(cells: Dictionary, from: Vector2i, block_size: Vector2i, at: Vector2, cs: Vector2) -> void:
+	for y in block_size.y:
+		for x in block_size.x:
 			var cell := from + Vector2i(x, y)
 			if not cells.has(cell):
 				continue

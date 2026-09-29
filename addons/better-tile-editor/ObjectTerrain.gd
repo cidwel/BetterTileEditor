@@ -70,7 +70,9 @@ static func detect_blocks(ts: TileSet, terrain_id: int, size: Vector2i = Vector2
 
 			if size.x > 0 and size.y > 0 and filled \
 					and rect.size.x % size.x == 0 and rect.size.y % size.y == 0:
+				@warning_ignore("integer_division")
 				for by in rect.size.y / size.y:
+					@warning_ignore("integer_division")
 					for bx in rect.size.x / size.x:
 						out.push_back({
 							"source_id": sid,
@@ -234,6 +236,7 @@ static func anchor_of(cell: Vector2i, size: Vector2i) -> Vector2i:
 
 static func mass_anchor(cell: Vector2i, base_size: Vector2i) -> Vector2i:
 	var row := floori(float(cell.y) / base_size.y)
+	@warning_ignore("integer_division")
 	var shift := Vector2i(base_size.x / 2 if posmod(row, 2) == 1 else 0, 0)
 	return anchor_of(cell - shift, base_size) + shift
 
@@ -355,9 +358,9 @@ static func fix_cells(tm: TileMapLayer, cells: Array, erasing: bool = false, pai
 		var o := object_of_cell(tm, c, objects)
 		if o.is_empty():
 			for cand in objects:
-				var a := anchor_of(c, cand["size"])
-				if not object_at(tm, a, cand, objects).is_empty():
-					anchors[a] = cand
+				var cand_anchor := anchor_of(c, cand["size"])
+				if not object_at(tm, cand_anchor, cand, objects).is_empty():
+					anchors[cand_anchor] = cand
 			continue
 		var a := anchor_of(c, o["size"])
 		anchors[a] = o
@@ -592,6 +595,7 @@ static func mass_origins(painted: Dictionary, size: Vector2i, base: Rect2i, prev
 	for c in painted:
 		lo = Vector2i(mini(lo.x, c.x), mini(lo.y, c.y))
 		hi = Vector2i(maxi(hi.x, c.x), maxi(hi.y, c.y))
+	@warning_ignore("integer_division")
 	var step_y := maxi(1, size.y / 2)
 	var out := []
 	var covered := {}
@@ -602,6 +606,7 @@ static func mass_origins(painted: Dictionary, size: Vector2i, base: Rect2i, prev
 			_record_mass_coverage(origin, size, base, covered, occupied)
 	var ay := floori(float(lo.y - size.y) / float(step_y)) * step_y
 	while ay <= hi.y:
+		@warning_ignore("integer_division")
 		var off: int = size.x / 2 if posmod(ay / step_y, 2) == 1 else 0
 		var ax := floori(float(lo.x - size.x - off) / float(size.x)) * size.x + off
 		while ax <= hi.x + size.x:
@@ -780,9 +785,9 @@ static func _record_mass_coverage(origin: Vector2i, size: Vector2i, base: Rect2i
 
 static func _mass_marker(source: TileSetAtlasSource, coord: Vector2i) -> int:
 	for i in source.get_alternative_tiles_count(coord):
-		var alternative := source.get_alternative_tile_id(coord, i)
-		if source.get_tile_data(coord, alternative).get_meta(MASS_MARKER, false):
-			return alternative
+		var existing := source.get_alternative_tile_id(coord, i)
+		if source.get_tile_data(coord, existing).get_meta(MASS_MARKER, false):
+			return existing
 	var alternative := source.create_alternative_tile(coord)
 	var tile := source.get_tile_data(coord, alternative)
 	tile.modulate = Color(1, 1, 1, 0)

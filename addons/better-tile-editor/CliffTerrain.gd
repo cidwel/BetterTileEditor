@@ -211,12 +211,12 @@ static func rebuild(tm: TileMapLayer, bt, dry_run := false) -> Dictionary:
 	var rows := rows_for(tm)
 
 	if not dry_run and is_level(tm):
-		var wanted := z_for_level(level)
-		if wanted > 9:
-			push_warning("[BetterTerrain] %s is level %d, which puts its ground at z=%d, outside the 0-9 band (it holds 5 levels). Wall height is the terrain's cliff height, not the level." % [tm.name, level, wanted])
-		if tm.z_index != wanted or not tm.z_as_relative:
+		var ground_z := z_for_level(level)
+		if ground_z > 9:
+			push_warning("[BetterTerrain] %s is level %d, which puts its ground at z=%d, outside the 0-9 band (it holds 5 levels). Wall height is the terrain's cliff height, not the level." % [tm.name, level, ground_z])
+		if tm.z_index != ground_z or not tm.z_as_relative:
 			tm.z_as_relative = true
-			tm.z_index = wanted
+			tm.z_index = ground_z
 
 	if SupportLayers.is_frozen(faces):
 		report["frozen"] = true

@@ -54,10 +54,10 @@ var terrain_object : Dictionary:
 	get:
 		if !_size_spin[0]:
 			return {}
-		var size := Vector2i(int(_size_spin[0].value), int(_size_spin[1].value))
+		var object_size := Vector2i(int(_size_spin[0].value), int(_size_spin[1].value))
 		if terrain_type != BetterTerrain.TerrainType.OBJECT:
 			return {}
-		return ObjectTerrain.make_config(size, _lone_coord,
+		return ObjectTerrain.make_config(object_size, _lone_coord,
 				_object_preview != null and _object_preview.mass, _base_rect())
 
 var terrain_categories : Array: set = set_categories, get = get_categories
@@ -206,9 +206,9 @@ func set_icon_data(ts: TileSet, terrain_id: int, icon: Dictionary) -> void:
 				_icon_tile = {}
 				_sync_icon_row())
 
-		var position := %IconEdit.get_index()
-		grid.move_child(label, position + 1)
-		grid.move_child(row, position + 2)
+		var icon_index := %IconEdit.get_index()
+		grid.move_child(label, icon_index + 1)
+		grid.move_child(row, icon_index + 2)
 
 	terrain_icon_tile = icon
 
@@ -451,13 +451,13 @@ func _on_help_pressed() -> void:
 
 var _name_watch := false
 
-func _name_taken(name: String) -> bool:
-	if _tileset == null or name.is_empty():
+func _name_taken(candidate: String) -> bool:
+	if _tileset == null or candidate.is_empty():
 		return false
 	for i in BetterTerrain.terrain_count(_tileset):
 		if i == _terrain_id:
 			continue
-		if BetterTerrain.get_terrain(_tileset, i).get("name", "") == name:
+		if BetterTerrain.get_terrain(_tileset, i).get("name", "") == candidate:
 			return true
 	return false
 
@@ -545,8 +545,8 @@ func _sync_object_row() -> void:
 func _refresh_blocks() -> void:
 	if _obj_status == null or _tileset == null:
 		return
-	var size := Vector2i(int(_size_spin[0].value), int(_size_spin[1].value))
-	var blocks := ObjectTerrain.detect_blocks(_tileset, _terrain_id, size) if _terrain_id >= 0 else []
+	var object_size := Vector2i(int(_size_spin[0].value), int(_size_spin[1].value))
+	var blocks := ObjectTerrain.detect_blocks(_tileset, _terrain_id, object_size) if _terrain_id >= 0 else []
 	if _terrain_id >= 0:
 		var t = BetterTerrain.get_terrain(_tileset, _terrain_id)
 		var lone: Array = t.get("object", {}).get("lone", []) if t.valid else []
@@ -555,25 +555,25 @@ func _refresh_blocks() -> void:
 
 
 	if _object_preview != null:
-		if size != _base_drawing_size and _base_rect() == Rect2i(Vector2i.ZERO, _base_drawing_size):
-			_base_selection = Rect2i(Vector2i.ZERO, size)
-		_base_drawing_size = size
+		if object_size != _base_drawing_size and _base_rect() == Rect2i(Vector2i.ZERO, _base_drawing_size):
+			_base_selection = Rect2i(Vector2i.ZERO, object_size)
+		_base_drawing_size = object_size
 		var cfg := {base = [_base_selection.position.x, _base_selection.position.y,
 			_base_selection.size.x, _base_selection.size.y]}
-		_base_selection = ObjectTerrain.base_rect(size, cfg)
-		_object_preview.setup(_tileset, blocks if blocks.size() == 2 else [], _lone_coord, size, terrain_object)
+		_base_selection = ObjectTerrain.base_rect(object_size, cfg)
+		_object_preview.setup(_tileset, blocks if blocks.size() == 2 else [], _lone_coord, object_size, terrain_object)
 		var source_id := -1
 		for block in blocks:
 			if block.rect.position == _lone_coord:
 				source_id = block.source_id
 				break
-		_base_editor.setup(_tileset, source_id, _lone_coord, size, _base_rect())
+		_base_editor.setup(_tileset, source_id, _lone_coord, object_size, _base_rect())
 
 	var as_area: bool = _object_preview != null and _object_preview.mass
 	for row in _base_rows:
 		row[0].visible = as_area and terrain_type == BetterTerrain.TerrainType.OBJECT
 		row[1].visible = row[0].visible
-	var tall: bool = size.y > size.x
+	var tall: bool = object_size.y > object_size.x
 	if _terrain_id < 0:
 		_obj_status.text = "Save the terrain, then pick it in the list and mark its drawing in the atlas with the Lone button."
 	elif blocks.is_empty():
@@ -584,9 +584,9 @@ func _refresh_blocks() -> void:
 		_obj_status.text = "1 drawing marked at %s. Each object is drawn whole; mark a joined block with the Joined button to let neighbours fuse." % blocks[0]["rect"].position
 	elif blocks.size() != 2:
 		_obj_status.text = "Found %d block%s of %dx%d; this needs 1 or 2. Check the size, or re-mark them." % [
-			blocks.size(), "" if blocks.size() == 1 else "s", size.x, size.y]
+			blocks.size(), "" if blocks.size() == 1 else "s", object_size.x, object_size.y]
 	else:
 		_obj_status.text = "2 blocks marked: %s and %s. Lone is %s." % [blocks[0]["rect"].position, blocks[1]["rect"].position, _lone_coord]
 	if tall and not as_area:
 		_obj_status.text += "\n\nThis drawing is %dx%d. Placed one by one it can only step %d cells at a time, so it tiles into bands and the wood has no edge. Tall art usually wants Area." % [
-			size.x, size.y, size.y]
+			object_size.x, object_size.y, object_size.y]

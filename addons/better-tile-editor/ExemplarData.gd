@@ -139,7 +139,10 @@ static func record_drawing(ts: TileSet, terrain_index: int, source_id: int, rect
 		return
 	var t: Array = terrains[terrain_index]
 	while t.size() < 7:
-		t.push_back("" if t.size() == 5 else {})
+		if t.size() == 5:
+			t.push_back("")
+		else:
+			t.push_back({})
 	var cfg: Dictionary = t[6].duplicate() if t[6] is Dictionary else {}
 	cfg["exemplar"] = {"source": source_id, "rect": [rect.position.x, rect.position.y, rect.size.x, rect.size.y]}
 	t[6] = cfg
@@ -260,10 +263,12 @@ static func tile_for(table: Dictionary, region: Dictionary, c: Vector2i) -> Dict
 			var n := line.size()
 			# Beyond half the drawing, distance no longer changes the chosen tile.
 			var ext := _run_extent(region, c, role, ceili(n / 2.0))
+			@warning_ignore_start("integer_division")
 			if ext.x < n / 2 and ext.x <= ext.y:
 				at = line[ext.x]
 			elif ext.y < n / 2:
 				at = line[n - 1 - ext.y]
+			@warning_ignore_restore("integer_division")
 	return {"source": int(table.source), "coord": Vector2i(int(at[0]), int(at[1]))}
 
 #endregion

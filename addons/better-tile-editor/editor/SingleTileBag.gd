@@ -216,7 +216,11 @@ func _rebuild() -> void:
 		if not group.is_empty():
 			var handle := _add_handle(header)
 			_wire_drop(handle, func(_at): return _group_drag(group, handle))
-		var grid: Container = VBoxContainer.new() if _size_step == CELL_SIZES.size() else HFlowContainer.new()
+		var grid: Container
+		if _size_step == CELL_SIZES.size():
+			grid = VBoxContainer.new()
+		else:
+			grid = HFlowContainer.new()
 		grid.custom_minimum_size.y = 32
 		grid.visible = not folded
 		section.add_child(grid)
@@ -345,13 +349,13 @@ func _drop_target(at: Vector2, data: Variant) -> Dictionary:
 	if not _can_drop(at, data):
 		return {}
 	if data.has("group"):
-		var sections := _sections.filter(func(section): return not String(section.get_meta("favorite_group")).is_empty())
+		var sections := _sections.filter(func(candidate): return not String(candidate.get_meta("favorite_group")).is_empty())
 		for i in sections.size():
-			var section = sections[i]
-			if at.y < section.position.y + section.size.y / 2.0:
-				return _horizontal_target(section.get_meta("favorite_group"), -1, false, section.position.y - 2.0)
+			var favorite_section = sections[i]
+			if at.y < favorite_section.position.y + favorite_section.size.y / 2.0:
+				return _horizontal_target(favorite_section.get_meta("favorite_group"), -1, false, favorite_section.position.y - 2.0)
 			if i == sections.size() - 1:
-				return _horizontal_target(section.get_meta("favorite_group"), -1, true, section.position.y + section.size.y + 2.0)
+				return _horizontal_target(favorite_section.get_meta("favorite_group"), -1, true, favorite_section.position.y + favorite_section.size.y + 2.0)
 		return {}
 	var section: Control = _sections[0]
 	for candidate in _sections:

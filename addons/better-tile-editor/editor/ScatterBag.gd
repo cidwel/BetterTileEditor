@@ -103,9 +103,9 @@ func _init() -> void:
 	buttons.add_child(_apply)
 	var reroll := Button.new()
 	reroll.text = "Reroll"
-	var theme := EditorInterface.get_editor_theme()
-	if theme != null and theme.has_icon(&"RandomNumberGenerator", &"EditorIcons"):
-		reroll.icon = theme.get_icon(&"RandomNumberGenerator", &"EditorIcons")
+	var editor_theme := EditorInterface.get_editor_theme()
+	if editor_theme != null and editor_theme.has_icon(&"RandomNumberGenerator", &"EditorIcons"):
+		reroll.icon = editor_theme.get_icon(&"RandomNumberGenerator", &"EditorIcons")
 	reroll.tooltip_text = "Same weights, another throw of the dice."
 	reroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	reroll.pressed.connect(func(): reroll_requested.emit())
@@ -317,11 +317,11 @@ func _remove(index: int) -> void:
 
 
 ## Duplicate tiles are allowed as separate weighted entries.
-func add_entry(source: int, origin: Vector2i, size: Vector2i) -> void:
+func add_entry(source: int, origin: Vector2i, block_size: Vector2i) -> void:
 	if _terrain_id < 0:
 		return
 	var bag: Array = _cfg.get("bag", []).duplicate(true)
-	bag.push_back(ScatterTerrain.make_entry(source, origin, size, 1.0))
+	bag.push_back(ScatterTerrain.make_entry(source, origin, block_size, 1.0))
 	_commit({bag = bag})
 
 

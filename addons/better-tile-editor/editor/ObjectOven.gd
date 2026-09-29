@@ -136,7 +136,9 @@ func _init() -> void:
 	half.pressed.connect(func():
 		var unit := _unit_px()
 		_syncing = true
+		@warning_ignore("integer_division")
 		_off_x.value = unit.x / 2
+		@warning_ignore("integer_division")
 		_off_y.value = unit.y / 2
 		_syncing = false
 		_refresh())
@@ -239,7 +241,7 @@ func setup(ts: TileSet, terrain_id: int, terrain_name: String) -> String:
 	if cfg.is_empty():
 		return "This terrain has no object configuration yet."
 	var size_a: Array = cfg.get("size", [2, 2])
-	var size := Vector2i(int(size_a[0]), int(size_a[1]))
+	var object_size := Vector2i(int(size_a[0]), int(size_a[1]))
 	var lone_a: Array = cfg.get("lone", [])
 	if lone_a.size() != 2:
 		return "Mark the lone drawing first: pick the terrain, press Lone in the toolbar and click its top-left tile in the atlas."
@@ -248,11 +250,11 @@ func setup(ts: TileSet, terrain_id: int, terrain_name: String) -> String:
 	var source_id := -1
 	for i in ts.get_source_count():
 		var sid := ts.get_source_id(i)
-		var src := ts.get_source(sid) as TileSetAtlasSource
-		if src == null or sid == ObjectBake.source_of(ts, terrain_id):
+		var atlas := ts.get_source(sid) as TileSetAtlasSource
+		if atlas == null or sid == ObjectBake.source_of(ts, terrain_id):
 			continue
-		if src.get_tile_at_coords(lone) == lone:
-			var td := src.get_tile_data(lone, 0)
+		if atlas.get_tile_at_coords(lone) == lone:
+			var td := atlas.get_tile_data(lone, 0)
 			if td != null and td.has_meta(&"_better_terrain") \
 					and int(td.get_meta(&"_better_terrain").get("type", -2)) == terrain_id:
 				source_id = sid
@@ -261,12 +263,12 @@ func setup(ts: TileSet, terrain_id: int, terrain_name: String) -> String:
 		return "The lone drawing is not marked in any atlas. Mark it with the Lone button first."
 
 	var src := ts.get_source(source_id) as TileSetAtlasSource
-	_from = {source = source_id, origin = lone, size = size, tile = src.texture_region_size}
-	_art = ObjectBake.art_of(src, lone, size)
+	_from = {source = source_id, origin = lone, size = object_size, tile = src.texture_region_size}
+	_art = ObjectBake.art_of(src, lone, object_size)
 	if _art == null:
 		return "That source has no readable texture."
 
-	var unit_px := size * Vector2i(src.texture_region_size)
+	var unit_px := object_size * Vector2i(src.texture_region_size)
 	_syncing = true
 	_off_x.value = 0
 	_off_y.value = 0
@@ -274,6 +276,7 @@ func setup(ts: TileSet, terrain_id: int, terrain_name: String) -> String:
 	_down.value = 2
 	_stagger.button_pressed = true
 	_keep.max_value = unit_px.y
+	@warning_ignore("integer_division")
 	_keep.value = ObjectBake.default_crop(_art, unit_px, Vector2i(unit_px.x, unit_px.y / 2), unit_px.x / 2)
 	_syncing = false
 	_refresh()
@@ -292,6 +295,7 @@ func _unit_px() -> Vector2i:
 ## The pitch must divide the unit so the pattern repeats exactly.
 func _pitch() -> Vector2i:
 	var unit := _unit_px()
+	@warning_ignore("integer_division")
 	return Vector2i(maxi(1, unit.x / _count(_across, unit.x)),
 		maxi(1, unit.y / _count(_down, unit.y)))
 
@@ -318,6 +322,7 @@ func _offset() -> Vector2i:
 
 
 func _stagger_px() -> int:
+	@warning_ignore("integer_division")
 	return _unit_px().x / 2 if _stagger.button_pressed else 0
 
 
@@ -331,6 +336,7 @@ func _refresh() -> void:
 	_view.show_image(grid, Rect2i(unit_px, unit_px))
 	var cells := _unit_cells()
 	var pitch := _pitch()
+	@warning_ignore("integer_division")
 	var n: int = (unit_px.x / maxi(1, pitch.x)) * (unit_px.y / maxi(1, pitch.y))
 	var off := _offset()
 	var gaps: int = ObjectBake.holes(unit)

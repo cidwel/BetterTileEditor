@@ -4,6 +4,7 @@ extends RefCounted
 const MASS := &"_better_terrain_mass_placements"
 const SCATTER := &"_better_terrain_scatter"
 
+@warning_ignore("shadowed_variable_base_class")
 var reference: TileMapLayer
 var scene: Node
 var selection: Dictionary = {}

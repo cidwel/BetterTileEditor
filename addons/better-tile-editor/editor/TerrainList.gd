@@ -24,9 +24,9 @@ func _gui_input(event: InputEvent) -> void:
 func _can_drop_data(at: Vector2, data: Variant) -> bool:
 	if data is Dictionary and data.has("better_terrain_scene"):
 		var group := _group_at(at)
-		var ok: bool = not group.is_empty() and group != data.from_group
-		_set_hint(ok, group if ok else "")
-		return ok
+		var can_move: bool = not group.is_empty() and group != data.from_group
+		_set_hint(can_move, group if can_move else "")
+		return can_move
 	if data is Dictionary and data.has("better_terrain_group_drag"):
 		_set_hint(false, "")
 		_set_insertion_hint(_group_insertion(at, data))
