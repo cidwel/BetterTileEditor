@@ -98,7 +98,7 @@ func _autoload_is_loaded() -> bool:
 		return true
 
 	for child in get_tree().root.get_children():
-		var script := child.get_script()
+		var script: Script = child.get_script()
 		if script and script.resource_path == AUTOLOAD_SCRIPT:
 			return true
 
