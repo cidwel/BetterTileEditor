@@ -92,7 +92,7 @@ To track the latest changes instead, copy `addons/better-tile-editor` from
 
 ## Compatibility
 
-- Godot 4.3+; tested on 4.6 and 4.7
+- Godot 4.6+; tested on 4.6 and 4.7
 - GDScript and C#
 - Same `BetterTerrain` autoload and existing API
 - Extra runtime steps for Object, Patch, Scatter and cliffs: see [technical notes](DESIGN.md)
