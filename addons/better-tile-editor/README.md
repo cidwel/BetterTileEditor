@@ -97,6 +97,19 @@ To track the latest changes instead, copy `addons/better-tile-editor` from
 - Same `BetterTerrain` autoload and existing API
 - Extra runtime steps for Object, Patch, Scatter and cliffs: see [technical notes](DESIGN.md)
 
+## Changelog
+
+### 0.2.0 (2026-10-02)
+
+- Complete terrain: finds the pieces a Match terrain is missing and builds them from quarters of the ones you drew, inner corners included.
+- Create quick terrain shows what it will make before creating it.
+- Collisions tool: mark tiles solid on the atlas or the map, or detect shapes from the sprite and edit them by hand.
+- Custom data tool: paint, inspect and pick tile custom data, with presets.
+- Quick tile animations from a selection of frames.
+- A simpler cliff face editor, and a whole face autoassigned from a block of the tileset.
+- Atlases are labelled in the view, with their empty space trimmed.
+- Renamed to Better Tile Editor.
+
 ## More
 
 - [Technical notes](DESIGN.md)
