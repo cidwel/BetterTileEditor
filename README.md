@@ -5,6 +5,8 @@
 A fork of [BetterTerrain](https://github.com/Portponky/better-terrain) by
 [Portponky](https://github.com/Portponky), with extra terrain modes and editor tools.
 
+<p align="center"><a href="https://youtu.be/cDmZ1YRWEU0"><img src="https://img.youtube.com/vi/cDmZ1YRWEU0/maxresdefault.jpg" width="640" alt="Every feature of Better Tile Editor, on YouTube"></a><br><a href="https://youtu.be/cDmZ1YRWEU0">Watch every feature in 8 minutes</a></p>
+
 ## What's added
 
 - Patch terrains
