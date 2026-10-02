@@ -72,15 +72,22 @@ class ShapeCanvas extends Control:
 	var _drag := {}
 	var _hover := {}
 	var _mouse := Vector2.ZERO
+	var _panning := false
+	## Zoomed or panned by hand: a resize then leaves the view alone.
+	var _moved := false
 
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 		focus_mode = Control.FOCUS_ALL
 		clip_contents = true
 		texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		resized.connect(fit)
+		tooltip_text = "Wheel to zoom, middle drag to move, middle double-click to fit"
+		resized.connect(func() -> void:
+			if not _moved:
+				fit())
 
 	func fit() -> void:
+		_moved = false
 		if editor == null or editor._lay.is_empty():
 			return
 		var px: Vector2 = editor._lay.size
@@ -220,7 +227,37 @@ class ShapeCanvas extends Control:
 				return {inside = i}
 		return {}
 
+	# Whole steps from 1x up keep pixel art sharp; below that, quarter steps.
+	func _zoom_at(at: Vector2, zoom_in: bool) -> void:
+		var next := zoom
+		if zoom_in:
+			next = zoom + 1.0 if zoom >= 1.0 else minf(1.0, zoom + 0.25)
+		else:
+			next = zoom - 1.0 if zoom > 1.0 else maxf(0.25, zoom - 0.25)
+		next = minf(next, 64.0)
+		offset = (at - (at - offset) * (next / zoom)).round()
+		zoom = next
+		_moved = true
+		queue_redraw()
+
 	func _gui_input(event: InputEvent) -> void:
+		if event is InputEventMouseButton and event.pressed and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			_zoom_at(event.position, event.button_index == MOUSE_BUTTON_WHEEL_UP)
+			accept_event()
+			return
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE:
+			if event.pressed and event.double_click:
+				fit()
+			_panning = event.pressed
+			mouse_default_cursor_shape = Control.CURSOR_DRAG if _panning else Control.CURSOR_ARROW
+			accept_event()
+			return
+		if event is InputEventMouseMotion and _panning:
+			offset += event.relative
+			_moved = true
+			queue_redraw()
+			accept_event()
+			return
 		if event is InputEventMouseMotion:
 			_mouse = event.position
 			if not _drag.is_empty():
@@ -393,7 +430,8 @@ func setup(ts: TileSet, source: int, from: Vector2i, size_cells: Vector2i, layer
 		if EditorInterface.get_editor_settings().has_setting(SETTINGS_KEY) else {}
 	if saved is Dictionary:
 		for key in saved:
-			if _settings.has(key):
+			# Each tile on its own is a choice per block, not remembered.
+			if _settings.has(key) and key != "per_tile":
 				_settings[key] = saved[key]
 	_build()
 	load_block(source, from, size_cells)
@@ -420,6 +458,8 @@ func load_block(source: int, from: Vector2i, size_cells: Vector2i) -> void:
 	_future.clear()
 	_last_auto = -1
 	_set_dirty(false)
+	_settings.per_tile = false
+	_per_tile.set_pressed_no_signal(false)
 	_per_tile.visible = _lay.tiles.size() > 1
 	_nav.visible = _lay.tiles.size() == 1
 	var names := "tile %s" % str(origin) if _lay.tiles.size() == 1 \
@@ -457,10 +497,19 @@ func _build() -> void:
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.add_child(left)
+	var info_row := HBoxContainer.new()
+	left.add_child(info_row)
 	_info = Label.new()
 	_info.add_theme_color_override("font_color", HINT_COLOR)
-	left.add_child(_info)
+	_info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info_row.add_child(_info)
+	var fit := Button.new()
+	fit.icon = EditorInterface.get_editor_theme().get_icon("ZoomReset", "EditorIcons")
+	fit.flat = true
+	fit.tooltip_text = "Fit the tiles in view (or middle double-click)"
+	info_row.add_child(fit)
 	_canvas = ShapeCanvas.new()
+	fit.pressed.connect(_canvas.fit)
 	_canvas.editor = self
 	_canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_canvas.about_to_edit.connect(_remember)

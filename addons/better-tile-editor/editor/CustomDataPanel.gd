@@ -27,6 +27,7 @@ enum View { MATCHES = -1, NONE = -2 }
 ## A value that differs between the selected tiles.
 const MIXED := &"__mixed__"
 
+const OVERVIEW_SETTING := "editors/better_terrain/custom_data_overview"
 var mode := Mode.PAINT
 ## The next click takes a tile's fields as the brush, as the picker's key does.
 var pick_armed := false
@@ -37,6 +38,11 @@ var _brush := {}
 var _view := View.MATCHES
 var _filter := ""
 var _only_used := false
+var _used_button: Button
+var _overview_button: Button
+## The Used and Overview toggles, kept together wherever they sit.
+var _toggles: HBoxContainer
+var _filter_row: HBoxContainer
 ## Fields set on some tile of the tile set, for "Used" in Paint.
 var _used := {}
 var _match_count := -1
@@ -116,10 +122,11 @@ func _init() -> void:
 	outer.add_child(_hint)
 
 	_presets_box = VBoxContainer.new()
-	_presets_box.add_theme_constant_override("separation", 4)
+	_presets_box.add_theme_constant_override("separation", 8)
 	outer.add_child(_presets_box)
 
 	var filter_row := HBoxContainer.new()
+	_filter_row = filter_row
 	outer.add_child(filter_row)
 	var filter := LineEdit.new()
 	filter.placeholder_text = "Filter fields"
@@ -130,13 +137,30 @@ func _init() -> void:
 		_rebuild_fields())
 	filter_row.add_child(filter)
 	var used := Button.new()
-	used.text = "Used"
+	used.text = "Showing all"
 	used.toggle_mode = true
-	used.tooltip_text = "Only the fields in use: set on some tile in Paint, on the selection in Inspect."
+	used.focus_mode = Control.FOCUS_NONE
+	used.tooltip_text = "Show all fields, or only those in use: set on some tile in Paint, on the selection in Inspect."
 	used.toggled.connect(func(on: bool):
 		_only_used = on
+		used.text = "Showing used" if on else "Showing all"
 		_rebuild_fields())
-	filter_row.add_child(used)
+	_toggles = HBoxContainer.new()
+	_toggles.add_child(used)
+	_used_button = used
+	var overview := Button.new()
+	overview.text = "All data"
+	overview.toggle_mode = true
+	overview.focus_mode = Control.FOCUS_NONE
+	overview.tooltip_text = "With no field shown, darken every tile holding custom data and name what it holds."
+	var settings := EditorInterface.get_editor_settings()
+	overview.button_pressed = not settings.has_setting(OVERVIEW_SETTING) or bool(settings.get_setting(OVERVIEW_SETTING))
+	overview.toggled.connect(func(on: bool) -> void:
+		EditorInterface.get_editor_settings().set_setting(OVERVIEW_SETTING, on)
+		view_changed.emit())
+	_toggles.add_child(overview)
+	_overview_button = overview
+	filter_row.add_child(_toggles)
 	var add := Button.new()
 	add.icon = editor_theme.get_icon("Add", "EditorIcons")
 	add.toggle_mode = true
@@ -166,6 +190,7 @@ func _init() -> void:
 
 	_fields = VBoxContainer.new()
 	_fields.add_theme_constant_override("separation", 2)
+	_fields.theme = _compact_theme()
 	outer.add_child(_fields)
 
 	_use_as_brush = Button.new()
@@ -266,6 +291,11 @@ func view() -> int:
 	return _view
 
 
+## Whether tiles holding any custom data are marked while no field is shown.
+func overview() -> bool:
+	return _overview_button.button_pressed
+
+
 ## {field index: value} the brush writes, false included.
 func brush() -> Dictionary:
 	var out := {}
@@ -337,7 +367,7 @@ func _rebuild_fields() -> void:
 		_fields.add_child(_row(i))
 		shown += 1
 	if shown == 0:
-		_fields.add_child(_note("No field matches."))
+		_fields.add_child(_note("No field is in use yet." if _only_used and _filter.is_empty() else "No field matches."))
 
 
 func _in_use(index: int) -> bool:
@@ -455,11 +485,30 @@ func _small_button(text: String, tip: String, writes := true) -> Button:
 
 ## A pressed toggle stands out: in the accent colour when it writes something, grey for "–".
 ## The default look hardly tells it from the others.
+## The field rows' look: the editor's boxes with almost no padding top and bottom, so a long
+## list of fields fits.
+static func _compact_theme() -> Theme:
+	var editor_theme := EditorInterface.get_editor_theme()
+	var out := Theme.new()
+	for type: StringName in [&"Button", &"LineEdit", &"SpinBox", &"OptionButton"]:
+		for style: StringName in editor_theme.get_stylebox_list(type):
+			var box := editor_theme.get_stylebox(style, type).duplicate() as StyleBox
+			box.content_margin_top = 1
+			box.content_margin_bottom = 1
+			out.set_stylebox(style, type, box)
+		out.set_font_size(&"font_size", type, 13)
+	out.set_font_size(&"font_size", &"Label", 13)
+	return out
+
+
 func _mark_pressed(b: Button, writes := true) -> void:
 	var pressed := StyleBoxFlat.new()
 	pressed.bg_color = Color(_accent, 0.85) if writes else Color(0.5, 0.52, 0.56, 0.6)
 	pressed.set_corner_radius_all(3)
-	pressed.set_content_margin_all(4)
+	pressed.content_margin_left = 4
+	pressed.content_margin_right = 4
+	pressed.content_margin_top = 1
+	pressed.content_margin_bottom = 1
 	b.add_theme_stylebox_override("pressed", pressed)
 	b.add_theme_stylebox_override("hover_pressed", pressed)
 	for state in ["font_pressed_color", "font_hover_pressed_color", "icon_pressed_color", "icon_hover_pressed_color"]:
@@ -601,14 +650,26 @@ func _selection_to_brush() -> void:
 ## Chips to load presets as the brush (keys 1–9 too), "+ Save…", and Update / Save as… once the
 ## brush has moved away from the one loaded.
 func _rebuild_presets() -> void:
+	# The toggles sit by the presets in Paint; take them out of the row about to be freed.
+	if _toggles.get_parent() != _filter_row:
+		_toggles.reparent(_filter_row)
+		_filter_row.move_child(_toggles, 1)
 	for child in _presets_box.get_children():
 		_presets_box.remove_child(child)
 		child.queue_free()
 	if _tileset == null or mode != Mode.PAINT:
 		return
 	var list := CustomData.presets(_tileset)
+	var heading := Label.new()
+	heading.text = "Presets"
+	heading.add_theme_color_override("font_color", HINT_COLOR)
+	heading.visible = not list.is_empty()
+	_presets_box.add_child(heading)
 	var chips := HFlowContainer.new()
+	chips.add_theme_constant_override("h_separation", 6)
+	chips.add_theme_constant_override("v_separation", 6)
 	_presets_box.add_child(chips)
+	chips.visible = not list.is_empty()
 	var active: Dictionary = {}
 	for i in list.size():
 		var preset: Dictionary = list[i]
@@ -616,6 +677,7 @@ func _rebuild_presets() -> void:
 		var chip := Button.new()
 		var shown_name: String = preset.name if preset.name.length() <= 18 else preset.name.left(17) + "…"
 		chip.text = shown_name + ("  ⚠%d" % missing.size() if not missing.is_empty() else "")
+		chip.icon = _preset_swatch(preset.name)
 		chip.toggle_mode = true
 		chip.button_pressed = preset.name == _active_preset
 		chip.focus_mode = Control.FOCUS_NONE
@@ -630,12 +692,16 @@ func _rebuild_presets() -> void:
 		chips.add_child(chip)
 		if preset.name == _active_preset:
 			active = preset
+	var actions := HFlowContainer.new()
+	actions.add_theme_constant_override("h_separation", 6)
+	actions.add_theme_constant_override("v_separation", 6)
 	var save := Button.new()
 	save.text = "+ Save…"
 	save.tooltip_text = "Keep the brush as a named preset in the tile set."
 	save.focus_mode = Control.FOCUS_NONE
-	save.pressed.connect(func(): _ask_name("Save preset", "", _save_preset))
-	chips.add_child(save)
+	save.pressed.connect(func(): _ask_to_save())
+	actions.add_child(save)
+	_toggles.reparent(actions)
 	if not active.is_empty() and CustomData.to_named(_tileset, brush()) != active.values:
 		var drift := HBoxContainer.new()
 		var label := Label.new()
@@ -651,9 +717,38 @@ func _rebuild_presets() -> void:
 		drift.add_child(update)
 		var save_as := Button.new()
 		save_as.text = "Save as…"
-		save_as.pressed.connect(func(): _ask_name("Save preset", "", _save_preset))
+		save_as.pressed.connect(func(): _ask_to_save())
 		drift.add_child(save_as)
 		_presets_box.add_child(drift)
+	_presets_box.add_child(actions)
+	_presets_box.add_child(HSeparator.new())
+
+
+## Each preset's colour, from its name, so it keeps it across sessions.
+static func _preset_swatch(preset_name: String) -> Texture2D:
+	var img := Image.create_empty(12, 12, false, Image.FORMAT_RGBA8)
+	img.fill(Color.from_hsv(fposmod(float(hash(preset_name)) * 0.618034, 1.0), 0.55, 0.9))
+	return ImageTexture.create_from_image(img)
+
+
+## After the eyedropper: the preset holding what the brush now holds stays lit, or none does.
+func follow_preset() -> void:
+	var now := _set_part(brush())
+	_active_preset = ""
+	for preset: Dictionary in CustomData.presets(_tileset):
+		if _set_part(CustomData.from_named(_tileset, preset.values)) == now:
+			_active_preset = preset.name
+			break
+	_rebuild_presets()
+
+
+# The values that change a tile; a field at its default only clears it.
+func _set_part(values: Dictionary) -> Dictionary:
+	var out := {}
+	for field: int in values:
+		if CustomData.is_set(values[field], _tileset.get_custom_data_layer_type(field)):
+			out[field] = values[field]
+	return out
 
 
 ## The names of a preset's fields the tile set no longer has, or has with another type.
@@ -672,6 +767,23 @@ func _apply_preset(preset: Dictionary) -> void:
 	for i in _tileset.get_custom_data_layers_count():
 		_entry(i).armed = false
 	load_values(CustomData.from_named(_tileset, preset.values))
+
+
+# A second preset with the very same options would only be a duplicate under another name.
+func _ask_to_save() -> void:
+	var values := CustomData.to_named(_tileset, brush())
+	for preset: Dictionary in CustomData.presets(_tileset):
+		if preset.values == values:
+			var error := AcceptDialog.new()
+			error.title = "Save preset"
+			error.dialog_text = "There is already a preset called \"%s\" with the same options." % preset.name
+			error.visibility_changed.connect(func():
+				if not error.visible:
+					error.queue_free())
+			add_child(error)
+			error.popup_centered()
+			return
+	_ask_name("Save preset", "", _save_preset)
 
 
 func _save_preset(preset_name: String) -> void:
@@ -754,16 +866,16 @@ func _update_hint() -> void:
 	if _hint == null:
 		return
 	if pick_armed:
-		_hint.text = "Click a tile to copy its fields."
+		_hint.text = "Click a tile to copy it."
 	elif mode == Mode.INSPECT:
-		_hint.text = "Click a tile to see its values · Shift+click adds more · drag in the atlas for a box" if _selection_count == 0 \
-			else "%d tile%s selected · a change applies to all" % [_selection_count, "" if _selection_count == 1 else "s"]
+		_hint.text = "Click: inspect · Shift+click: add · drag: box" if _selection_count == 0 \
+			else "%d selected · edits apply to all" % _selection_count
 	elif brush().is_empty():
-		_hint.text = "Set ✓ or ✗ on a field, or type a value, then click tiles. %s+click copies a tile's fields." % _pick_key
+		_hint.text = "Pick values below, then click tiles · %s+click: copy" % _pick_key
 	else:
-		_hint.text = "Click: paint · right click: clear · %s+click: copy a tile's fields" % _pick_key
+		_hint.text = "Click: paint · Right: clear · %s+click: copy" % _pick_key
 		if _view == View.MATCHES and _match_count >= 0:
-			_hint.text += " · %d tile%s have it" % [_match_count, "" if _match_count == 1 else "s"]
+			_hint.text += " · %d match" % _match_count
 
 
 func _note(text: String) -> Label:

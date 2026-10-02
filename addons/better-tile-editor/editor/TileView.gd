@@ -46,6 +46,8 @@ var data_selected := {}
 var data_color := Color(0.44, 0.73, 0.98)
 ## Numeric fields' ranges over the tile set, {field: Vector2(min, max)}, for the heatmap.
 var data_ranges := {}
+## With no field shown, tiles holding any custom data are darkened and named.
+var data_overview := true
 var _collision_solid := true
 
 @onready var checkerboard := get_theme_icon("Checkerboard", "EditorIcons")
@@ -1812,23 +1814,42 @@ func _draw_data_marks(td: TileData, rect: Rect2, key: Vector3i) -> void:
 			_draw_centered(CustomData.label(tileset, td, field), rect)
 		else:
 			draw_rect(rect, Color(0, 0, 0, 0.6))
-	elif data_view == DATA_VIEW_MATCHES and CustomData.matches(td, data_brush):
-		draw_rect(rect, Color(data_color, 0.25))
-		draw_rect(rect.grow(-1), data_color, false, 2.0)
+	else:
+		var held := CustomData.summary(tileset, td) if data_overview else ""
+		if not held.is_empty():
+			draw_rect(rect, Color(0, 0, 0, 0.6))
+			_draw_centered(held, rect)
+		if data_view == DATA_VIEW_MATCHES and CustomData.matches(td, data_brush):
+			draw_rect(rect, Color(data_color, 0.25))
+			draw_rect(rect.grow(-1), data_color, false, 2.0)
 	if data_inspect and data_selected.has(key):
 		draw_rect(rect.grow(-1), Color.WHITE, false, 3.0)
 
 
 ## Text in the middle of a tile, outlined so it reads on any art; shrunk to fit.
 func _draw_centered(text: String, rect: Rect2) -> void:
-	var font := get_theme_font("font", "Label")
-	var font_size := 12
-	while font_size > 7 and font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > rect.size.x - 2:
+	draw_centered_lines(self, get_theme_font("font", "Label"), text, rect, 12)
+
+
+## Lines of text centred in a rect, outlined so they read on any art; shrunk to fit.
+static func draw_centered_lines(canvas: CanvasItem, font: Font, text: String, rect: Rect2, largest: int) -> void:
+	var lines := text.split("\n")
+	var room := rect.size - Vector2(2, 2)
+	var font_size := largest
+	while font_size > 6:
+		var widest := 0.0
+		for line in lines:
+			widest = maxf(widest, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
+		if widest <= room.x and font.get_height(font_size) * lines.size() <= room.y:
+			break
 		font_size -= 1
-	var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-	var at := rect.get_center() + Vector2(-minf(text_size.x, rect.size.x - 2) * 0.5, font.get_ascent(font_size) * 0.5 - 1)
-	draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 2, font_size, 3, Color.BLACK)
-	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 2, font_size, Color.WHITE)
+	var line_height := font.get_height(font_size)
+	var top := rect.get_center().y - line_height * lines.size() * 0.5 + font.get_ascent(font_size)
+	for i in lines.size():
+		var width := minf(font.get_string_size(lines[i], HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x, room.x)
+		var at := Vector2(rect.get_center().x - width * 0.5, top + i * line_height)
+		canvas.draw_string_outline(font, at, lines[i], HORIZONTAL_ALIGNMENT_LEFT, room.x, font_size, 3, Color.BLACK)
+		canvas.draw_string(font, at, lines[i], HORIZONTAL_ALIGNMENT_LEFT, room.x, font_size, Color.WHITE)
 
 
 func _get_tooltip(at_position: Vector2) -> String:

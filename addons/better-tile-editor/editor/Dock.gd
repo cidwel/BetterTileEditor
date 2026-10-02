@@ -3028,7 +3028,18 @@ func picker_armed() -> bool:
 	# Collisions pick only in Stamp (a tile's shape); Custom data's picker click takes a tile's fields.
 	if tilemap == null or _map_select_active() or (_collision_mode() and not _collision_stamp_mode):
 		return false
+	# In Inspect the key adds to the selection instead.
+	if _data_mode():
+		return not _data_inspecting() and (_data_panel.pick_armed or picker_modifier_down())
 	return _picker_active() or picker_modifier_down()
+
+
+## Custom data picks from the atlas too, so the eyedropper shows over it.
+func mouse_over_data_atlas() -> bool:
+	if not _data_mode() or not tile_view.is_visible_in_tree():
+		return false
+	var frame := tile_view.get_parent() as Control
+	return frame.get_global_rect().has_point(frame.get_global_mouse_position())
 
 
 func set_picker_lit(lit: bool) -> void:
@@ -6246,6 +6257,7 @@ func _build_data_panel(row: Control) -> void:
 ## What the atlas and the map show, and the counts the panel reports.
 func _sync_data_marks() -> void:
 	tile_view.data_view = _data_panel.view()
+	tile_view.data_overview = _data_panel.overview()
 	tile_view.data_brush = _data_panel.brush()
 	tile_view.data_color = get_theme_color("accent_color", "Editor")
 	var selected := {}
@@ -6325,7 +6337,8 @@ func _data_pick(source_id: int, coords: Vector2i) -> void:
 	if src == null or not src.has_tile(coords):
 		return
 	_data_panel.set_mode(_data_panel.Mode.PAINT)
-	_data_panel.load_values(CUSTOM_DATA.tile_values(tileset, src.get_tile_data(coords, 0)))
+	_data_panel.load_values(CUSTOM_DATA.whole_config(tileset, src.get_tile_data(coords, 0)))
+	_data_panel.follow_preset()
 	if _data_panel.pick_armed:
 		_data_panel._pick_button.button_pressed = false
 
@@ -6463,7 +6476,8 @@ func _draw_map_data(overlay: Control, transform: Transform2D) -> void:
 	if field >= tileset.get_custom_data_layers_count():
 		field = -1
 	var brush: Dictionary = tile_view.data_brush
-	var showing: bool = field >= 0 or (tile_view.data_view == tile_view.DATA_VIEW_MATCHES and not brush.is_empty()) \
+	var showing: bool = field >= 0 or tile_view.data_overview \
+		or (tile_view.data_view == tile_view.DATA_VIEW_MATCHES and not brush.is_empty()) \
 		or (_data_inspecting() and not _data_selection.is_empty())
 	if showing:
 		var accent := get_theme_color("accent_color", "Editor")
@@ -6512,12 +6526,9 @@ func _draw_map_data(overlay: Control, transform: Transform2D) -> void:
 		if cell_width >= 28.0:
 			var font := get_theme_font("font", "Label")
 			var font_size := clampi(int(cell_width / 5.0), 8, 14)
+			var cell_screen := Vector2(cell_width, (transform.basis_xform(Vector2(0, tileset.tile_size.y))).length())
 			for entry: Array in labels:
-				var text: String = entry[1]
-				var at: Vector2 = entry[0] + Vector2(-minf(font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x, cell_width) * 0.5,
-					font.get_ascent(font_size) * 0.5)
-				overlay.draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, cell_width, font_size, 3, Color.BLACK)
-				overlay.draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, cell_width, font_size, Color.WHITE)
+				tile_view.draw_centered_lines(overlay, font, entry[1], Rect2(entry[0] - cell_screen * 0.5, cell_screen), font_size)
 	if _collision_tip_ready and not _collision_stroking:
 		_draw_data_tip(overlay, transform.affine_inverse() * _collision_tip_at)
 	_draw_hover_cell(overlay, transform)
@@ -6534,7 +6545,11 @@ func _data_cell_look(td: TileData, field: int, brush: Dictionary, accent: Color,
 			var fill := Color(CUSTOM_DATA.heat(float(value), ranges[field]), 0.5) if ranges.has(field) else Color(accent, 0.35)
 			return [fill, CUSTOM_DATA.label(tileset, td, field), selected, true]
 		return [Color(0, 0, 0, 0.6), "", selected, false]
-	if tile_view.data_view == tile_view.DATA_VIEW_MATCHES and CUSTOM_DATA.matches(td, brush):
+	var matched: bool = tile_view.data_view == tile_view.DATA_VIEW_MATCHES and CUSTOM_DATA.matches(td, brush)
+	var held: String = CUSTOM_DATA.summary(tileset, td) if tile_view.data_overview else ""
+	if not held.is_empty():
+		return [Color(0, 0, 0, 0.6), held, selected, matched]
+	if matched:
 		return [Color(accent, 0.3), "", selected, true]
 	return [Color.TRANSPARENT, "", selected, false]
 

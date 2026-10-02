@@ -3766,3 +3766,42 @@ up). The preview stays on the right, with its shape picker, zoom and pan, and pa
 the block being dragged would give: a copy of the face run through `autoassign`, swapped in
 for the repaint (`_auto_cfg`), so nothing is stored until Assign. Zoomed out, the block's
 column names shorten to L, ↔, R when they don't fit.
+
+The collision shape editor's canvas zooms with the wheel about the mouse (whole steps from 1x
+up, quarter steps below) and pans with a middle drag; left and right clicks stay for editing.
+Once moved by hand, a resize leaves the view alone; the fit button or a middle double-click
+fits it again, as does loading another block.
+
+Fixed: "Each tile on its own" stacked every tile's shape on the first one.
+`BitMap.opaque_to_polygons(rect)` returns points relative to the rect, which only mattered
+once detection ran per tile; `contour` now moves them to the tile's place.
+
+The Collisions panel's layer and mask grids can show names: a toggle beside "Collision
+layer" turns both into a row per named physics layer (Project Settings > Layer Names >
+2D Physics), plus any set layer without a name, in two columns; a click toggles it as a cell
+does. Past six rows each list scrolls, long names end in an ellipsis (the tooltip has them
+whole), and the 17-32 arrow hides, since the list already covers all 32.
+
+Custom data's field filter has "Showing all / Showing used" (its text says the state) and,
+beside it, "All data", on by default and remembered: while no field is shown, every tile
+holding any custom data is darkened and named (a line per field up to five, then "+N"),
+in the atlas and on the map; tiles with none look as usual. The brush's matches are still
+outlined over it. Both toggles sit by "+ Save…" in Paint and by the filter in Inspect.
+
+In Custom data's Paint, holding the picker key (Alt or Shift, per the option) or arming Pick
+shows the eyedropper cursor, over the map and over the atlas. Collisions' "not outside
+Stamp" rule had kept it off. Inspect keeps the arrow: there Shift adds to the selection.
+
+The Custom data eyedropper copies a tile's whole configuration (`CustomData.whole_config`):
+the fields it holds with their values and every other editable field at its default, armed
+(a bool as ✗). It used to copy only the set fields and leave the rest "as is", so painting
+the picked brush added to what a tile held (lava stayed when copying a texture-only tile).
+
+Custom data presets read as a palette: a "Presets" heading, chips spaced apart with a colour
+swatch each (from the preset's name, so it keeps it), then a row with "+ Save…" and the view
+toggles, and a rule before the fields. After the eyedropper the lit preset follows the brush:
+the one whose set values it now holds, or none, instead of the last one clicked.
+
+Saving a preset whose options another preset already holds (same values by field name) is
+refused before the name is asked: "There is already a preset called "X" with the same
+options." Update on the loaded preset is unaffected.

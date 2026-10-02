@@ -87,9 +87,11 @@ static func contour(image: Image, rect: Rect2i, settings: Dictionary) -> Array:
 	bitmap.create_from_image_alpha(image, float(settings.alpha))
 	var out := []
 	# opaque_to_polygons needs a positive tolerance; a tiny one keeps every pixel step.
+	# Its points come back relative to the rect, so a tile past the first is moved into place.
+	var shift := Transform2D(0.0, Vector2(rect.position))
 	for polygon: PackedVector2Array in bitmap.opaque_to_polygons(rect, maxf(0.01, float(settings.smoothness))):
 		if polygon.size() >= 3 and area(polygon) >= float(settings.specks):
-			out.append(polygon)
+			out.append(shift * polygon)
 	return out
 
 

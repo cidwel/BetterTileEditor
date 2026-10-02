@@ -7,6 +7,9 @@ const ALT_SCOPE_SETTING := "editors/better_terrain/custom_data_alternatives"
 ## Named configurations, kept in the tile set: [{name, values: {field name: value}}].
 const PRESETS_META := &"_better_terrain_data_presets"
 
+## Fields a tile names on itself before the rest become "+N".
+const SUMMARY_LINES := 5
+
 ## Types offered when adding a field; others are shown but edited in the inspector.
 const TYPES := [TYPE_BOOL, TYPE_INT, TYPE_FLOAT, TYPE_STRING, TYPE_COLOR, TYPE_VECTOR2, TYPE_VECTOR2I]
 const TYPE_NAMES := {
@@ -157,6 +160,28 @@ static func label(ts: TileSet, td: TileData, field: int) -> String:
 	if ts.get_custom_data_layer_type(field) == TYPE_BOOL:
 		return field_name
 	return "%s = %s" % [field_name, format(td.get_custom_data_by_layer_id(field))]
+
+
+## What a tile holds, a line per set field: up to SUMMARY_LINES, then "+N" for the rest.
+static func summary(ts: TileSet, td: TileData) -> String:
+	var held := tile_values(ts, td).keys()
+	var lines := []
+	for field: int in held.slice(0, SUMMARY_LINES):
+		lines.append(label(ts, td, field))
+	if held.size() > SUMMARY_LINES:
+		lines.append("+%d" % (held.size() - SUMMARY_LINES))
+	return "\n".join(lines)
+
+
+## Every editable field of a tile, unset ones at their default: picked as a brush, it paints the
+## tile's configuration exactly instead of adding to what a tile already holds.
+static func whole_config(ts: TileSet, td: TileData) -> Dictionary:
+	var out := {}
+	for i in ts.get_custom_data_layers_count():
+		var type := ts.get_custom_data_layer_type(i)
+		if editable(type):
+			out[i] = td.get_custom_data_by_layer_id(i) if is_set(td.get_custom_data_by_layer_id(i), type) else default_for(type)
+	return out
 
 
 ## The configuration a tile holds: {field index: value} for its fields not at their default.

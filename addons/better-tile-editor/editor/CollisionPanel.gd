@@ -36,6 +36,9 @@ class BitGrid extends Control:
 	const BLOCK_GAP := 4.0
 	const ROWS := 2
 	const PER_ROW := 8
+	const NAMED_COLUMNS := 2
+	## Named rows shown before the list scrolls.
+	const NAMED_ROWS := 6
 
 	var value := 0
 	var expanded := false:
@@ -43,18 +46,42 @@ class BitGrid extends Control:
 			expanded = on
 			update_minimum_size()
 			queue_redraw()
+	## A row per named layer (and any set one) instead of the numbered cells.
+	var named := false:
+		set(on):
+			named = on
+			update_minimum_size()
+			queue_redraw()
 	var _hover := -1
+
+	static func layer_name(bit: int) -> String:
+		return str(ProjectSettings.get_setting("layer_names/2d_physics/layer_%d" % (bit + 1), ""))
+
+	func _named_bits() -> Array:
+		var out := []
+		for bit in 32:
+			if not layer_name(bit).is_empty() or value & (1 << bit):
+				out.append(bit)
+		return out
 
 	func _init() -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
 
 	func _get_minimum_size() -> Vector2:
+		if named:
+			return Vector2(0, maxi(1, ceili(_named_bits().size() / float(NAMED_COLUMNS))) * (CELL.y + 3.0))
 		var width := PER_ROW * (CELL.x + GAP) + BLOCK_GAP
 		var groups := 2 if expanded else 1
 		return Vector2(width, groups * ROWS * (CELL.y + GAP) + (groups - 1) * BLOCK_GAP)
 
 	@warning_ignore("integer_division")
 	func _cell_rect(bit: int) -> Rect2:
+		if named:
+			var i := _named_bits().find(bit)
+			if i < 0:
+				return Rect2()
+			var width := size.x / NAMED_COLUMNS
+			return Rect2((i % NAMED_COLUMNS) * width, (i / NAMED_COLUMNS) * (CELL.y + 3.0), width - 4.0, CELL.y + 2.0)
 		var group := bit / (ROWS * PER_ROW)
 		var in_group := bit % (ROWS * PER_ROW)
 		var row := in_group / PER_ROW
@@ -64,7 +91,7 @@ class BitGrid extends Control:
 		return Rect2(Vector2(x, y), CELL)
 
 	func _bit_at(at: Vector2) -> int:
-		for bit in (32 if expanded else 16):
+		for bit in (_named_bits() if named else range(32 if expanded else 16)):
 			if _cell_rect(bit).has_point(at):
 				return bit
 		return -1
@@ -72,6 +99,9 @@ class BitGrid extends Control:
 	func _draw() -> void:
 		var font := get_theme_font("font", "Label")
 		var on_color := get_theme_color("accent_color", "Editor")
+		if named:
+			_draw_named(font, on_color)
+			return
 		for bit in (32 if expanded else 16):
 			var rect := _cell_rect(bit)
 			var on := value & (1 << bit) != 0
@@ -84,6 +114,34 @@ class BitGrid extends Control:
 			draw_string(font, rect.position + Vector2((rect.size.x - text_size.x) * 0.5, rect.size.y - 3.5), text,
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 9, Color(0, 0, 0, 0.8) if on else Color(1, 1, 1, 0.55))
 
+	func _draw_named(font: Font, on_color: Color) -> void:
+		var bits := _named_bits()
+		if bits.is_empty():
+			draw_string(font, Vector2(0, CELL.y - 2.0), "No layer names set", HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+				Color(1, 1, 1, 0.45))
+			return
+		for bit: int in bits:
+			var rect := _cell_rect(bit)
+			var on := value & (1 << bit) != 0
+			if bit == _hover:
+				draw_rect(rect, Color(1, 1, 1, 0.08))
+			var box := Rect2(rect.position + Vector2(2, 2), Vector2(CELL.y - 2.0, CELL.y - 2.0))
+			draw_rect(box, on_color if on else Color(1, 1, 1, 0.12))
+			var label := layer_name(bit)
+			var text := "%d  %s" % [bit + 1, label if not label.is_empty() else "(no name)"]
+			var room := rect.end.x - box.end.x - 5
+			text = _fit(font, text, room, 11)
+			draw_string(font, Vector2(box.end.x + 5, rect.position.y + CELL.y - 1.0), text, HORIZONTAL_ALIGNMENT_LEFT,
+				room, 11, Color(1, 1, 1, 0.9 if on else 0.6))
+
+	# Long names end in an ellipsis; the tooltip has them whole.
+	static func _fit(font: Font, text: String, room: float, font_size: int) -> String:
+		if font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= room:
+			return text
+		while text.length() > 1 and font.get_string_size(text + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > room:
+			text = text.left(-1)
+		return text + "…"
+
 	func _gui_input(event: InputEvent) -> void:
 		if event is InputEventMouseMotion:
 			var bit := _bit_at(event.position)
@@ -94,6 +152,7 @@ class BitGrid extends Control:
 			var bit := _bit_at(event.position)
 			if bit >= 0:
 				value ^= 1 << bit
+				update_minimum_size()
 				queue_redraw()
 				changed.emit(value)
 				accept_event()
@@ -107,8 +166,8 @@ class BitGrid extends Control:
 		var bit := _bit_at(at)
 		if bit < 0:
 			return ""
-		var layer_name := str(ProjectSettings.get_setting("layer_names/2d_physics/layer_%d" % (bit + 1), ""))
-		return "Layer %d%s" % [bit + 1, "" if layer_name.is_empty() else ": " + layer_name]
+		var label := layer_name(bit)
+		return "Layer %d%s" % [bit + 1, "" if label.is_empty() else ": " + label]
 
 
 func _init() -> void:
@@ -189,6 +248,20 @@ func _init() -> void:
 	outer.add_child(_bits_box)
 	_layer_bits = _add_bits("Collision layer", "The layers these tiles are on: what finds them.")
 	_mask_bits = _add_bits("Collision mask", "The layers these tiles look at.")
+	var names := Button.new()
+	names.flat = true
+	names.toggle_mode = true
+	names.focus_mode = Control.FOCUS_NONE
+	names.icon = EditorInterface.get_base_control().get_theme_icon("Label", "EditorIcons")
+	names.tooltip_text = "Show the layers by name (Project Settings > Layer Names > 2D Physics)"
+	var holder := _layer_bits.get_parent()
+	var first_row: HBoxContainer = holder.get_parent().get_child(holder.get_index() - 1)
+	first_row.add_child(names)
+	first_row.move_child(names, 1)
+	names.toggled.connect(func(on: bool) -> void:
+		for grid: BitGrid in [_layer_bits, _mask_bits]:
+			grid.named = on
+			_more_buttons[grid].visible = not on)
 
 
 func setup(ts: TileSet, index: int) -> void:
@@ -235,8 +308,18 @@ func _add_bits(heading: String, hint: String) -> BitGrid:
 	_bits_box.add_child(row)
 	var grid := BitGrid.new()
 	grid.tooltip_text = hint
+	grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid.changed.connect(func(_v: int): _emit_bits())
-	_bits_box.add_child(grid)
+	# By name the list can be long: it scrolls past a few rows instead of pushing the panel.
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.add_child(grid)
+	_bits_box.add_child(scroll)
+	var cap := func() -> void:
+		var tall := grid.get_combined_minimum_size().y
+		scroll.custom_minimum_size.y = minf(tall, BitGrid.NAMED_ROWS * (BitGrid.CELL.y + 3.0)) if grid.named else tall
+	grid.minimum_size_changed.connect(cap)
+	cap.call()
 	_more_buttons[grid] = more
 	more.toggled.connect(func(on: bool):
 		grid.expanded = on
