@@ -48,32 +48,11 @@ top of a 2×1 slope.
 
 ## Slopes
 
-For platformer tilesets with steep (1×1) and gentle (2×1) slopes, on floors and
-ceilings. Set them up from the right-click menu of a Match tiles terrain, **Set up slopes…**,
-which opens over the dock: click a piece card, then its tile in the atlas (wheel zooms, middle button pans),
-and it moves on to the next piece. A tile another piece had is swapped with it.
-**Simple** asks only for Ground and the pieces rising right with the ground under them;
-rising left and the ceilings are those tiles flipped, as alternative tiles. **Advanced**
-lets you pick every piece. The preview shows how the slope tool will paint, and
-**Clear slopes** starts over. The plugin makes the slope terrains and their rules;
-tilesets with terrains named like `SteepSlopeTL` or `GentleSlope1TL` are read in as
-they are. **Add slope rules** adds the rules that let peaks, valleys and the ground
-under a slope pick the right tiles.
+Steep (1×1) and gentle (2×1) slopes for platformers, on floors and ceilings.
 
-Once every slope has a tile, the slope tool shows next to the fill tool when one of
-those terrains is selected. Drag to draw the ground's surface from the cell you
-press: the line snaps to the nearest angle it can draw (flat, gentle 2×1, steep
-1×1 or vertical) and ends at the mouse. Flat and vertical lines are plain Ground.
-Pressing on the top row of the ground starts a slope up on its surface and a slope
-down beside its edge, and a slope
-that ends a row or two off the ground beside it is stretched or shortened to join it.
-A slope fills Ground below; started under a ceiling it makes a ceiling slope; hold
-Shift for a thin diagonal, with no Ground (optional; it needs the thin pieces set up). The preview shows the tiles you'll get.
-Right-drag removes. With **Autofill**, next to the Slope button, flat lines also fill
-Ground down to the ground below them; with no ground in reach they stay a bar.
-With **Freehand** it draws like a pencil: the ground follows the mouse and becomes
-gentle or steep slopes or walls by how fast it climbs; going back rubs out, and Shift
-keeps it level. **Smooth** flattens bumps one row high up to that many columns wide.
+- Set them up from a Match tiles terrain's right-click menu, **Set up slopes…**: click each piece, then its tile. **Simple** asks for a few tiles and flips the rest.
+- Drag with the slope tool to draw the ground's surface: it snaps to the nearest slope it can draw and fills the ground below.
+- **Freehand** draws like a pencil, **Autofill** fills flat lines down to the ground and **Smooth** flattens small bumps.
 
 ## Install
 
