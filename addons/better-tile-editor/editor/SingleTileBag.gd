@@ -66,9 +66,25 @@ func _init() -> void:
 	_rows.draw.connect(_draw_insertion)
 	_rows.mouse_exited.connect(func(): _set_insertion({}))
 	scroll.add_child(_rows)
+	# A tab with a frame, lit on hover and clickable as a whole: the bare caption and
+	# arrow did not read as something to press.
+	var tab := PanelContainer.new()
+	tab.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	tab.mouse_filter = Control.MOUSE_FILTER_STOP
+	tab.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var tab_style := _tab_style(false)
+	var tab_hover := _tab_style(true)
+	tab.add_theme_stylebox_override("panel", tab_style)
+	tab.mouse_entered.connect(func(): tab.add_theme_stylebox_override("panel", tab_hover))
+	tab.mouse_exited.connect(func(): tab.add_theme_stylebox_override("panel", tab_style))
+	tab.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			set_collapsed(not _collapsed)
+			tab.accept_event())
+	add_child(tab)
 	var toggle_column := VBoxContainer.new()
-	toggle_column.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	add_child(toggle_column)
+	toggle_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tab.add_child(toggle_column)
 	var caption_slot := Control.new()
 	caption_slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	toggle_column.add_child(caption_slot)
@@ -89,6 +105,7 @@ func _init() -> void:
 	_toggle = Button.new()
 	_toggle.flat = true
 	_toggle.focus_mode = Control.FOCUS_NONE
+	_toggle.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_toggle.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_toggle.pressed.connect(func(): set_collapsed(not _collapsed))
 	toggle_column.add_child(_toggle)
@@ -135,7 +152,7 @@ func set_collapsed(value: bool) -> void:
 	_collapsed = value
 	_content.visible = not value
 	_toggle.text = "›" if value else "‹"
-	_toggle.tooltip_text = "Show favorites" if value else "Hide favorites"
+	_toggle.get_parent().get_parent().tooltip_text = "Show favorites" if value else "Hide favorites"
 	collapsed_changed.emit()
 
 static func same_tile(a: Dictionary, b: Dictionary) -> bool:
@@ -576,3 +593,17 @@ func _thumbnail(ts: TileSet, entry: Dictionary) -> Texture2D:
 	var extent: Vector2i = (source.texture_region_size + source.separation) * (entry.size - Vector2i.ONE)
 	texture.region = Rect2(region.position, region.size + extent)
 	return texture
+
+static func _tab_style(hover: bool) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	var accent := EditorInterface.get_editor_theme().get_color("accent_color", "Editor")
+	style.bg_color = Color(1, 1, 1, 0.12 if hover else 0.06)
+	style.border_color = accent if hover else Color(1, 1, 1, 0.22)
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(4)
+	style.content_margin_left = 3
+	style.content_margin_right = 3
+	style.content_margin_top = 8
+	style.content_margin_bottom = 4
+	return style
+

@@ -146,6 +146,55 @@ static func resolve_tile(cfg: Dictionary, row: String, case_name: String) -> Dic
 		coarser = slot_tile(cfg, "middle", back)
 	return coarser
 
+## Fills every slot from one block of wall art: end columns for exposed sides, the middle ones
+## repeating; top and base rows, the ones between repeating. Returns the slots written.
+static func autoassign(cfg: Dictionary, source_id: int, block: Rect2i) -> int:
+	var count := 0
+	for row in ROWS:
+		var r := autoassign_rows(block, row)
+		for c in CASES:
+			if not slot_reachable(row, c, 1 if row == "only" else (3 if row == "middle" else 2)):
+				continue
+			var x := autoassign_columns(block, c)
+			var tile := {"source_id": source_id, "coord": Vector2i(x.x, r.x)}
+			if x.y > 1 or r.y > 1:
+				tile["size"] = Vector2i(x.y, r.y)
+			set_slot_tile(cfg, row, c, tile)
+			count += 1
+	return count
+
+
+## The (first column, width) of `block` a case draws with.
+static func autoassign_columns(block: Rect2i, case_name: String) -> Vector2i:
+	var x := block.position.x
+	var w := block.size.x
+	if w <= 1:
+		return Vector2i(x, 1)
+	var sides := case_sides(case_name)
+	var left_end := side_class(sides[0]) == "E"
+	var right_end := side_class(sides[1]) == "E"
+	if left_end and not right_end:
+		return Vector2i(x, 1)
+	if right_end and not left_end:
+		return Vector2i(x + w - 1, 1)
+	# Running on both ways, or a lone column the block has no art for: the repeating part
+	# (with two columns, both, as there is nothing between the ends).
+	return Vector2i(x + 1, w - 2) if w >= 3 else Vector2i(x, 2)
+
+
+## The (first row, height) of `block` a face row draws with.
+static func autoassign_rows(block: Rect2i, row: String) -> Vector2i:
+	var y := block.position.y
+	var h := block.size.y
+	if h <= 1:
+		return Vector2i(y, 1)
+	if row == "base" or row == "only":
+		return Vector2i(y + h - 1, 1)
+	if h == 2 or row == "top":
+		return Vector2i(y, 1)
+	return Vector2i(y + 1, h - 2)
+
+
 static func slot_key(row: String, case_name: String) -> String:
 	return "%s/%s" % [row, case_name]
 

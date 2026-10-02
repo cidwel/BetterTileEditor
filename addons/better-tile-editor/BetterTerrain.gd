@@ -292,8 +292,9 @@ func _get_cache(ts: TileSet) -> Array:
 				
 				var _unused_marker = 0
 				var symmetry = td_meta.get("symmetry", SymmetryType.NONE)
+				var transforms: Array = td_meta.get("transforms", [])
 				# Branch out no symmetry tiles early
-				if symmetry == SymmetryType.NONE:
+				if symmetry == SymmetryType.NONE and transforms.is_empty():
 					cache[td_meta.type].push_back([source_id, coord, alternate, peering, td.probability, not_peering])
 					continue
 				
@@ -309,6 +310,15 @@ func _get_cache(ts: TileSet) -> Array:
 					var symmetric_peering = data.peering_bits_after_symmetry(peering, flags)
 					var symmetric_not = data.peering_bits_after_symmetry(not_peering, flags)
 					cache[td_meta.type].push_back([source_id, coord, alternate | flags, symmetric_peering, adjusted_probability, symmetric_not])
+				# Single turns: standing in for a piece never drawn, a turn is the only tile for its
+				# joins and keeps the whole probability; as variety on a fill tile, it shares it.
+				var weight: float = td_meta.get("transform_weight", 1.0)
+				for flags: int in transforms:
+					if flags in data.symmetry_mapping[symmetry]:
+						continue
+					cache[td_meta.type].push_back([source_id, coord, alternate | flags,
+						data.peering_bits_after_symmetry(peering, flags), td.probability * weight,
+						data.peering_bits_after_symmetry(not_peering, flags)])
 	
 	return cache
 
@@ -1229,6 +1239,9 @@ func set_tile_terrain_type(ts: TileSet, td: TileData, type: int) -> bool:
 		return false
 	
 	var td_meta = _get_tile_meta(td)
+	# Turns were picked to fill the old terrain's gaps.
+	if td_meta.type != type:
+		td_meta.erase("transforms")
 	td_meta.type = type
 	if type == TileCategory.NON_TERRAIN:
 		td_meta = null
@@ -1283,6 +1296,41 @@ func get_tile_symmetry_type(td: TileData) -> int:
 	
 	var td_meta := _get_tile_meta(td)
 	return td_meta.get("symmetry", SymmetryType.NONE)
+
+
+## For a tile [code]td[/code], the transforms ([code]TileSetAtlasSource.TRANSFORM_*[/code]
+## flags) it is also placed with, each one alone, unlike a symmetry type's set.
+func get_tile_transforms(td: TileData) -> Array:
+	if !td:
+		return []
+	return (_get_tile_meta(td).get("transforms", []) as Array).duplicate()
+
+
+## How likely each turned copy of a tile is, against the tile as drawn.
+func get_tile_transform_weight(td: TileData) -> float:
+	if !td:
+		return 1.0
+	return float(_get_tile_meta(td).get("transform_weight", 1.0))
+
+
+## Sets the transforms a terrain tile is also placed with; an empty list clears them. Each
+## turned copy is picked with the tile's probability times [code]weight[/code].
+func set_tile_transforms(ts: TileSet, td: TileData, transforms: Array, weight := 1.0) -> bool:
+	if !ts or !td:
+		return false
+	var td_meta := _get_tile_meta(td)
+	if td_meta.type == TileCategory.NON_TERRAIN:
+		return false
+	td_meta.erase("transform_weight")
+	if transforms.is_empty():
+		td_meta.erase("transforms")
+	else:
+		td_meta.transforms = transforms.duplicate()
+		if not is_equal_approx(weight, 1.0):
+			td_meta.transform_weight = weight
+	_set_tile_meta(ts, td, td_meta)
+	_purge_cache(ts)
+	return true
 
 
 ## Returns an Array of all [TileData] tiles included in the specified

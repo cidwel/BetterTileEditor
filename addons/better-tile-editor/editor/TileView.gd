@@ -3,13 +3,50 @@ extends Control
 
 const ObjectTerrain := preload("res://addons/better-tile-editor/ObjectTerrain.gd")
 const ExemplarData := preload("res://addons/better-tile-editor/ExemplarData.gd")
+const Collisions := preload("res://addons/better-tile-editor/editor/Collisions.gd")
+const CustomData := preload("res://addons/better-tile-editor/editor/CustomData.gd")
 
 signal paste_occurred
 signal change_zoom_level(value)
 signal terrain_updated(index)
 signal tile_picked(source_id: int, origin: Vector2i, size: Vector2i)
-signal favorite_requested
+## Right click in Single tile: the tile under the mouse (source -1 when none).
+signal favorite_requested(source_id: int, coord: Vector2i, alternate: int)
 signal tile_dropped(source_id: int, coord: Vector2i)
+signal collision_marked(source_id: int, coord: Vector2i, solid: bool)
+signal collision_stroke_ended
+signal collision_copy_requested(source_id: int, coord: Vector2i)
+signal collision_paste_requested(source_id: int, coord: Vector2i)
+signal data_pick_requested(source_id: int, coord: Vector2i)
+signal data_preset_key(index: int)
+
+## Collisions tool: clicks mark tiles solid or clear, and each tile shows its polygons.
+var collision_mode := false
+## TileSet physics layer shown and painted, -1 when the tile set has none.
+var collision_layer := -1
+var collision_stroking := false
+## Tells whether a left click takes the tile's collision shape instead (Stamp's picking).
+var collision_pick_check: Callable
+## Shape mode: a click or drag picks the tiles to open in the shape editor instead.
+var collision_shape_mode := false
+## Custom data tool; its clicks go through collision_mode. One view at a time: the tiles
+## holding the whole brush (DATA_VIEW_MATCHES), nothing (DATA_VIEW_NONE) or one field (>= 0).
+var data_mode := false
+const DATA_VIEW_MATCHES := -1
+const DATA_VIEW_NONE := -2
+var data_view := DATA_VIEW_MATCHES
+## The field the mouse rests on in the panel, shown instead of the view meanwhile.
+var data_hover := -1
+var data_brush := {}
+## Tells whether a click takes the tile's fields instead: the picker's key, or the panel's picker.
+var data_pick_check: Callable
+## Inspect: clicks pick tiles; the selected ones, Vector3i(x, y, source), are outlined.
+var data_inspect := false
+var data_selected := {}
+var data_color := Color(0.44, 0.73, 0.98)
+## Numeric fields' ranges over the tile set, {field: Vector2(min, max)}, for the heatmap.
+var data_ranges := {}
+var _collision_solid := true
 
 @onready var checkerboard := get_theme_icon("Checkerboard", "EditorIcons")
 
@@ -110,6 +147,27 @@ var paint_action := PaintAction.NO_ACTION
 var _panning := false
 
 const ALTERNATE_TILE_MARGIN := 18
+## Room above each atlas for its name, when more than one is shown.
+const HEADER_HEIGHT := 20.0
+const BAND_GAP := 6.0
+## Room left where empty rows are cut out of an atlas.
+const CUT_GAP := 14.0
+## Shorter runs of empty rows stay: a row between drawings is spacing, not waste.
+const MIN_CUT_ROWS := 2
+
+## Leave out the atlases' empty space: trailing columns, trailing rows and runs of empty
+## rows. A cell counts as empty with nothing drawn and no tile, so new art or tiles show up.
+var trim_empty := true:
+	set(value):
+		trim_empty = value
+		_on_zoom_value_changed(zoom_level)
+
+## Where each shown atlas lands, in view pixels. Each segment is [texture y from, to, view y
+## from the band's top]; cuts are the view y of the gaps between segments.
+var _bands: Array[Dictionary] = []
+var _content_height := 0.0
+## Which cells of a texture have something drawn, {key: PackedByteArray}.
+var _art_cache := {}
 
 func _seen_window() -> Rect2:
 	var scroll := get_parent() as ScrollContainer
@@ -180,9 +238,6 @@ func refresh_tileset(ts: TileSet) -> void:
 		if !source or !source.texture:
 			continue
 		
-		tiles_size.x = max(tiles_size.x, source.texture.get_width())
-		tiles_size.y += source.texture.get_height()
-		
 		tile_size = source.texture_region_size
 		tile_part_size = Vector2(tile_size) / 3.0
 		
@@ -198,6 +253,228 @@ func refresh_tileset(ts: TileSet) -> void:
 			alternate_size.y += rect.size.y
 	
 	_on_zoom_value_changed(zoom_level)
+
+
+#region Layout
+
+func _relayout() -> void:
+	_bands.clear()
+	tiles_size = Vector2.ZERO
+	_content_height = 0.0
+	if tileset == null:
+		return
+	var shown := []
+	for s in tileset.get_source_count():
+		var source_id := tileset.get_source_id(s)
+		var source := tileset.get_source(source_id) as TileSetAtlasSource
+		if source != null and source.texture != null and not source_id in disabled_sources:
+			shown.append(source_id)
+	var labelled := shown.size() > 1
+	var y := 0.0
+	for source_id: int in shown:
+		var source := tileset.get_source(source_id) as TileSetAtlasSource
+		var band := {
+			source_id = source_id,
+			source = source,
+			label = source_label(source, source_id),
+			header = y if labelled else -1.0,
+			top = y + (HEADER_HEIGHT if labelled else 0.0),
+		}
+		_fill_band(band)
+		_bands.append(band)
+		y = band.top + band.height + BAND_GAP
+		tiles_size.x = maxf(tiles_size.x, band.width)
+	_content_height = maxf(0.0, y - BAND_GAP)
+	tiles_size.y = _content_height / zoom_level
+
+
+## The name an atlas goes by: its own, its texture's, or its file's, with its ID.
+static func source_label(source: TileSetAtlasSource, source_id: int) -> String:
+	var label := source.resource_name
+	if label.is_empty() and source.texture != null:
+		label = source.texture.resource_name
+		if label.is_empty():
+			label = source.texture.resource_path.get_file()
+	return ("%s (ID: %d)" % [label, source_id]) if not label.is_empty() else "Atlas (ID: %d)" % source_id
+
+
+func _fill_band(band: Dictionary) -> void:
+	var source: TileSetAtlasSource = band.source
+	var texture_size := Vector2(source.texture.get_size())
+	band.width = texture_size.x
+	band.segments = [[0.0, texture_size.y, 0.0]]
+	band.cuts = []
+	band.cut_bottom = false
+	if trim_empty:
+		_trim_band(band, texture_size)
+	var last: Array = band.segments.back()
+	band.height = last[2] + zoom_level * (last[1] - last[0])
+
+
+func _trim_band(band: Dictionary, texture_size: Vector2) -> void:
+	var source: TileSetAtlasSource = band.source
+	var grid := source.get_atlas_grid_size()
+	var art := _art_cells(source, grid)
+	var rows := []
+	var last_col := -1
+	for y in grid.y:
+		var used := false
+		for x in grid.x:
+			if art[y * grid.x + x] or source.get_tile_at_coords(Vector2i(x, y)) != Vector2i(-1, -1):
+				used = true
+				last_col = maxi(last_col, x)
+		rows.append(used)
+	if last_col < 0:
+		return
+	var step := Vector2(source.texture_region_size + source.separation)
+	var margins := Vector2(source.margins)
+	var right := margins.x + (last_col + 1) * step.x
+	if right < texture_size.x:
+		band.width = right
+	var segments := []
+	var from := 0.0
+	var at := 0.0
+	var row := 0
+	while row < grid.y:
+		if rows[row]:
+			row += 1
+			continue
+		var end := row
+		while end < grid.y and not rows[end]:
+			end += 1
+		var trailing := end == grid.y
+		if trailing or end - row >= MIN_CUT_ROWS:
+			var to := margins.y + row * step.y
+			if to > from:
+				segments.append([from, to, at])
+				at += zoom_level * (to - from)
+			if trailing:
+				band.cut_bottom = true
+				from = -1.0
+				break
+			band.cuts.append(at + CUT_GAP * 0.5)
+			at += CUT_GAP
+			from = margins.y + end * step.y
+		row = end
+	if from >= 0.0:
+		segments.append([from, texture_size.y, at])
+	band.segments = segments
+
+
+func _art_cells(source: TileSetAtlasSource, grid: Vector2i) -> PackedByteArray:
+	var texture := source.texture
+	var key := "%d|%s|%s|%s" % [texture.get_instance_id(), source.texture_region_size, source.separation, source.margins]
+	if _art_cache.has(key):
+		return _art_cache[key]
+	var cells := PackedByteArray()
+	cells.resize(grid.x * grid.y)
+	cells.fill(1)
+	var image := texture.get_image()
+	if image != null and image.detect_alpha() != Image.ALPHA_NONE:
+		if image.is_compressed():
+			image.decompress()
+		var step := source.texture_region_size + source.separation
+		for y in grid.y:
+			for x in grid.x:
+				var region := Rect2i(source.margins + Vector2i(x, y) * step, source.texture_region_size)
+				cells[y * grid.x + x] = 0 if image.get_region(region).is_invisible() else 1
+	_art_cache[key] = cells
+	if not texture.changed.is_connected(_on_texture_changed):
+		texture.changed.connect(_on_texture_changed)
+	return cells
+
+
+# New art in a texture may fill space that was cut.
+func _on_texture_changed() -> void:
+	_art_cache.clear()
+	_on_zoom_value_changed(zoom_level)
+
+
+func _band_of(source_id: int) -> Dictionary:
+	for band in _bands:
+		if band.source_id == source_id:
+			return band
+	return {}
+
+
+func _segment_at(band: Dictionary, texture_y: float) -> Array:
+	var found: Array = band.segments[0]
+	for segment: Array in band.segments:
+		if segment[0] <= texture_y:
+			found = segment
+	return found
+
+
+## A point of an atlas texture in the view.
+func _texture_point(band: Dictionary, p: Vector2) -> Vector2:
+	var segment := _segment_at(band, p.y)
+	var y := clampf(p.y, segment[0], segment[1])
+	return Vector2(zoom_level * p.x, band.top + segment[2] + zoom_level * (y - segment[0]))
+
+
+## A texture rect in the view, or an empty Rect2 when it lies in cut space.
+func _texture_rect(band: Dictionary, r: Rect2) -> Rect2:
+	var segment := _segment_at(band, r.position.y)
+	if r.position.y >= segment[1] or r.position.x >= band.width:
+		return Rect2()
+	return Rect2(_texture_point(band, r.position), zoom_level * r.size)
+
+
+## The view rect of a texture rect of an atlas, as drawn; empty when not shown.
+func atlas_rect(source_id: int, r: Rect2) -> Rect2:
+	var band := _band_of(source_id)
+	return Rect2() if band.is_empty() else _texture_rect(band, r)
+
+
+## The atlas and texture point under a view position: {band, point}, or {} off every atlas.
+func _texture_at(pos: Vector2) -> Dictionary:
+	for band in _bands:
+		if pos.x < 0.0 or pos.x >= zoom_level * band.width:
+			continue
+		var local: float = pos.y - band.top
+		for segment: Array in band.segments:
+			if local >= segment[2] and local < segment[2] + zoom_level * (segment[1] - segment[0]):
+				return {band = band, point = Vector2(pos.x / zoom_level, segment[0] + (local - segment[2]) / zoom_level)}
+	return {}
+
+
+func _draw_band_frame(band: Dictionary) -> void:
+	var font := get_theme_default_font()
+	var muted := get_theme_color("font_color", "Label")
+	muted.a = 0.6
+	if band.header >= 0.0:
+		var font_size := maxi(9, get_theme_default_font_size() - 3)
+		var label: String = band.label
+		var baseline: float = band.header + HEADER_HEIGHT * 0.5 + font_size * 0.35
+		draw_string(font, Vector2(2, baseline), label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, muted)
+		var after := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 8.0
+		var line_y: float = band.header + HEADER_HEIGHT * 0.5
+		if size.x > after:
+			draw_line(Vector2(after, line_y), Vector2(size.x, line_y), muted, 1.0)
+	var right: float = zoom_level * band.width
+	for cut: float in band.cuts:
+		_draw_cut(Vector2(0, band.top + cut), Vector2(right, band.top + cut), muted)
+	if band.cut_bottom:
+		var bottom: float = band.top + band.height + 2.0
+		_draw_cut(Vector2(0, bottom), Vector2(right, bottom), muted)
+
+
+# A wavy line, like a scissor cut: what was here is empty and left out.
+func _draw_cut(from: Vector2, to: Vector2, colour: Color) -> void:
+	var length := from.distance_to(to)
+	if length < 1.0:
+		return
+	var along := (to - from) / length
+	var across := Vector2(-along.y, along.x)
+	var points := PackedVector2Array()
+	var steps := int(length / 2.0)
+	for i in steps + 1:
+		var d := length * i / maxf(1.0, steps)
+		points.append(from + along * d + across * 2.0 * sin(d * TAU / 10.0))
+	draw_polyline(points, Color(0, 0, 0, 0.45), 3.0)
+	draw_polyline(points, colour, 1.0)
+
+#endregion
 
 
 func is_tile_in_source(source: TileSetAtlasSource, coord: Vector2i) -> bool:
@@ -244,25 +521,16 @@ func _pick_target() -> Vector2i:
 func _atlas_cell_at(pos: Vector2) -> Dictionary:
 	if tileset == null:
 		return {}
-	var offset := Vector2.ZERO
-	for s in tileset.get_source_count():
-		var source_id := tileset.get_source_id(s)
-		if source_id in disabled_sources:
-			continue
-		var source := tileset.get_source(source_id) as TileSetAtlasSource
-		if source == null or source.texture == null:
-			continue
-		var area := Rect2(offset, zoom_level * Vector2(source.texture.get_size()))
-		if area.has_point(pos):
-			var step := Vector2(source.texture_region_size + source.separation)
-			var local := (pos - offset) / zoom_level - Vector2(source.margins)
-			var coord := Vector2i((local / step).floor())
-			var grid := source.get_atlas_grid_size()
-			if coord.x < 0 or coord.y < 0 or coord.x >= grid.x or coord.y >= grid.y:
-				return {}
-			return {source_id = source_id, coord = coord}
-		offset.y += zoom_level * source.texture.get_height()
-	return {}
+	var hit := _texture_at(pos)
+	if hit.is_empty():
+		return {}
+	var source: TileSetAtlasSource = hit.band.source
+	var step := Vector2(source.texture_region_size + source.separation)
+	var coord := Vector2i(((hit.point - Vector2(source.margins)) / step).floor())
+	var grid := source.get_atlas_grid_size()
+	if coord.x < 0 or coord.y < 0 or coord.x >= grid.x or coord.y >= grid.y:
+		return {}
+	return {source_id = hit.band.source_id, coord = coord}
 
 
 # Trim the picked rect to cells that hold a tile.
@@ -286,7 +554,6 @@ func tile_part_from_position(pos: Vector2i) -> Dictionary:
 	if !tileset:
 		return { valid = false }
 	
-	var offset := Vector2.ZERO
 	var alt_offset := Vector2.RIGHT * (zoom_level * tiles_size.x + ALTERNATE_TILE_MARGIN)
 	if Rect2(alt_offset, zoom_level * alternate_size).has_point(pos):
 		for a in alternate_lookup:
@@ -322,19 +589,17 @@ func tile_part_from_position(pos: Vector2i) -> Dictionary:
 				return result
 	
 	else:
-		for s in tileset.get_source_count():
-			var source_id := tileset.get_source_id(s)
-			if source_id in disabled_sources:
-				continue
-			var source := tileset.get_source(source_id) as TileSetAtlasSource
-			if !source || !source.texture:
-				continue
+		var hit := _texture_at(Vector2(pos))
+		if not hit.is_empty():
+			var band: Dictionary = hit.band
+			var source_id: int = band.source_id
+			var source: TileSetAtlasSource = band.source
 			for t in source.get_tiles_count():
 				var coord := source.get_tile_id(t)
 				var rect := source.get_tile_texture_region(coord, 0)
-				var target_rect := Rect2(offset + zoom_level * rect.position, zoom_level * rect.size)
-				if !target_rect.has_point(pos):
+				if not Rect2(rect).has_point(hit.point):
 					continue
+				var target_rect := _texture_rect(band, rect)
 				
 				var result := {
 					valid = true,
@@ -345,8 +610,6 @@ func tile_part_from_position(pos: Vector2i) -> Dictionary:
 				}
 				_build_tile_part_from_position(result, pos, target_rect)
 				return result
-			
-			offset.y += zoom_level * source.texture.get_height()
 	
 	return { valid = false }
 
@@ -355,7 +618,6 @@ func tile_rect_from_position(pos: Vector2i) -> Rect2:
 	if !tileset:
 		return Rect2(-1,-1,0,0)
 	
-	var offset := Vector2.ZERO
 	var alt_offset := Vector2.RIGHT * (zoom_level * tiles_size.x + ALTERNATE_TILE_MARGIN)
 	if Rect2(alt_offset, zoom_level * alternate_size).has_point(pos):
 		for a in alternate_lookup:
@@ -381,21 +643,13 @@ func tile_rect_from_position(pos: Vector2i) -> Rect2:
 				return target_rect
 	
 	else:
-		for s in tileset.get_source_count():
-			var source_id := tileset.get_source_id(s)
-			if source_id in disabled_sources:
-				continue
-			var source := tileset.get_source(source_id) as TileSetAtlasSource
-			if !source:
-				continue
+		var hit := _texture_at(Vector2(pos))
+		if not hit.is_empty():
+			var source: TileSetAtlasSource = hit.band.source
 			for t in source.get_tiles_count():
-				var coord := source.get_tile_id(t)
-				var rect := source.get_tile_texture_region(coord, 0)
-				var target_rect := Rect2(offset + zoom_level * rect.position, zoom_level * rect.size)
-				if target_rect.has_point(pos):
-					return target_rect
-			
-			offset.y += zoom_level * source.texture.get_height()
+				var rect := source.get_tile_texture_region(source.get_tile_id(t), 0)
+				if Rect2(rect).has_point(hit.point):
+					return _texture_rect(hit.band, rect)
 	
 	return Rect2(-1,-1,0,0)
 
@@ -406,20 +660,15 @@ func tile_parts_from_rect(rect:Rect2) -> Array[Dictionary]:
 	
 	var tiles:Array[Dictionary] = []
 	
-	var offset := Vector2.ZERO
 	var alt_offset := Vector2.RIGHT * (zoom_level * tiles_size.x + ALTERNATE_TILE_MARGIN)
-	for s in tileset.get_source_count():
-		var source_id := tileset.get_source_id(s)
-		if source_id in disabled_sources:
-			continue
-		var source := tileset.get_source(source_id) as TileSetAtlasSource
-		if !source:
-			continue
+	for band in _bands:
+		var source_id: int = band.source_id
+		var source: TileSetAtlasSource = band.source
 		for t in source.get_tiles_count():
 			var coord := source.get_tile_id(t)
 			var tile_rect := source.get_tile_texture_region(coord, 0)
-			var target_rect := Rect2(offset + zoom_level * tile_rect.position, zoom_level * tile_rect.size)
-			if target_rect.intersects(rect):
+			var target_rect := _texture_rect(band, tile_rect)
+			if target_rect.has_area() and target_rect.intersects(rect):
 				var result := {
 					valid = true,
 					source_id = source_id,
@@ -452,8 +701,6 @@ func tile_parts_from_rect(rect:Rect2) -> Array[Dictionary]:
 					tiles.push_back(result)
 			if alt_count > 1:
 				alt_offset.y += zoom_level * tile_rect.size.y
-		
-		offset.y += zoom_level * source.texture.get_height()
 	
 	return tiles
 
@@ -523,7 +770,7 @@ func _drawing_polygon(type: int, bit: int) -> PackedVector2Array:
 	return _draw_polygons[key]
 
 func editing_rules() -> bool:
-	return paint_action in [PaintAction.DRAW_TYPE, PaintAction.ERASE_TYPE,
+	return collision_stroking or paint_action in [PaintAction.DRAW_TYPE, PaintAction.ERASE_TYPE,
 		PaintAction.DRAW_PEERING, PaintAction.ERASE_PEERING,
 		PaintAction.DRAW_SYMMETRY, PaintAction.ERASE_SYMMETRY]
 
@@ -544,7 +791,7 @@ func _draw_tile_data(texture: Texture2D, rect: Rect2, src_rect: Rect2, td: TileD
 		td.transpose
 	)
 
-	if not show_terrain_marks:
+	if not show_terrain_marks or collision_mode:
 		return
 	var type := BetterTerrain.get_tile_terrain_type(td)
 	if type == BetterTerrain.TileCategory.NON_TERRAIN:
@@ -621,7 +868,12 @@ func _draw_tile_symmetry(texture: Texture2D, rect: Rect2, src_rect: Rect2, td: T
 	)
 
 
+var collision_mesh := Collisions.new_mesh()
+var collision_color := Collisions.DEFAULT_OVERLAY_COLOR
+
+
 func _draw() -> void:
+	collision_mesh = Collisions.new_mesh()
 	_draw_terrains.clear()
 	_draw_polygons.clear()
 	_poly_points.clear()
@@ -635,7 +887,6 @@ func _draw() -> void:
 	for p in _canvas_item_map:
 		RenderingServer.canvas_item_clear(_canvas_item_map[p])
 	
-	var offset := Vector2.ZERO
 	var alt_offset := Vector2.RIGHT * (zoom_level * tiles_size.x + ALTERNATE_TILE_MARGIN)
 	# An empty window means no ScrollContainer clipping is available.
 	var window := _visible_window()
@@ -649,21 +900,20 @@ func _draw() -> void:
 		true
 	)
 	
-	for s in tileset.get_source_count():
-		var source_id := tileset.get_source_id(s)
-		if source_id in disabled_sources:
+	for entry in _bands:
+		var source_id: int = entry.source_id
+		var source: TileSetAtlasSource = entry.source
+		if not is_instance_valid(source) or source.texture == null:
 			continue
-		var source := tileset.get_source(source_id) as TileSetAtlasSource
-		if !source or !source.texture:
-			continue
-		
-		RenderingServer.canvas_item_add_texture_rect(
-			_canvas_item_background,
-			Rect2(offset, zoom_level * source.texture.get_size()),
-			checkerboard.get_rid(),
-			true
-		)
-		var band := Rect2(offset, zoom_level * source.texture.get_size())
+		for segment: Array in entry.segments:
+			RenderingServer.canvas_item_add_texture_rect(
+				_canvas_item_background,
+				Rect2(0, entry.top + segment[2], zoom_level * entry.width, zoom_level * (segment[1] - segment[0])),
+				checkerboard.get_rid(),
+				true
+			)
+		_draw_band_frame(entry)
+		var band := Rect2(0, entry.top, zoom_level * entry.width, entry.height)
 		var band_seen := not cull or window.intersects(band)
 		for t in source.get_tiles_count():
 			var coord := source.get_tile_id(t)
@@ -675,7 +925,9 @@ func _draw() -> void:
 			for a in alt_count:
 				var alt_id := 0
 				if a == 0:
-					target_rect = Rect2(offset + zoom_level * rect.position, zoom_level * rect.size)
+					target_rect = _texture_rect(entry, rect)
+					if not target_rect.has_area():
+						continue
 				else:
 					target_rect = Rect2(alt_offset + zoom_level * (a - 1) * rect.size.x * Vector2.RIGHT, zoom_level * rect.size)
 					alt_id = source.get_alternative_tile_id(coord, a)
@@ -683,11 +935,20 @@ func _draw() -> void:
 				if cull and not window.intersects(target_rect):
 					continue
 				var td := source.get_tile_data(coord, alt_id)
-				var drawing_current = BetterTerrain.get_tile_terrain_type(td) == paint
-				if paint_mode == PaintMode.PAINT_SYMMETRY:
+				var drawing_current = BetterTerrain.get_tile_terrain_type(td) == paint and not collision_mode
+				if paint_mode == PaintMode.PAINT_SYMMETRY and not collision_mode:
 					_draw_tile_symmetry(source.texture, target_rect, rect, td, drawing_current)
 				else:
 					_draw_tile_data(source.texture, target_rect, rect, td)
+				if data_mode:
+					_draw_data_marks(td, target_rect, Vector3i(coord.x, coord.y, source_id))
+				if collision_mode and collision_layer >= 0:
+					var center := target_rect.get_center() + Vector2(td.texture_origin) * zoom_level
+					for polygon: PackedVector2Array in Collisions.cell_polygons(td, collision_layer):
+						var shown := PackedVector2Array()
+						for v in polygon:
+							shown.append(center + v * zoom_level)
+						Collisions.add_to_mesh(collision_mesh, shown, collision_color)
 				
 				if show_grid and a > 0:
 					draw_rect(target_rect, Color(0.75, 0.8, 0.85, 0.28), false, 1.0)
@@ -705,36 +966,10 @@ func _draw() -> void:
 			if alt_count > 1:
 				alt_offset.y += zoom_level * rect.size.y
 		
-		_draw_exemplar_outline(source, offset)
-		_draw_marked_blocks(source, source_id, offset)
-
-		# Blank out unused or uninteresting tiles
-		var grid_size := source.get_atlas_grid_size()
-		var from := Vector2i.ZERO
-		var to := grid_size
-		if cull:
-			if not band_seen:
-				from = grid_size
-			else:
-				var step := source.separation + source.texture_region_size
-				var local := Vector2(window.position - offset) / zoom_level
-				from = Vector2i(
-					maxi(0, int(floor((local.x - source.margins.x) / step.x))),
-					maxi(0, int(floor((local.y - source.margins.y) / step.y))))
-				to = Vector2i(
-					mini(grid_size.x, int(ceil((local.x + window.size.x / zoom_level - source.margins.x) / step.x)) + 1),
-					mini(grid_size.y, int(ceil((local.y + window.size.y / zoom_level - source.margins.y) / step.y)) + 1))
-		for y in range(from.y, to.y):
-			for x in range(from.x, to.x):
-				var pos := Vector2i(x, y)
-				if show_grid:
-					var grid_pos := source.margins + pos * (source.separation + source.texture_region_size)
-					draw_rect(Rect2(offset + zoom_level * grid_pos, zoom_level * source.texture_region_size), Color(0.75, 0.8, 0.85, 0.28), false, 1.0)
-				if !is_tile_in_source(source, pos):
-					var atlas_pos := source.margins + pos * (source.separation + source.texture_region_size)
-					draw_rect(Rect2(offset + zoom_level * atlas_pos, zoom_level * source.texture_region_size), Color(0.0, 0.0, 0.0, 0.8), true)
-		
-		offset.y += zoom_level * source.texture.get_height()
+		_draw_exemplar_outline(entry)
+		_draw_marked_blocks(entry)
+		if band_seen:
+			_draw_blank_cells(entry, window if cull else Rect2())
 	
 	# Blank out unused alternate tile sections
 	alt_offset = Vector2.RIGHT * (zoom_level * tiles_size.x + ALTERNATE_TILE_MARGIN)
@@ -755,6 +990,16 @@ func _draw() -> void:
 		alt_offset.y += zoom_level * a[0].y
 
 	_flush_polygons()
+	if not collision_mesh.indices.is_empty():
+		RenderingServer.canvas_item_add_triangle_array(get_canvas_item(), collision_mesh.indices,
+			collision_mesh.points, collision_mesh.colors)
+	collision_mesh = Collisions.new_mesh()
+
+	if collision_mode:
+		if highlighted_tile_part.valid:
+			var r: Rect2 = highlighted_tile_part.rect
+			draw_rect(Rect2(r.position + Vector2.ONE, r.size - 2 * Vector2.ONE), Color.WHITE, false)
+		return
 
 	if highlighted_tile_part.valid:
 		if paint_mode == PaintMode.PAINT_PEERING and highlighted_tile_part.has("polygon"):
@@ -859,22 +1104,68 @@ func _notification(what: int) -> void:
 		queue_redraw()
 
 
-func _draw_marked_blocks(source: TileSetAtlasSource, source_id: int, offset: Vector2) -> void:
+# Grid lines, and a dark cover over cells that are not tiles.
+func _draw_blank_cells(band: Dictionary, window: Rect2) -> void:
+	var source: TileSetAtlasSource = band.source
+	var grid_size := source.get_atlas_grid_size()
+	var step := Vector2(source.separation + source.texture_region_size)
+	var margins := Vector2(source.margins)
+	var cell := zoom_level * Vector2(source.texture_region_size)
+	var columns := mini(grid_size.x, int(ceil((band.width - margins.x) / step.x)))
+	for segment: Array in band.segments:
+		var top: float = band.top + segment[2]
+		var from_y: float = segment[0]
+		var to_y: float = segment[1]
+		var from_x := 0.0
+		var to_x: float = band.width
+		if window.size != Vector2.ZERO:
+			from_y = maxf(from_y, segment[0] + (window.position.y - top) / zoom_level)
+			to_y = minf(to_y, segment[0] + (window.end.y - top) / zoom_level)
+			from_x = maxf(0.0, window.position.x / zoom_level)
+			to_x = minf(to_x, window.end.x / zoom_level)
+			if from_y >= to_y or from_x >= to_x:
+				continue
+		var rows := Vector2i(maxi(0, int(floor((from_y - margins.y) / step.y))),
+			mini(grid_size.y, int(ceil((to_y - margins.y) / step.y)) + 1))
+		var cols := Vector2i(maxi(0, int(floor((from_x - margins.x) / step.x))),
+			mini(columns, int(ceil((to_x - margins.x) / step.x)) + 1))
+		for y in range(rows.x, rows.y):
+			var cell_y: float = margins.y + y * step.y
+			if cell_y < segment[0] or cell_y >= segment[1]:
+				continue
+			for x in range(cols.x, cols.y):
+				var pos := Vector2i(x, y)
+				var r := Rect2(Vector2(zoom_level * (margins.x + x * step.x), top + zoom_level * (cell_y - segment[0])), cell)
+				if show_grid:
+					draw_rect(r, Color(0.75, 0.8, 0.85, 0.28), false, 1.0)
+				if !is_tile_in_source(source, pos):
+					draw_rect(r, Color(0.0, 0.0, 0.0, 0.8), true)
+
+
+func _draw_marked_blocks(band: Dictionary) -> void:
 	if marked_blocks.is_empty() and not pick_tiles:
 		return
+	var source: TileSetAtlasSource = band.source
+	var source_id: int = band.source_id
 	var cell := Vector2(source.texture_region_size)
 	var step := Vector2(source.texture_region_size + source.separation)
 	var at := func(c: Vector2i) -> Vector2:
-		return offset + zoom_level * (Vector2(source.margins) + Vector2(c) * step)
+		return _texture_point(band, Vector2(source.margins) + Vector2(c) * step)
+	# Spans of cells, so a block crossing a cut still covers both sides of it.
+	var span := func(lo: Vector2i, hi: Vector2i) -> Rect2:
+		var start: Vector2 = at.call(lo)
+		return Rect2(start, at.call(hi) + zoom_level * cell - start)
 
 	for e in marked_blocks:
 		if single_tile_favorites and _pick_from.x >= 0:
 			continue
 		if int(e.source) != source_id:
 			continue
-		var r := Rect2(at.call(e.origin), zoom_level * cell * Vector2(e.size))
-		if single_tile_favorites and Vector2i(e.size) == Vector2i.ONE:
-			draw_rect(r.grow(-1), Color.WHITE, false, 1.5)
+		var r: Rect2 = span.call(e.origin, e.origin + e.size - Vector2i.ONE)
+		if single_tile_favorites:
+			# White, on a black edge so it reads over light art too.
+			draw_rect(r.grow(-2), Color(0, 0, 0, 0.85), false, 3.5)
+			draw_rect(r.grow(-2), Color.WHITE, false, 1.5)
 			continue
 		draw_rect(r.grow(-1), Color(0, 0, 0, 0.55), false, 3.0)
 		draw_rect(r.grow(-1), mark_colour, false, 1.5)
@@ -883,7 +1174,7 @@ func _draw_marked_blocks(source: TileSetAtlasSource, source_id: int, offset: Vec
 		var to := _pick_target()
 		var lo := Vector2i(mini(_pick_from.x, to.x), mini(_pick_from.y, to.y))
 		var hi := Vector2i(maxi(_pick_from.x, to.x), maxi(_pick_from.y, to.y))
-		var box := Rect2(at.call(lo), zoom_level * cell * Vector2(hi - lo + Vector2i.ONE))
+		var box: Rect2 = span.call(lo, hi)
 		if single_tile_favorites and hi == lo:
 			draw_rect(box.grow(-1), Color.WHITE, false, 1.5)
 			return
@@ -891,21 +1182,18 @@ func _draw_marked_blocks(source: TileSetAtlasSource, source_id: int, offset: Vec
 		draw_rect(box, Color(1.0, 0.95, 0.4), false, 2.0)
 
 
-func _draw_exemplar_outline(source: TileSetAtlasSource, offset: Vector2) -> void:
+func _draw_exemplar_outline(band: Dictionary) -> void:
 	if tileset == null or paint < 0:
 		return
 	var t := BetterTerrain.get_terrain(tileset, paint)
 	if not t.valid or t.type != BetterTerrain.TerrainType.EXEMPLAR:
 		return
-	var source_id := -1
-	for i in tileset.get_source_count():
-		if tileset.get_source(tileset.get_source_id(i)) == source:
-			source_id = tileset.get_source_id(i)
-			break
+	var source: TileSetAtlasSource = band.source
+	var source_id: int = band.source_id
 	var cell := Vector2(source.texture_region_size)
 	var step := Vector2(source.texture_region_size + source.separation)
 	var at := func(c: Vector2i) -> Vector2:
-		return offset + zoom_level * (Vector2(source.margins) + Vector2(c) * step)
+		return _texture_point(band, Vector2(source.margins) + Vector2(c) * step)
 	var font := get_theme_default_font()
 	var fsize := get_theme_default_font_size()
 
@@ -1079,7 +1367,7 @@ func paste_selection():
 
 func set_disabled_sources(list):
 	disabled_sources = list
-	queue_redraw()
+	_on_zoom_value_changed(zoom_level)
 
 
 func emit_terrain_updated(index):
@@ -1091,6 +1379,8 @@ var shortcuts_blocked := false
 
 
 func _gui_input(event) -> void:
+	if collision_mode and _collision_input(event):
+		return
 	if event is InputEventKey and event.is_pressed() and shortcuts_blocked:
 		match event.keycode:
 			KEY_DELETE, KEY_C, KEY_X, KEY_V:
@@ -1131,7 +1421,9 @@ func _gui_input(event) -> void:
 		if event.button_index == MOUSE_BUTTON_RIGHT and single_tile_favorites:
 			accept_event()
 			if event.pressed:
-				favorite_requested.emit()
+				var hovered := tile_part_from_position(event.position)
+				if hovered.valid:
+					favorite_requested.emit(hovered.source_id, hovered.coord, hovered.alternate)
 			return
 		if event.button_index == MOUSE_BUTTON_MIDDLE:
 			accept_event()
@@ -1447,12 +1739,129 @@ func _gui_input(event) -> void:
 						terrain_undo.action_count += 1
 
 
+## Left drags mark tiles solid, right drags clear them; zoom and panning fall through.
+func _collision_input(event: InputEvent) -> bool:
+	# Keys are kept from the terrain shortcuts below, but only the ones used here are taken:
+	# the rest, Ctrl+Z included, go on to the editor.
+	if event is InputEventKey and data_mode:
+		if event.pressed and not event.echo and event.keycode >= KEY_1 and event.keycode <= KEY_9 \
+				and not event.is_command_or_control_pressed():
+			data_preset_key.emit(event.keycode - KEY_1)
+			accept_event()
+		return true
+	if event is InputEventKey:
+		if event.pressed and not event.echo and event.is_command_or_control_pressed() and highlighted_tile_part.valid:
+			if event.keycode == KEY_C:
+				collision_copy_requested.emit(highlighted_tile_part.source_id, highlighted_tile_part.coord)
+				accept_event()
+			elif event.keycode == KEY_V:
+				collision_paste_requested.emit(highlighted_tile_part.source_id, highlighted_tile_part.coord)
+				accept_event()
+		return true
+	if collision_shape_mode or data_inspect:
+		return false
+	if event is InputEventMouseButton and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		accept_event()
+		if not data_mode and event.pressed and event.button_index == MOUSE_BUTTON_LEFT \
+				and collision_pick_check.is_valid() and collision_pick_check.call(event):
+			var taken := tile_part_from_position(event.position)
+			if taken.valid:
+				collision_copy_requested.emit(taken.source_id, taken.coord)
+			return true
+		if data_mode and event.pressed and event.button_index == MOUSE_BUTTON_LEFT \
+				and data_pick_check.is_valid() and data_pick_check.call(event):
+			var picked := tile_part_from_position(event.position)
+			if picked.valid:
+				data_pick_requested.emit(picked.source_id, picked.coord)
+			return true
+		if event.pressed:
+			collision_stroking = true
+			_collision_solid = event.button_index == MOUSE_BUTTON_LEFT
+			prev_position = event.position
+			_collision_touch(event.position, event.position)
+		elif collision_stroking:
+			collision_stroking = false
+			collision_stroke_ended.emit()
+		return true
+	if event is InputEventMouseMotion and not _panning:
+		var part := tile_part_from_position(event.position)
+		if part.valid != highlighted_tile_part.valid or (part.valid and part.data != highlighted_tile_part.data):
+			queue_redraw()
+		highlighted_tile_part = part
+		if collision_stroking:
+			if event.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_RIGHT) == 0:
+				collision_stroking = false
+				collision_stroke_ended.emit()
+			else:
+				_collision_touch(prev_position, event.position)
+		prev_position = event.position
+		return true
+	return false
+
+
+## Custom data overlay: badges per set field; a shown field lights its tiles, the brush outlines
+## its matches, the Inspect selection is outlined thick.
+func _draw_data_marks(td: TileData, rect: Rect2, key: Vector3i) -> void:
+	var field := data_hover if data_hover >= 0 else data_view
+	if field >= 0 and field < tileset.get_custom_data_layers_count():
+		var value: Variant = td.get_custom_data_by_layer_id(field)
+		if CustomData.is_set(value, tileset.get_custom_data_layer_type(field)):
+			var lit := CustomData.heat(float(value), data_ranges[field]) if data_ranges.has(field) else data_color
+			draw_rect(rect, Color(lit, 0.45 if data_ranges.has(field) else 0.3))
+			draw_rect(rect.grow(-1), lit, false, 2.0)
+			_draw_centered(CustomData.label(tileset, td, field), rect)
+		else:
+			draw_rect(rect, Color(0, 0, 0, 0.6))
+	elif data_view == DATA_VIEW_MATCHES and CustomData.matches(td, data_brush):
+		draw_rect(rect, Color(data_color, 0.25))
+		draw_rect(rect.grow(-1), data_color, false, 2.0)
+	if data_inspect and data_selected.has(key):
+		draw_rect(rect.grow(-1), Color.WHITE, false, 3.0)
+
+
+## Text in the middle of a tile, outlined so it reads on any art; shrunk to fit.
+func _draw_centered(text: String, rect: Rect2) -> void:
+	var font := get_theme_font("font", "Label")
+	var font_size := 12
+	while font_size > 7 and font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > rect.size.x - 2:
+		font_size -= 1
+	var text_size := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+	var at := rect.get_center() + Vector2(-minf(text_size.x, rect.size.x - 2) * 0.5, font.get_ascent(font_size) * 0.5 - 1)
+	draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 2, font_size, 3, Color.BLACK)
+	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 2, font_size, Color.WHITE)
+
+
+func _get_tooltip(at_position: Vector2) -> String:
+	if not data_mode or tileset == null:
+		return tooltip_text
+	var part := tile_part_from_position(at_position)
+	if not part.valid:
+		return ""
+	return "Tile %s%s\n%s" % [str(part.coord), "" if part.alternate == 0 else " (alternative %d)" % part.alternate,
+		CustomData.describe(tileset, part.data)]
+
+
+func _collision_touch(from: Vector2, to: Vector2) -> void:
+	var steps := int(ceil(from.distance_to(to) / maxf(1.0, tile_part_size.x * zoom_level))) + 1
+	var seen := {}
+	for i in steps:
+		var part := tile_part_from_position(from.lerp(to, float(i) / steps) if steps > 1 else to)
+		if not part.valid:
+			continue
+		var key := Vector3i(part.coord.x, part.coord.y, part.source_id)
+		if seen.has(key):
+			continue
+		seen[key] = true
+		collision_marked.emit(part.source_id, part.coord, _collision_solid)
+
+
 func _on_zoom_value_changed(value) -> void:
 	zoom_level = value
+	_relayout()
 	custom_minimum_size.x = zoom_level * tiles_size.x
 	if alternate_size.x > 0:
 		custom_minimum_size.x += ALTERNATE_TILE_MARGIN + zoom_level * alternate_size.x
-	custom_minimum_size.y = zoom_level * max(tiles_size.y, alternate_size.y)
+	custom_minimum_size.y = maxf(_content_height + 6.0, zoom_level * alternate_size.y)
 	queue_redraw()
 
 

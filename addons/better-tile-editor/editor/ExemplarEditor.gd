@@ -287,30 +287,13 @@ func _tile_at(key: String) -> Array:
 
 #region Marking the palette
 
-static func palette_rect_of(ts: TileSet, zoom: float, disabled: Array,
-		source_id: int, coord: Vector2i) -> Rect2:
-	if ts == null:
-		return Rect2()
-	var offset := Vector2.ZERO
-	for s in ts.get_source_count():
-		var sid := ts.get_source_id(s)
-		if sid in disabled:
-			continue
-		var src := ts.get_source(sid) as TileSetAtlasSource
-		if src == null or src.texture == null:
-			continue
-		if sid == source_id and src.has_tile(coord):
-			var region := src.get_tile_texture_region(coord, 0)
-			return Rect2(offset + zoom * region.position, zoom * region.size)
-		offset.y += zoom * src.texture.get_height()
-	return Rect2()
-
-
 func _palette_rect_of(source_id: int, coord: Vector2i) -> Rect2:
-	if _palette_view == null:
+	if _palette_view == null or tile_set == null or not tile_set.has_source(source_id):
 		return Rect2()
-	return palette_rect_of(tile_set, _palette_view.zoom_level,
-		_palette_view.disabled_sources, source_id, coord)
+	var src := tile_set.get_source(source_id) as TileSetAtlasSource
+	if src == null or not src.has_tile(coord):
+		return Rect2()
+	return _palette_view.atlas_rect(source_id, Rect2(src.get_tile_texture_region(coord, 0)))
 
 
 func _draw_palette_mark() -> void:

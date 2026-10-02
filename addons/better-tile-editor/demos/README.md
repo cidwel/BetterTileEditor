@@ -1,7 +1,7 @@
-# BetterTileEditor demos
+# Better Tile Editor demos
 
 One scene per kind of terrain, each with its own 16×16 tileset, already set up.
-Open a scene, select one of its layers and the BetterTileEditor tab shows its
+Open a scene, select one of its layers and the Better Tile Editor tab shows its
 terrains; paint over what is there to see how each kind behaves. Each scene has a
 short note at the top.
 
@@ -22,5 +22,5 @@ This folder is optional: the plugin does not use it, so you can delete it.
 | `11_slopes` | Slopes: a platformer ground with steep, gentle and thin slopes (uses must-not rules) |
 
 The tilesets are original art made for these demos and free to use. They are
-drawn and set up by the scripts in `tools/demos` of the BetterTileEditor
+drawn and set up by the scripts in `tools/demos` of the Better Tile Editor
 repository.

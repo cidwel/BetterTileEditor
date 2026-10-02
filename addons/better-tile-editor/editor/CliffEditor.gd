@@ -5,11 +5,13 @@ signal config_changed
 signal clear_requested(ts: TileSet, name: String)
 
 const CliffData := preload("res://addons/better-tile-editor/CliffData.gd")
+const CliffAutoassign := preload("res://addons/better-tile-editor/editor/CliffAutoassign.gd")
 const CliffPattern := preload("res://addons/better-tile-editor/CliffPattern.gd")
 const Chrome := preload("res://addons/better-tile-editor/editor/Chrome.gd")
 
 const PREVIEW_ZOOM_DEFAULT := 3.0
 const SLOT_PX := 38
+const SIMPLE_PX := 32
 const TILE_PX := 16
 
 var tile_set: TileSet
@@ -21,8 +23,8 @@ var _selected := ""
 var _slot_buttons := {}
 
 var _bands: VBoxContainer
-var _marker: RichTextLabel
-const CASES_PER_BAND := 9
+## Narrow enough that the slot table and the preview's bar both fit the window.
+const CASES_PER_BAND := 6
 var _preview_layer: TileMapLayer
 var _preview_faces: TileMapLayer
 var _preview_overlay: Control
@@ -46,6 +48,16 @@ var _clear_slot_btn: Button
 var _pattern_syncing := false
 var _piece_by_cell := {}
 var _pattern_line := {}
+## What the hover line says over each wall cell of the preview.
+var _hover_text := {}
+var _split: HSplitContainer
+var _pane: VSplitContainer
+var _left_scroll: ScrollContainer
+var _left_box: VBoxContainer
+var _auto_button: Button
+var _auto_page: Control
+## The face the preview shows while Autoassign's block is being picked; {} for the real one.
+var _auto_cfg := {}
 var _simple_grid: GridContainer
 var _simple_buttons := {}
 var _slot_dots := {}
@@ -71,7 +83,6 @@ var _bottom_check: CheckBox
 var _fixture_pick: OptionButton
 var _fixture_index := 0
 var _mask := []
-var _inherit_button: Button
 var _local_button: Button
 var _inherit_menu: PopupMenu
 var _pick_anchor := {}
@@ -91,7 +102,6 @@ var _preview_pan := Vector2.ZERO
 var _tex_cache := {}
 var _preview: Control
 var _status: RichTextLabel
-var _by_row_tip := ""
 var _info: LineEdit
 var _last_cell := Vector2i(-9999, -9999)
 var _last_plateau := {}
@@ -111,6 +121,18 @@ var _save_new_btn: Button
 var _editing_shape := ""
 var _in_use := {}
 var _height_spin: SpinBox
+var _more: MenuButton
+var _shape_menu: PopupMenu
+var _inherit_banner: HBoxContainer
+var _inherit_label: Label
+var _options: FoldableContainer
+var _build_strip: Control
+var _strip_label: Label
+var _hover_label: Label
+var _pattern_options: Control
+const ANCHOR_LABEL := "Anchor the repeat to the ground"
+enum { MORE_INHERIT = 10, MORE_LOCAL, MORE_COPY, MORE_CLEAR }
+enum { SHAPE_NARROW = 20, SHAPE_DRAW, SHAPE_EDIT, SHAPE_CLEAR }
 
 
 var initial_height := -1
@@ -134,7 +156,10 @@ func setup(ts: TileSet, index: int, cliff_name: String, height := -1) -> void:
 	title = "Cliff face: %s" % cliff_name
 	size = Vector2i(1200, 760)
 	_build()
+	if not tile_set.changed.is_connected(_on_tile_set_changed):
+		tile_set.changed.connect(_on_tile_set_changed)
 	_refresh()
+	_fit_top_pane.call_deferred()
 
 
 func _build() -> void:
@@ -142,11 +167,25 @@ func _build() -> void:
 	Chrome.dress_split(split)
 	split.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(split)
+	_split = split
+	# The left side holds the slots and palette, or Autoassign's page while a block is picked;
+	# the preview stays on the right and shows the face the block would give.
+	var left_host := VBoxContainer.new()
+	split.add_child(left_host)
+	_auto_page = CliffAutoassign.new()
+	_auto_page.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_auto_page.visible = false
+	_auto_page.chosen.connect(_on_autoassign_chosen)
+	_auto_page.canceled.connect(_close_autoassign)
+	_auto_page.block_changed.connect(_on_autoassign_block)
+	left_host.add_child(_auto_page)
 
 	var pane := VSplitContainer.new()
+	_pane = pane
 	pane.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	Chrome.dress_split(pane)
-	split.add_child(pane)
+	pane.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left_host.add_child(pane)
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
@@ -158,205 +197,122 @@ func _build() -> void:
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.add_theme_constant_override("separation", 8)
 	scroll.add_child(left)
+	_left_scroll = scroll
+	_left_box = left
 
-	var bar := HFlowContainer.new()
+	var bar := HBoxContainer.new()
+	bar.add_theme_constant_override("separation", 6)
 	left.add_child(bar)
-	# Shape controls go above the preview, in the right column.
-	var shape_bar := HFlowContainer.new()
-	var lab := Label.new()
-	lab.text = "Cliff height"
-	bar.add_child(lab)
-	_height_spin = SpinBox.new()
-	_height_spin.min_value = 0
-	_height_spin.max_value = 8
-	_height_spin.value = initial_height if initial_height > 0 else int(_cfg.get("height", 2))
-	_height_spin.value_changed.connect(_on_height_changed)
-	bar.add_child(_height_spin)
-
-
-	_build_toggle = Button.new()
-	_build_toggle.text = "Build"
-	_build_toggle.toggle_mode = true
-	_build_toggle.focus_mode = Control.FOCUS_NONE
-	_build_toggle.tooltip_text = \
-		"Draw the shape yourself instead of picking an invented one.\n\n" + \
-		"Left-click paints plateau, right-click erases, and the terrain autotiles\n" + \
-		"as you go. The slots your drawing is asking for are framed in red on the\n" + \
-		"left, so you can see which bits a shape needs before drawing the art."
-	_build_toggle.toggled.connect(func(on: bool) -> void:
-		_build_mode = on
-		_fixture_pick.disabled = on
-		_refresh_mask()
-		_refresh())
-	shape_bar.add_child(_build_toggle)
-
-	_edit_shape_btn = Button.new()
-	_edit_shape_btn.text = "Edit shape"
-	_edit_shape_btn.focus_mode = Control.FOCUS_NONE
-	_edit_shape_btn.tooltip_text = \
-		"Loads the selected shape into the Build canvas so you can change it.\n\n" + \
-		"Nothing is written until you press Save as shape; the name is then\n" + \
-		"prefilled with this shape's, so saving replaces it. Type another name\n" + \
-		"to keep the original and save a variant."
-	_edit_shape_btn.pressed.connect(_on_edit_shape_pressed)
-	shape_bar.add_child(_edit_shape_btn)
-
+	var face_label := Label.new()
+	face_label.text = "Face"
+	bar.add_child(face_label)
 	_kind_pick = OptionButton.new()
 	_kind_pick.add_item("Simple", KIND_SIMPLE)
 	_kind_pick.add_item("Advanced", KIND_ADVANCED)
 	_kind_pick.add_item("Pattern", KIND_PATTERN)
-	_kind_pick.focus_mode = Control.FOCUS_NONE
-	_kind_pick.tooltip_text = \
-		"Simple: 8 cells. Does the wall touch the ground, and which sides have\n" + \
-		"an edge. Assigning a tile fills every slot in the cell at once.\n\n" + \
-		"Advanced: one tile per slot, all of them, for fine-tuning a single case.\n" + \
-		"Same sheet as Simple underneath.\n\n" + \
-		"Pattern: a different description altogether. A rectangle that repeats,\n" + \
-		"plus an optional top row, ground row and end columns. Five pieces\n" + \
-		"instead of sixty-six slots. Switching to it changes what the map is\n" + \
-		"built from; the slots are kept and come back if you switch away."
+	_kind_pick.tooltip_text = ("Simple: 18 groups, one tile each.\nAdvanced: the same slots one by one.\n"
+		+ "Pattern: 12 pieces cut from one block (switching keeps the slots for later).")
 	_kind_pick.select(_kind)
 	_kind_pick.item_selected.connect(_on_kind_picked)
 	bar.add_child(_kind_pick)
-
-	_save_shape_btn = Button.new()
-	_save_shape_btn.text = "Save as shape"
-	_save_shape_btn.focus_mode = Control.FOCUS_NONE
-	_save_shape_btn.tooltip_text = \
-		"Keeps what you drew as one more entry in the shape list.\n\n" + \
-		"Without this the canvas lives only as long as the window: it is not part\n" + \
-		"of the sheet, so nothing else would ever write it down."
-	_save_shape_btn.pressed.connect(_on_save_shape_pressed)
-	shape_bar.add_child(_save_shape_btn)
-
-	_save_new_btn = Button.new()
-	_save_new_btn.text = "Save as new"
-	_save_new_btn.focus_mode = Control.FOCUS_NONE
-	_save_new_btn.visible = false
-	_save_new_btn.tooltip_text = "Keeps the shape you are editing and saves the canvas under another name."
-	_save_new_btn.pressed.connect(_ask_shape_name)
-	shape_bar.add_child(_save_new_btn)
-
-	var clear_btn := Button.new()
-	clear_btn.text = "Clear canvas"
-	clear_btn.focus_mode = Control.FOCUS_NONE
-	clear_btn.tooltip_text = "Wipes what you have drawn. The sheet is untouched."
-	clear_btn.pressed.connect(_clear_canvas)
-	shape_bar.add_child(clear_btn)
-
-	_fixture_pick = OptionButton.new()
-	var all_shapes := CliffData.shapes()
-	for i in all_shapes.size():
-		_fixture_pick.add_item(all_shapes[i].name, i)
-	_fixture_pick.select(_fixture_index)
-	_fixture_pick.tooltip_text = \
-		"Shape the preview is drawn on.\n\n" + \
-		"Paint your own in " + CliffData.shapes_scene() + ":\n" + \
-		"one TileMapLayer per shape, named after it."
-	_fixture_pick.item_selected.connect(func(i: int) -> void:
-		_fixture_index = i
-		_refresh_mask()
-		_apply_preview_zoom()
-		_refresh())
-	shape_bar.add_child(_fixture_pick)
-
-	_narrow_check = CheckBox.new()
-	_narrow_check.text = "narrow shapes"
-	_narrow_check.tooltip_text = \
-		"Also preview the narrow shapes: a step one cell wide and a cell\n" + \
-		"standing alone (single, l_plat_end, r_plat_end).\n\n" + \
-		"Off unless you build those shapes, because a tileset that never\n" + \
-		"does has no reason to draw tiles for them.\n\n" + \
-		"This changes the preview, not the rules: a map that produces one\n" + \
-		"still reports its slot as forbidden."
-	_narrow_check.button_pressed = _show_narrow
-	_narrow_check.toggled.connect(func(on: bool) -> void:
-		_show_narrow = on
-		_refresh_mask()
-		_apply_preview_zoom()
-		_refresh())
-	shape_bar.add_child(_narrow_check)
-
-	_bottom_check = CheckBox.new()
-	_bottom_check.text = "repeat from the bottom"
-	_bottom_check.tooltip_text = \
-		"How a slot's matrix repeats up the wall.\n\n" + \
-		"Off: it starts at the top row and falls, and the top row keeps its own\n" + \
-		"tile. Use this when the wall has a lip or a capping row drawn for it.\n\n" + \
-		"On: it starts at the row above the ground and climbs, so a wall of any\n" + \
-		"height ends the same way at the bottom and the top is wherever it\n" + \
-		"reached. A `top` slot left empty then borrows the body's matrix, so one\n" + \
-		"matrix covers the whole wall.\n\n" + \
-		"Only affects slots holding more than one tile. Drag a rectangle in the\n" + \
-		"palette to give a slot a matrix."
-	_bottom_check.toggled.connect(_on_from_bottom_toggled)
-	bar.add_child(_bottom_check)
-
-	_matrix_button = Button.new()
-	_matrix_button.text = "Repeating matrix"
-	_matrix_button.toggle_mode = true
-	_matrix_button.focus_mode = Control.FOCUS_NONE
-	_matrix_button.tooltip_text = \
-		"Give a group of slots one block of tiles that repeats along the wall,\n" + \
-		"instead of one tile each.\n\n" + \
-		"1. Turn this on.\n" + \
-		"2. Drag a rectangle over the wall in the preview. That is the unit\n" + \
-		"   that repeats: 2 by 2, 3 by 1, whatever the art is.\n" + \
-		"3. Click its top-left tile in the palette. Every slot the rectangle\n" + \
-		"   covered gets the block at once.\n\n" + \
-		"Change the shape over the preview, or the cliff height, to see it on other walls."
-	_matrix_button.toggled.connect(_on_matrix_mode_toggled)
-	bar.add_child(_matrix_button)
-
-	_inherit_button = Button.new()
-	_inherit_button.text = "Inherit from…"
-	_inherit_button.tooltip_text = \
-		"Take the sheet from another terrain. It stays linked: edit the original\n" + \
-		"and this follows."
-	_inherit_button.focus_mode = Control.FOCUS_NONE
-	_inherit_button.pressed.connect(_open_inherit_menu)
-	bar.add_child(_inherit_button)
-
-	_local_button = Button.new()
-	_local_button.text = "Make local"
-	_local_button.tooltip_text = "Keep the inherited sheet as this terrain's own and stop following."
-	_local_button.focus_mode = Control.FOCUS_NONE
-	_local_button.pressed.connect(_on_make_local)
-	bar.add_child(_local_button)
-
+	var height_label := Label.new()
+	height_label.text = "Height"
+	bar.add_child(height_label)
+	_height_spin = SpinBox.new()
+	_height_spin.min_value = 0
+	_height_spin.max_value = 8
+	_height_spin.value = initial_height if initial_height > 0 else int(_cfg.get("height", 2))
+	_height_spin.tooltip_text = "How many rows tall the face is, in the preview and by default on the map."
+	_height_spin.value_changed.connect(_on_height_changed)
+	bar.add_child(_height_spin)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bar.add_child(spacer)
+	_more = MenuButton.new()
+	_more.icon = EditorInterface.get_editor_theme().get_icon(&"GuiTabMenuHl", &"EditorIcons")
+	_more.flat = true
+	_more.tooltip_text = "More: inherit, copy slot info, clear the sheet"
+	bar.add_child(_more)
+	var more_menu := _more.get_popup()
 	_inherit_menu = PopupMenu.new()
 	_inherit_menu.id_pressed.connect(_on_inherit_chosen)
-	add_child(_inherit_menu)
+	more_menu.add_submenu_node_item("Inherit from", _inherit_menu, MORE_INHERIT)
+	more_menu.add_item("Make local", MORE_LOCAL)
+	more_menu.add_separator()
+	more_menu.add_item("Copy slot info", MORE_COPY)
+	more_menu.add_separator()
+	more_menu.add_item("Clear the sheet…", MORE_CLEAR)
+	more_menu.about_to_popup.connect(_sync_more_menu)
+	more_menu.id_pressed.connect(_on_more_pressed)
 
-	left.add_child(Chrome.rule())
+	_inherit_banner = HBoxContainer.new()
+	_inherit_label = Label.new()
+	_inherit_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_inherit_label.add_theme_color_override("font_color", Color(0.62, 0.71, 0.78))
+	_inherit_banner.add_child(_inherit_label)
+	_local_button = Button.new()
+	_local_button.text = "Make local"
+	_local_button.tooltip_text = "Keep the inherited face as this terrain's own and stop following."
+	_local_button.pressed.connect(_on_make_local)
+	_inherit_banner.add_child(_local_button)
+	left.add_child(_inherit_banner)
+
 	_status = RichTextLabel.new()
 	_status.bbcode_enabled = true
 	_status.fit_content = true
-	_status.custom_minimum_size.y = 44
+	_status.custom_minimum_size.y = 24
 	left.add_child(_status)
-
 	_info = LineEdit.new()
-	_info.editable = false
-	_marker = RichTextLabel.new()
-	_marker.bbcode_enabled = true
-	_marker.fit_content = true
-	_marker.custom_minimum_size.y = 40
-	_marker.tooltip_text = \
-		"Of the slots the current shape asks for (framed in red): how many have\n" + \
-		"a tile of their own, how many are borrowing one, and how many draw\n" + \
-		"nothing at all. The last number is the work."
-	left.add_child(_marker)
-	_info.select_all_on_focus = true
-	_info.tooltip_text = "Click to select, then copy. Identifies the slot and the tile in it."
+	_info.visible = false
 	left.add_child(_info)
 
 	left.add_child(Chrome.rule())
+	var auto_row := CenterContainer.new()
+	left.add_child(auto_row)
+	_auto_button = Button.new()
+	_auto_button.text = "Autoassign from tilemap"
+	_auto_button.icon = EditorInterface.get_editor_theme().get_icon(&"AutoPlay", &"EditorIcons")
+	_auto_button.tooltip_text = "Pick the block of wall art in the tileset and fill every slot from it."
+	_auto_button.pressed.connect(_open_autoassign)
+	# Drawn in the editor's accent so it doesn't blend into the background.
+	var accent: Color = EditorInterface.get_editor_settings().get_setting("interface/theme/accent_color")
+	for state: StringName in [&"normal", &"hover", &"pressed", &"focus"]:
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(accent, {&"normal": 0.22, &"hover": 0.36, &"pressed": 0.5, &"focus": 0.22}[state])
+		sb.border_color = Color(accent, 0.9 if state != &"normal" else 0.7)
+		sb.set_border_width_all(1)
+		sb.set_corner_radius_all(4)
+		sb.content_margin_left = 14
+		sb.content_margin_right = 14
+		sb.content_margin_top = 6
+		sb.content_margin_bottom = 6
+		_auto_button.add_theme_stylebox_override(state, sb)
+	_auto_button.add_theme_color_override(&"font_color", Color.WHITE)
+	_auto_button.add_theme_color_override(&"font_hover_color", Color.WHITE)
+	_auto_button.add_theme_color_override(&"icon_normal_color", Color.WHITE)
+	auto_row.add_child(_auto_button)
 	_bands = VBoxContainer.new()
 	_bands.add_theme_constant_override("separation", 10)
 	left.add_child(_bands)
 	_build_simple_grid(left)
 	_build_pattern_box(left)
 	_build_grid()
+
+	_options = FoldableContainer.new()
+	_options.title = "Options"
+	_options.folded = true
+	left.add_child(_options)
+	var options_box := VBoxContainer.new()
+	options_box.add_theme_constant_override("separation", 6)
+	_options.add_child(options_box)
+	_bottom_check = CheckBox.new()
+	_bottom_check.text = ANCHOR_LABEL
+	_bottom_check.tooltip_text = ("Off: a slot's block repeats down from the top row, which keeps its own tile.\n"
+		+ "On: it repeats up from above the ground, so every height ends the same at the bottom;\n"
+		+ "an empty top slot then borrows the body's block. Only slots holding a block of tiles change.")
+	_bottom_check.toggled.connect(_on_from_bottom_toggled)
+	options_box.add_child(_bottom_check)
+	_build_pattern_options(options_box)
 
 	var palette_box := VBoxContainer.new()
 	palette_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -368,18 +324,10 @@ func _build() -> void:
 	pbar.add_child(plbl)
 	_clear_slot_btn = Button.new()
 	_clear_slot_btn.text = "Clear slot"
-	_clear_slot_btn.tooltip_text = "Empty the selected slot. With no tile, the shape it stands for is forbidden\nand reported as such on the map."
+	_clear_slot_btn.tooltip_text = "Empty the selected slot (or right-click it). It then borrows a neighbour's tile, or draws nothing."
 	_clear_slot_btn.focus_mode = Control.FOCUS_NONE
 	_clear_slot_btn.pressed.connect(_on_clear_slot)
 	pbar.add_child(_clear_slot_btn)
-
-	var clear_all := Button.new()
-	clear_all.text = "Clear the sheet"
-	clear_all.tooltip_text = "Remove this terrain's cliff sheet and configuration. This can be undone."
-	clear_all.focus_mode = Control.FOCUS_NONE
-	clear_all.pressed.connect(_on_clear_all)
-	pbar.add_child(clear_all)
-
 
 	var pscroll2 := ScrollContainer.new()
 	pscroll2.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -406,13 +354,12 @@ func _build() -> void:
 	var right := VBoxContainer.new()
 	split.add_child(right)
 	Chrome.open_at(split, 0.30)
-	var plab := Label.new()
-	plab.text = "Preview: a region containing every case at least once"
-	right.add_child(plab)
-	right.add_child(shape_bar)
-	# Shape picker first.
-	shape_bar.move_child(_fixture_pick, 0)
-	shape_bar.move_child(_narrow_check, 1)
+	var preview_bar := _build_preview_bar()
+	right.add_child(preview_bar)
+	# The bar never gets cut: the split gives way on the left first.
+	right.custom_minimum_size.x = preview_bar.get_combined_minimum_size().x
+	_build_strip = _build_drawing_strip()
+	right.add_child(_build_strip)
 
 	var pscroll := ScrollContainer.new()
 	pscroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -443,11 +390,119 @@ func _build() -> void:
 	_preview_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
 	_preview_overlay.draw.connect(_draw_overlay)
 	_preview_overlay.gui_input.connect(_on_preview_input)
+	_preview_overlay.mouse_exited.connect(func(): _hover_label.text = "")
 	_preview.add_child(_preview_overlay)
+
+	_hover_label = Label.new()
+	_hover_label.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
+	_hover_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	right.add_child(_hover_label)
 
 	_apply_preview_zoom()
 
 	close_requested.connect(queue_free)
+
+
+func _build_preview_bar() -> Control:
+	var shape_bar := HBoxContainer.new()
+	shape_bar.add_theme_constant_override("separation", 6)
+	var label := Label.new()
+	label.text = "Preview"
+	shape_bar.add_child(label)
+	_fixture_pick = OptionButton.new()
+	var all_shapes := CliffData.shapes()
+	for i in all_shapes.size():
+		_fixture_pick.add_item(all_shapes[i].name, i)
+	_fixture_pick.select(_fixture_index)
+	_fixture_pick.item_selected.connect(func(i: int) -> void:
+		_fixture_index = i
+		_refresh_mask()
+		_apply_preview_zoom()
+		_refresh())
+	shape_bar.add_child(_fixture_pick)
+	_matrix_button = Button.new()
+	_matrix_button.text = "Repeating block"
+	_matrix_button.toggle_mode = true
+	_matrix_button.focus_mode = Control.FOCUS_NONE
+	_matrix_button.tooltip_text = ("Give several slots one block of tiles that repeats along the wall:\n"
+		+ "drag over the wall in the preview, then click the block's top-left tile in the palette.")
+	_matrix_button.toggled.connect(_on_matrix_mode_toggled)
+	shape_bar.add_child(_matrix_button)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shape_bar.add_child(spacer)
+	var shape_more := MenuButton.new()
+	shape_more.icon = EditorInterface.get_editor_theme().get_icon(&"GuiTabMenuHl", &"EditorIcons")
+	shape_more.flat = true
+	shape_more.tooltip_text = "Preview shapes: narrow ones, draw or edit your own"
+	shape_bar.add_child(shape_more)
+	_shape_menu = shape_more.get_popup()
+	_shape_menu.add_check_item("Show narrow shapes", SHAPE_NARROW)
+	_shape_menu.set_item_tooltip(_shape_menu.get_item_index(SHAPE_NARROW),
+		"Also preview a step one cell wide and a cell standing alone (single, l_plat_end, r_plat_end).")
+	_shape_menu.add_separator()
+	_shape_menu.add_item("Draw a shape", SHAPE_DRAW)
+	_shape_menu.add_item("Edit this shape", SHAPE_EDIT)
+	_shape_menu.add_item("Clear the drawing", SHAPE_CLEAR)
+	_shape_menu.about_to_popup.connect(func():
+		_shape_menu.set_item_checked(_shape_menu.get_item_index(SHAPE_NARROW), _show_narrow))
+	_shape_menu.id_pressed.connect(_on_shape_menu)
+	# The old switches stay as the state they always held; the menu drives them.
+	_narrow_check = CheckBox.new()
+	_narrow_check.visible = false
+	_narrow_check.button_pressed = _show_narrow
+	_narrow_check.toggled.connect(func(on: bool) -> void:
+		_show_narrow = on
+		_refresh_mask()
+		_apply_preview_zoom()
+		_refresh())
+	shape_bar.add_child(_narrow_check)
+	return shape_bar
+
+
+## Drawing a shape gets a strip of its own: what it is doing and the ways out.
+func _build_drawing_strip() -> Control:
+	var strip := HBoxContainer.new()
+	strip.add_theme_constant_override("separation", 6)
+	strip.visible = false
+	_strip_label = Label.new()
+	_strip_label.add_theme_color_override("font_color", Color(0.45, 0.7, 0.95))
+	strip.add_child(_strip_label)
+	_build_toggle = Button.new()
+	_build_toggle.toggle_mode = true
+	_build_toggle.visible = false
+	_build_toggle.toggled.connect(func(on: bool) -> void:
+		_build_mode = on
+		_fixture_pick.disabled = on
+		strip.visible = on
+		_refresh_mask()
+		_refresh())
+	strip.add_child(_build_toggle)
+	var gap := Control.new()
+	gap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	strip.add_child(gap)
+	_save_shape_btn = Button.new()
+	_save_shape_btn.text = "Save as shape"
+	_save_shape_btn.tooltip_text = "Add this drawing to the shape list."
+	_save_shape_btn.pressed.connect(_on_save_shape_pressed)
+	strip.add_child(_save_shape_btn)
+	_save_new_btn = Button.new()
+	_save_new_btn.text = "Save as new"
+	_save_new_btn.visible = false
+	_save_new_btn.tooltip_text = "Keep the shape you are editing and save the drawing under another name."
+	_save_new_btn.pressed.connect(_ask_shape_name)
+	strip.add_child(_save_new_btn)
+	var clear_btn := Button.new()
+	clear_btn.text = "Clear"
+	clear_btn.tooltip_text = "Wipe the drawing. The face is untouched."
+	clear_btn.pressed.connect(_clear_canvas)
+	strip.add_child(clear_btn)
+	_edit_shape_btn = Button.new()
+	_edit_shape_btn.text = "Done"
+	_edit_shape_btn.tooltip_text = "Back to the shape list. The drawing is kept until cleared."
+	_edit_shape_btn.pressed.connect(_finish_drawing)
+	strip.add_child(_edit_shape_btn)
+	return strip
 
 
 func _build_grid() -> void:
@@ -487,7 +542,7 @@ func _build_grid() -> void:
 				b.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 				var key := CliffData.slot_key(row, case_name)
 				b.pressed.connect(_on_slot_pressed.bind(key))
-				b.tooltip_text = "%s\nempty = this shape is forbidden" % key
+				b.gui_input.connect(_on_slot_gui_input.bind(key))
 				_slot_buttons[key] = b
 				g.add_child(b)
 				var dot := ColorRect.new()
@@ -556,6 +611,7 @@ func _height() -> int:
 
 func _on_height_changed(_v: float) -> void:
 	if _refuse_if_inherited():
+		_height_spin.set_value_no_signal(int(_cfg.get("height", 2)))
 		return
 	_cfg["height"] = _height()
 	_save()
@@ -604,6 +660,7 @@ func _frame_urgent() -> StyleBoxFlat:
 
 func _refresh() -> void:
 	_sync_from_bottom()
+	_sync_inherit_ui()
 	if _palette_pick != null:
 		_palette_pick.queue_redraw()
 	var pending: String = _pending_unit_text()
@@ -618,7 +675,11 @@ func _refresh() -> void:
 		_pattern_box.visible = pattern
 		if pattern:
 			_sync_pattern_rows()
-	for c in [_bottom_check, _matrix_button, _marker, _clear_slot_btn]:
+	if _pattern_options != null:
+		_pattern_options.visible = pattern
+	if _auto_button != null:
+		_auto_button.get_parent().visible = not pattern
+	for c in [_bottom_check, _matrix_button, _clear_slot_btn]:
 		if c != null:
 			c.visible = not pattern
 	if pattern:
@@ -626,6 +687,8 @@ func _refresh() -> void:
 			_kind_pick.select(_kind)
 		_selected = ""
 		_status.text = _pattern_report()
+		_status.tooltip_text = "Click a piece, then drag its tiles in the palette. Right-click a piece to empty it.\n" + _legend()
+		_update_marker()
 		_repaint_preview()
 		_show_pattern_line(_last_cell)
 		return
@@ -667,24 +730,20 @@ func _refresh() -> void:
 			dot.visible = own and asked and _build_mode
 
 			var borrowed := CliffData.fallback_case(case_name)
-			var on_map := ("On the map it draws with %s's tile until you pick one." % borrowed) \
-				if borrowed != "" else "On the map, cells asking for it are left blank."
+			var on_map := ("Until then it borrows %s's tile." % _case_hint(borrowed)) \
+				if borrowed != "" else "Until then it draws nothing."
+			var title := _slot_name(key)
 			if own:
 				b.remove_theme_stylebox_override("normal")
-				b.tooltip_text = "%s: has its tile.%s" % [key, "  This shape uses it." if asked else ""]
+				b.tooltip_text = "%s\nHas its tile%s. Right-click to empty it." % [title, ", used by this preview" if asked else ""]
 			elif asked:
 				b.add_theme_stylebox_override("normal", _frame_urgent())
-				b.tooltip_text = "%s: needs a tile, and this shape uses it. See the orange cells in the preview.\n%s" % [key, on_map]
+				b.tooltip_text = "%s\nNeeds a tile; this preview uses it. %s" % [title, on_map]
 			else:
 				b.add_theme_stylebox_override("normal", _frame_empty())
-				b.tooltip_text = "%s: needs a tile.\n%s" % [key, on_map]
+				b.tooltip_text = "%s\nNeeds a tile. %s" % [title, on_map]
 
 	var inherited := _inherited_from()
-	if _local_button != null:
-		_local_button.disabled = inherited == ""
-	if _inherit_button != null:
-		_inherit_button.text = "Inherited from %s" % inherited if inherited != "" else "Inherit from…"
-
 	_update_info()
 
 	var total := 0
@@ -692,79 +751,77 @@ func _refresh() -> void:
 		for c in CliffData.CASES:
 			if CliffData.slot_reachable(r, c, _height()):
 				total += 1
+	var detail := _update_marker()
+	_status.tooltip_text = detail
 	if _height() <= 0:
-		_status.text = "Level 0 is the base: it grows no face. Raise the height to see one."
-		if pending != "": _status.text = pending
-		_repaint_preview()
-		return
-	if inherited != "":
-		_status.text = "Sheet inherited from [b]%s[/b]. Edits there show up here. “Make local” to break the link." % inherited
-		if pending != "": _status.text = pending
-		_repaint_preview()
-		return
-
-	if _selected.begins_with("simple:"):
+		_status.text = "Height 0 grows no face. Raise it to see one."
+	elif inherited != "":
+		_status.text = "Edits to %s's face show up here." % inherited
+	elif _selected.begins_with("simple:"):
 		var g := _selected.trim_prefix("simple:")
 		var st := _simple_state(g)
-		var n := 0
-		for c in _slot_by_cell.keys():
-			if _slot_by_cell[c] in st.members:
-				n += 1
-		_status.text = "[b]%s[/b]: %d slots, %s.  %d cells in the preview.  %s" % [
-			g, st.members.size(), st.state, n,
-			"Pick a tile below, or drag a block of them, and every slot in the group gets it." if st.state != "mixed"
-			else "Mixed on purpose? Leave it. Otherwise pick a tile below to unify them."]
+		_status.text = "[b]%s[/b] · %d slots, %s · %s" % [
+			_group_name(g), st.members.size(), st.state, _cells_using(st.members)] + \
+			(" · pick a tile below" if st.state != "mixed" else " · a tile below makes them all one")
 	elif _selected != "":
-		var parts := _selected.split("/")
-		var n := 0
-		for c in _slot_by_cell.keys():
-			if _slot_by_cell[c] == _selected:
-				n += 1
-		var has := not CliffData.slot_tile(_cfg, parts[0], parts[1]).is_empty()
-		_status.text = "[b]%s[/b]: %s, %s.\n%d cell%s in the preview use it. %s" % [
-			_selected, _row_hint(parts[0]), _case_hint(parts[1]),
-			n, "" if n == 1 else "s",
-			"Pick another tile to replace it." if has else "Pick a tile below to fill it."]
+		var has := not CliffData.slot_tile(_cfg, _selected.split("/")[0], _selected.split("/")[1]).is_empty()
+		_status.text = "[b]%s[/b] · %s · %s" % [_slot_name(_selected), _cells_using([_selected]),
+			"pick a tile below to replace it" if has else "pick a tile below"]
 	elif _build_mode:
-		_status.text = "[b]Build[/b]: draw on the canvas to the right. Left click paints, right click erases, drag to keep going.\n%d cells drawn, asking for %d slots, the ones framed in red on the left." % [
-			_built.size(), _in_use.size()]
+		_status.text = "Drawing: left click paints, right click erases. It asks for %d slots (framed orange)." % _in_use.size()
 	else:
 		var own_count := 0
-		var to_draw := 0
 		var urgent := 0
-		var blank_count := 0
 		for r in used:
 			for c in CliffData.CASES:
 				if not CliffData.slot_reachable(r, c, _height()):
 					continue
-				var k := CliffData.slot_key(r, c)
 				if not CliffData.slot_tile(_cfg, r, c).is_empty():
 					own_count += 1
-				else:
-					to_draw += 1
-					if _in_use.has(k):
-						urgent += 1
-					if CliffData.resolve_tile(_cfg, r, c).is_empty():
-						blank_count += 1
-		var exercised := _in_use.size()
-		var exercise_tail := "  This shape exercises %d of %d." % [exercised, total]
-		if exercised < total:
-			exercise_tail += "  [color=#9a9a9a]The ones without a dot are not shown at this height.[/color]"
-		if to_draw == 0:
-			_status.text = "[color=#7ec87e]All %d slots a %d-level face can use have a tile.[/color]%s" % [total, _height(), exercise_tail]
+				elif _in_use.has(CliffData.slot_key(r, c)):
+					urgent += 1
+		if own_count == total:
+			_status.text = "[color=#7ec87e]All %d slots of a %d-high face have a tile.[/color]" % [total, _height()]
+		elif urgent > 0:
+			_status.text = "[color=#e0a34a]%d slot%s this preview uses need a tile[/color] · %d/%d done at height %d" % [
+				urgent, "" if urgent == 1 else "s", own_count, total, _height()]
 		else:
-			var tail := ""
-			if urgent > 0:
-				tail += "  [color=#e0a34a]%d of them used by this shape[/color]. Click an orange cell in the preview, then a tile below." % urgent
-			if blank_count > 0:
-				tail += "  %d have nothing to fall back on and draw blank on the map." % blank_count
-			_status.text = "%d of %d slots have a tile at height %d.  [b]%d to draw.[/b]%s%s" % [
-				own_count, total, _height(), to_draw, tail, exercise_tail]
+			_status.text = "%d/%d slots done at height %d · this preview needs none of the rest" % [own_count, total, _height()]
 
 	if pending != "":
 		_status.text = pending
-	_update_marker()
 	_repaint_preview()
+
+
+## "Top row · middle of a run", for a slot key "top/mid".
+func _slot_name(key: String) -> String:
+	var parts := key.split("/")
+	if parts.size() != 2:
+		return key
+	return "%s row · %s" % [parts[0].capitalize(), _case_hint(parts[1])]
+
+
+const SIDE_NAMES := {"E": "open", "W": "wall", "G": "plateau"}
+
+## "Wall continues · open left, wall right", for a Simple group key "wall|EW".
+func _group_name(group: String) -> String:
+	var parts := group.split("|")
+	if parts.size() != 2 or parts[1].length() != 2:
+		return group
+	return "%s · %s left, %s right" % ["Wall continues" if parts[0] == "wall" else "Wall ends",
+		SIDE_NAMES.get(parts[1][0], parts[1][0]), SIDE_NAMES.get(parts[1][1], parts[1][1])]
+
+
+func _cells_using(keys: Array) -> String:
+	var n := 0
+	for c in _slot_by_cell.keys():
+		if _slot_by_cell[c] in keys:
+			n += 1
+	return "%d cell%s in the preview" % [n, "" if n == 1 else "s"]
+
+
+func _legend() -> String:
+	return "Preview: red = no tile, orange = borrowing another slot's tile, gold = selected."
 
 
 static func _height_of_row(row: String) -> int:
@@ -822,41 +879,45 @@ func _shape_coverage() -> Dictionary:
 	return out
 
 
-func _update_marker() -> void:
-	if _marker == null:
-		return
+## The detail behind the status line, which also labels the shape's coverage where it is chosen.
+func _update_marker() -> String:
+	var lines := []
 	var p := _sheet_totals()
 	var missing: int = p.total - p.done
-	var header := ""
-	_by_row_tip = ""
 	if missing == 0:
-		header = "[color=#7ec87e][b]Sheet complete:[/b] all %d slots that can ever exist have a tile.[/color]" % p.total
+		lines.append("Sheet complete: all %d slots have a tile." % p.total)
 	else:
 		var parts := []
 		for row in CliffData.ROWS:
 			if p.by_row.has(row):
 				parts.append("%s %d" % [row, p.by_row[row]])
-		header = "[b]Sheet: %d of %d slots have a tile, [color=#e0a34a]%d to draw[/color][/b], any height, any shape." % [
-			p.done, p.total, missing]
-		_by_row_tip = "To draw, by row: " + ", ".join(parts) + "\n"
+		lines.append("Sheet: %d/%d slots have a tile, at any height. To draw: %s." % [p.done, p.total, ", ".join(parts)])
+	if _kind != KIND_PATTERN:
+		var blank := 0
+		for r in CliffData.rows_for_height(_height()):
+			for c in CliffData.CASES:
+				if CliffData.slot_reachable(r, c, _height()) and CliffData.resolve_tile(_cfg, r, c).is_empty():
+					blank += 1
+		if blank > 0:
+			lines.append("%d slot%s at this height borrow nothing and draw blank." % [blank, "" if blank == 1 else "s"])
 	var cov := _shape_coverage()
-	var shape_label := "Your drawing" if _build_mode else "This shape"
-	var coverage := ""
-	if cov.covered == cov.total:
-		coverage = "[color=#7ec87e][b]%s produces all %d slots[/b] at some height 1-%d: it can show every tile of the sheet.[/color]" % [
-			shape_label, cov.total, COVERAGE_MAX_HEIGHT]
-	else:
-		var never: Array = cov.missing.duplicate()
-		never.sort()
-		coverage = "[b]%s produces %d of %d slots[/b] at heights 1-%d, [color=#e0a34a]%d it never asks for[/color] (hover for which)." % [
-			shape_label, cov.covered, cov.total, COVERAGE_MAX_HEIGHT, never.size()]
-		_marker.tooltip_text = _by_row_tip + "Slots this shape never asks for at any height 1-%d:\n%s" % [
-			COVERAGE_MAX_HEIGHT, "\n".join(never)]
-	if cov.covered == cov.total:
-		_marker.tooltip_text = _by_row_tip + "Every slot of the sheet shows up on this shape at some height."
-	var dot_legend := "[color=#7ec87e]•[/color] used here   " if _build_mode else ""
-	_marker.text = header + "\n" + coverage + "\n[color=#9a9a9a]tile = done   " + dot_legend + \
-		"empty = to draw   [color=#e0a34a]orange[/color] = to draw, used here   gap = impossible at this height[/color]"
+	var shown := "Shows %d/%d slots at heights 1-%d" % [cov.covered, cov.total, COVERAGE_MAX_HEIGHT]
+	var never: Array = cov.missing.duplicate()
+	never.sort()
+	var cov_tip := shown + (", every one." if never.is_empty() else ". Never asks for:\n" + "\n".join(never.map(_slot_name)))
+	if _kind != KIND_PATTERN:
+		lines.append(("Your drawing: " if _build_mode else "This shape: ") + cov_tip)
+	if _fixture_pick != null:
+		_fixture_pick.tooltip_text = _fixture_base_tip() + "\n\n" + cov_tip
+	if _strip_label != null:
+		_strip_label.text = ("Editing \"%s\"" % _editing_shape if _editing_shape != "" else "Drawing a shape") + \
+			" · shows %d/%d" % [cov.covered, cov.total]
+	lines.append(_legend())
+	return "\n".join(lines)
+
+
+func _fixture_base_tip() -> String:
+	return "The shape the face is previewed on. Captures and saved drawings are kept in\n%s" % CliffData.shapes_scene()
 
 
 func _tile_texture(tile: Dictionary) -> Texture2D:
@@ -881,6 +942,16 @@ func _tile_texture(tile: Dictionary) -> Texture2D:
 
 
 func _repaint_preview() -> void:
+	if _auto_cfg.is_empty() or _kind == KIND_PATTERN:
+		_paint_preview()
+		return
+	var real := _cfg
+	_cfg = _auto_cfg
+	_paint_preview()
+	_cfg = real
+
+
+func _paint_preview() -> void:
 	if _preview_layer == null or _bt == null:
 		return
 	_preview_layer.clear()
@@ -889,6 +960,7 @@ func _repaint_preview() -> void:
 		_preview_faces.scale = Vector2.ONE
 	_missing_cells.clear()
 	_borrowed_cells.clear()
+	_hover_text.clear()
 
 	var cells := CliffData.mask_cells(_mask)
 	_last_plateau = {}
@@ -929,6 +1001,7 @@ func _repaint_preview() -> void:
 		var ph := _height()
 		_piece_by_cell.clear()
 		_pattern_line.clear()
+		_hover_text.clear()
 		var pick_cfg := _pattern_pick_config()
 		for f in faces.keys():
 			var prise: int = int(faces[f].rise)
@@ -946,6 +1019,10 @@ func _repaint_preview() -> void:
 				"none" if ptile.is_empty() else "source:%d atlas:%s" % [int(ptile.source_id), ptile.coord]]
 			if pdrew != pkey:
 				_pattern_line[f] += "  (drawn by %s)" % pdrew
+			_hover_text[f] = "%s · column %d of %d, row %d of %d%s%s" % [
+				_piece_title(pkey), int(pruns[f].col) + 1, int(pruns[f].width), ph - prise, ph,
+				" · drawn by %s" % _piece_title(pdrew) if pdrew != pkey else "",
+				" · no tile" if ptile.is_empty() else ""]
 			if ptile.is_empty():
 				_missing_cells.append(f)
 				continue
@@ -964,6 +1041,9 @@ func _repaint_preview() -> void:
 		var key := CliffData.slot_key(faces[f].row, case_name)
 		_slot_by_cell[f] = key
 		var tile := CliffData.resolve_tile(_cfg, faces[f].row, case_name)
+		var own_tile := not CliffData.slot_tile(_cfg, faces[f].row, case_name).is_empty()
+		_hover_text[f] = "%s · %s" % [_slot_name(key), "own tile" if own_tile else
+			("no tile" if tile.is_empty() else "borrows %s's tile" % _case_hint(CliffData.fallback_case(case_name)))]
 		if tile.is_empty():
 			_missing_cells.append(f)
 		else:
@@ -1013,11 +1093,11 @@ func _on_preview_input(event: InputEvent) -> void:
 		_apply_preview_pan()
 		return
 
+	if event is InputEventMouseMotion and _hover_label != null:
+		_hover_label.text = _hover_text.get(_cell_at(event.position), "")
+
 	if _build_mode:
 		if event is InputEventMouseButton:
-			if event.button_index == MOUSE_BUTTON_LEFT and event.pressed and _select_at(event.position):
-				_preview_overlay.accept_event()
-				return
 			if event.button_index == MOUSE_BUTTON_LEFT:
 				_painting = 1 if event.pressed else 0
 			elif event.button_index == MOUSE_BUTTON_RIGHT:
@@ -1059,7 +1139,7 @@ func _on_preview_input(event: InputEvent) -> void:
 				_select_at(event.position)
 			elif _off_mode_from.x > -9000 and _cell_at(event.position) != _off_mode_from:
 				_off_mode_from = Vector2i(-9999, -9999)
-				_status.text = "[color=#e0a34a]To mark a repeating unit, switch on [b]Repeating matrix[/b] in the toolbar first.[/color]"
+				_status.text = "[color=#e0a34a]To mark a block that repeats, turn on [b]Repeating block[/b] in the preview bar first.[/color]"
 			else:
 				_off_mode_from = Vector2i(-9999, -9999)
 		return
@@ -1261,9 +1341,9 @@ func _build_pattern_box(parent: Control) -> void:
 	tower.add_theme_constant_override("separation", 4)
 	pair.add_child(tower)
 	var tl := Label.new()
-	tl.text = "ALONE"
+	tl.text = "Lone column"
 	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	tl.tooltip_text = "A run with open air on BOTH sides: a tower, not a wall with ends."
+	tl.tooltip_text = "A run with open air on both sides: a tower, not a wall with ends."
 	tl.add_theme_color_override("font_color", Color(1, 1, 1, 0.6))
 	tower.add_child(tl)
 	for spec in CliffPattern.PIECES:
@@ -1288,65 +1368,76 @@ func _build_pattern_box(parent: Control) -> void:
 			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_RIGHT:
 				_clear_piece(key))
 		if spec.col == "alone":
-			b.custom_minimum_size = Vector2(64, 82 if spec.row == "mid" else 46)
+			b.custom_minimum_size = Vector2(84, 82 if spec.row == "mid" else 46)
 			b.size_flags_horizontal = Control.SIZE_FILL
 			tower.add_child(b)
 		else:
 			grid.add_child(b)
 		_pattern_rows[key] = {"button": b}
 
-	pass
 
+
+## Pattern's rarer settings, in Options: where the body's repeat starts, and its anchor.
+func _build_pattern_options(parent: Control) -> void:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 6)
+	parent.add_child(box)
+	_pattern_options = box
 	var offs := GridContainer.new()
 	offs.columns = 2
-	_pattern_box.add_child(offs)
+	box.add_child(offs)
 	var cl := Label.new()
 	cl.text = "Column offset"
-	cl.tooltip_text = "Which column of the body the repeat starts on, counted from the left of each run."
 	offs.add_child(cl)
 	_col_off = SpinBox.new()
 	_col_off.max_value = 32
 	_col_off.value_changed.connect(func(v):
 		if _pattern_syncing: return
-		_pattern_piece("body")["col_offset"] = int(v); _save(); _refresh())
+		if _refuse_if_inherited():
+			_sync_pattern_rows()
+			return
+		var before := _cfg.duplicate(true)
+		_pattern_piece("body")["col_offset"] = int(v)
+		_save(); _commit("Change cliff column offset", before); _refresh())
 	offs.add_child(_col_off)
 	var rl := Label.new()
 	rl.text = "Row offset"
-	rl.tooltip_text = "Which row of the body the repeat starts on, counted down from under the top row."
 	offs.add_child(rl)
 	_row_off = SpinBox.new()
 	_row_off.max_value = 32
 	_row_off.value_changed.connect(func(v):
 		if _pattern_syncing: return
-		_pattern_piece("body")["row_offset"] = int(v); _save(); _refresh())
+		if _refuse_if_inherited():
+			_sync_pattern_rows()
+			return
+		var before := _cfg.duplicate(true)
+		_pattern_piece("body")["row_offset"] = int(v)
+		_save(); _commit("Change cliff row offset", before); _refresh())
 	offs.add_child(_row_off)
 	_rows_up = CheckBox.new()
-	_rows_up.text = "build the middle from the ground up"
-	_rows_up.tooltip_text = \
-		"Which end the middle's repeat is anchored to.\n\n" + \
-		"Off: it starts under the top row and falls. The row just above the\n" + \
-		"ground then depends on how tall the wall is, so a sheet tuned at one\n" + \
-		"height comes out wrong at the next.\n\n" + \
-		"On: it is built upward from above the ground row, so that row is always\n" + \
-		"the same one and every height stacks on top of it. Turn this on and new\n" + \
-		"heights just work.\n\n" + \
-		"The top and ground rows are unaffected: they are anchored already."
+	_rows_up.text = ANCHOR_LABEL
+	_rows_up.tooltip_text = ("Off: the middle repeats down from under the top row, so the row above the ground\n"
+		+ "depends on the height. On: it builds up from above the ground row, so every height\n"
+		+ "ends the same. The top and ground rows are anchored already.")
 	_rows_up.toggled.connect(func(v):
 		if _pattern_syncing: return
-		if _refuse_if_inherited(): return
+		if _refuse_if_inherited():
+			_sync_pattern_rows()
+			return
+		var before := _cfg.duplicate(true)
 		_cfg["rows_up"] = v
-		_save(); _refresh())
-	_pattern_box.add_child(_rows_up)
+		_save(); _commit("Change cliff anchor", before); _refresh())
+	box.add_child(_rows_up)
 	_offset_note = Label.new()
 	_offset_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_offset_note.add_theme_color_override("font_color", Color(1, 0.72, 0.35))
-	_pattern_box.add_child(_offset_note)
+	box.add_child(_offset_note)
 
 
 func _pattern_report() -> String:
 	var body := CliffPattern.piece(_cfg, "body")
 	if not body.use:
-		return "[color=#e0a34a]No body yet.[/color]  Press [b]BODY[/b] and drag the tiles that repeat in the palette below."
+		return "[color=#e0a34a]No body yet[/color] · it is the block that repeats"
 	var own := []
 	var borrowed := []
 	for spec in CliffPattern.PIECES:
@@ -1356,14 +1447,9 @@ func _pattern_report() -> String:
 			own.append(String(spec.key).replace("_", " "))
 		else:
 			borrowed.append(String(spec.key).replace("_", " "))
-	var lines := "Body [b]%dx%d[/b], repeating." % [body.rect.size.x, body.rect.size.y]
-	if _pattern_armed == "":
-		lines = "[color=#9fb4c8]Nothing armed.[/color]  " + lines
-	if not own.is_empty():
-		lines += "  Own art: %s." % ", ".join(PackedStringArray(own))
-	if not borrowed.is_empty():
-		lines += "\n[color=#9fb4c8]Falling back: %s.[/color]" % ", ".join(PackedStringArray(borrowed))
-	return lines
+	return "Body [b]%d×%d[/b] · %d of %d other pieces have their own tiles%s" % [
+		body.rect.size.x, body.rect.size.y, own.size(), own.size() + borrowed.size(),
+		"" if _pattern_armed != "" else " · click a piece to set it"]
 
 
 func _show_pattern_line(cell: Vector2i) -> void:
@@ -1371,8 +1457,28 @@ func _show_pattern_line(cell: Vector2i) -> void:
 		return
 	if _pattern_line.has(cell):
 		_info.text = "%s  %s" % [terrain_name, _pattern_line[cell]]
-	else:
+	elif cell.x > -9000:
 		_info.text = "%s  cell=%s  no wall here" % [terrain_name, cell]
+	else:
+		_info.text = terrain_name
+
+
+func _piece_title(key: String) -> String:
+	if key.begins_with("alone"):
+		return "Lone column" + key.trim_prefix("alone").replace("_", " ")
+	return key.replace("_", " ").capitalize()
+
+
+func _piece_name(spec: Dictionary) -> String:
+	return String(spec.label).capitalize()
+
+
+## The piece an empty one draws with, by the fallback order, or "" when none has tiles.
+func _stand_in(key: String) -> String:
+	for other: String in CliffPattern.FALLBACK.get(key, []):
+		if CliffPattern.piece(_cfg, other).use:
+			return other.replace("_", " ")
+	return "body" if CliffPattern.piece(_cfg, "body").use and key != "body" else ""
 
 
 func _piece_hint(spec: Dictionary) -> String:
@@ -1387,10 +1493,12 @@ func _clear_piece(key: String) -> void:
 	if key == "body":
 		_status.text = "[color=#e0a34a]The body cannot be emptied.[/color]  Every other piece falls back to it."
 		return
+	var before := _cfg.duplicate(true)
 	var p := _pattern_piece(key)
 	p["use"] = false
 	p["rect"] = Rect2i()
 	_save()
+	_commit("Clear cliff piece", before)
 	_refresh()
 
 
@@ -1419,6 +1527,7 @@ func _on_kind_picked(which: int) -> void:
 		_cfg.erase("mode")
 	_save()
 	_refresh()
+	_fit_top_pane.call_deferred()
 
 
 func _sync_pattern_rows() -> void:
@@ -1431,12 +1540,12 @@ func _sync_pattern_rows() -> void:
 		var armed: bool = _pattern_armed == key
 		b.button_pressed = armed
 		if p.use:
-			b.text = "%s\n%dx%d" % [spec.label, p.rect.size.x, p.rect.size.y]
+			b.text = "%s\n%dx%d" % [_piece_name(spec), p.rect.size.x, p.rect.size.y]
 			b.icon = _rect_texture(source, p.rect)
 			b.add_theme_color_override("font_color", Color(1, 1, 1, 0.85))
 		else:
-			var alt := CliffPattern.effective(_cfg, key)
-			b.text = "%s\n%s" % [spec.label, spec.shape if not alt.use else "uses body"]
+			var stand_in := _stand_in(key)
+			b.text = "%s\n%s" % [_piece_name(spec), "empty" if stand_in == "" else "uses " + stand_in]
 			b.icon = null
 			b.add_theme_color_override("font_color", Color(1, 1, 1, 0.4))
 	var body: Dictionary = _cfg.get("body", {}) if _cfg.get("body") is Dictionary else {}
@@ -1450,10 +1559,18 @@ func _sync_pattern_rows() -> void:
 		if pp.rect.size.y > 1:
 			tall.append(String(spec.key).replace("_", " "))
 	var bod2 := CliffPattern.piece(_cfg, "body")
-	_offset_note.text = "Column offset moves %s.\nRow offset moves %s." % [
-		"the body" if bod2.use and bod2.rect.size.x > 1 else "nothing: the body is one column wide",
-		"nothing: every piece is one row tall" if tall.is_empty() else ", ".join(PackedStringArray(tall))]
-	_offset_note.visible = true
+	var col_moves: bool = bod2.use and bod2.rect.size.x > 1
+	_col_off.tooltip_text = "Which column of the body the repeat starts on, from the left of each run.\n" + \
+		("It moves the body." if col_moves else "It moves nothing while the body is one column wide.")
+	_row_off.tooltip_text = "Which row of the body the repeat starts on, down from under the top row.\n" + \
+		("It moves nothing while every piece is one row tall." if tall.is_empty() else "It moves: %s." % ", ".join(PackedStringArray(tall)))
+	var idle := []
+	if int(body.get("col_offset", 0)) != 0 and not col_moves:
+		idle.append("the column offset (the body is one column wide)")
+	if int(body.get("row_offset", 0)) != 0 and tall.is_empty():
+		idle.append("the row offset (every piece is one row tall)")
+	_offset_note.text = "No effect yet: %s." % " and ".join(PackedStringArray(idle))
+	_offset_note.visible = not idle.is_empty()
 	_rows_up.button_pressed = bool(_cfg.get("rows_up", false))
 	_pattern_syncing = false
 
@@ -1476,6 +1593,7 @@ func _rect_texture(source_id: int, rect: Rect2i) -> Texture2D:
 
 func assign_tile(source_id: int, coord: Vector2i, tile_size := Vector2i.ONE) -> bool:
 	if _refuse_if_inherited(): return true
+	var before := _cfg.duplicate(true)
 	if _kind == KIND_PATTERN:
 		if _pattern_armed == "":
 			_status.text = "[color=#e0a34a]No piece armed.[/color]  Press one, or click the part of the wall you want to change."
@@ -1490,8 +1608,9 @@ func assign_tile(source_id: int, coord: Vector2i, tile_size := Vector2i.ONE) -> 
 		if _pattern_armed != "body":
 			piece["use"] = true
 		_save()
+		_commit("Assign cliff piece", before)
 		_refresh()
-		_status.text = "[b]%s[/b] is now %dx%d at %d,%d." % [_pattern_armed, tile_size.x, tile_size.y, coord.x, coord.y]
+		_status.text = "%s set (%d×%d)." % [String(_pattern_armed).replace("_", " ").capitalize(), tile_size.x, tile_size.y]
 		return true
 	if not _matrix_target.is_empty():
 		var target: Dictionary = _matrix_target
@@ -1508,9 +1627,9 @@ func assign_tile(source_id: int, coord: Vector2i, tile_size := Vector2i.ONE) -> 
 			var kp: PackedStringArray = String(k).split("/")
 			CliffData.set_slot_tile(_cfg, kp[0], kp[1], tile2.duplicate())
 		_save()
+		_commit("Assign cliff block", before)
 		_refresh()
-		_status.text = "Unit %dx%d at atlas %s given to %d slot(s)." % [
-			msize.x, msize.y, coord, target.slots.size()]
+		_status.text = "%d×%d block given to %d slot%s." % [msize.x, msize.y, target.slots.size(), "" if target.slots.size() == 1 else "s"]
 		return true
 	if _selected == "": return false
 	var tile := {"source_id": source_id, "coord": coord}
@@ -1520,6 +1639,7 @@ func assign_tile(source_id: int, coord: Vector2i, tile_size := Vector2i.ONE) -> 
 		var parts: PackedStringArray = str(k).split("/")
 		CliffData.set_slot_tile(_cfg, parts[0], parts[1], tile.duplicate())
 	_save()
+	_commit("Assign cliff tile", before)
 	_refresh()
 	return true
 
@@ -1548,23 +1668,15 @@ func _palette_rect_of(source_id: int, coord: Vector2i, tile_size: Vector2i) -> R
 	var tv = _palette_view
 	if tv == null or tv.tileset == null:
 		return Rect2()
-	var offset := Vector2.ZERO
 	var ts2: TileSet = tv.tileset
-	for i in ts2.get_source_count():
-		var sid := ts2.get_source_id(i)
-		if sid in tv.disabled_sources:
-			continue
-		var src := ts2.get_source(sid) as TileSetAtlasSource
-		if src == null or src.texture == null:
-			continue
-		if sid == source_id and src.has_tile(coord):
-			var r: Rect2i = src.get_tile_texture_region(coord, 0)
-			var last := coord + tile_size - Vector2i.ONE
-			if tile_size != Vector2i.ONE and src.has_tile(last):
-				r = r.merge(src.get_tile_texture_region(last, 0))
-			return Rect2(offset + tv.zoom_level * Vector2(r.position), tv.zoom_level * Vector2(r.size))
-		offset.y += tv.zoom_level * src.texture.get_height()
-	return Rect2()
+	var src := ts2.get_source(source_id) as TileSetAtlasSource if ts2.has_source(source_id) else null
+	if src == null or not src.has_tile(coord):
+		return Rect2()
+	var r: Rect2i = src.get_tile_texture_region(coord, 0)
+	var last := coord + tile_size - Vector2i.ONE
+	if tile_size != Vector2i.ONE and src.has_tile(last):
+		r = r.merge(src.get_tile_texture_region(last, 0))
+	return tv.atlas_rect(source_id, Rect2(r))
 
 
 func _draw_palette_current() -> void:
@@ -1689,13 +1801,27 @@ func _on_palette_pressed(source_id: int, coord: Vector2i, tile_size := Vector2i.
 
 
 func _on_clear_slot() -> void:
+	if _selected == "":
+		_status.text = "[color=#e0a34a]Pick a slot first.[/color]"
+		return
+	_clear_slots(_selected_slots())
+
+
+## Empties slots: the Clear slot button, or a right click on a slot or group.
+func _clear_slots(keys: Array) -> void:
 	if _refuse_if_inherited(): return
-	if _selected == "": return
-	for k in _selected_slots():
+	var before := _cfg.duplicate(true)
+	for k in keys:
 		var parts: PackedStringArray = str(k).split("/")
 		CliffData.set_slot_tile(_cfg, parts[0], parts[1], {})
 	_save()
+	_commit("Clear cliff slot", before)
 	_refresh()
+
+
+func _on_slot_gui_input(event: InputEvent, key: String) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+		_clear_slots(CliffData.simple_members(key.trim_prefix("simple:")) if key.begins_with("simple:") else [key])
 
 
 func _clamp_zoom(v: float) -> float:
@@ -1756,10 +1882,7 @@ func _on_matrix_mode_toggled(on: bool) -> void:
 	if _preview_overlay != null:
 		_preview_overlay.queue_redraw()
 	if on:
-		_status.text = "[b]Repeating matrix.[/b]  Drag a rectangle over the wall in the preview: " + \
-			"that is the unit that repeats. Then click its top-left tile in the palette " + \
-			"and every slot it covered takes the block.\n" + \
-			"[color=#9fb4c8]Change the shape or the height above to see it on another wall.[/color]"
+		_status.text = "Drag over the wall to mark the block that repeats, then pick its top-left tile below."
 	else:
 		_refresh()
 
@@ -1788,14 +1911,13 @@ func _sync_from_bottom() -> void:
 func _pending_unit_text() -> String:
 	if _matrix_target.is_empty():
 		return ""
-	var names := ", ".join(PackedStringArray(_matrix_target.slots))
 	var target_size: Vector2i = _matrix_target.size
+	var count: int = _matrix_target.slots.size()
 	var note := ""
 	if target_size.y > 1 and not bool(_cfg.get("from_bottom", false)):
-		note = "  [color=#e0a34a]Taller than one row, so “repeat from the bottom” will be turned on.[/color]"
-	return "[b]Repeating unit %dx%d[/b] over %s.%s\nNow pick its top-left tile in the palette, or drag the same rectangle there." % [
-		target_size.x, target_size.y, names, note]
-
+		note = " [color=#e0a34a](turns on “%s”)[/color]" % ANCHOR_LABEL
+	return "[b]%d×%d block[/b] over %d slot%s%s · pick its top-left tile below" % [
+		target_size.x, target_size.y, count, "" if count == 1 else "s", note]
 
 func _refuse_if_inherited() -> bool:
 	var src := _inherited_from()
@@ -1805,19 +1927,153 @@ func _refuse_if_inherited() -> bool:
 	return true
 
 
-func _open_inherit_menu() -> void:
+## Opens the slots' pane tall enough to show them all and Options, taking room from the
+## palette and, when that runs short, making the window taller.
+func _fit_top_pane() -> void:
+	if not is_inside_tree():
+		return
+	await get_tree().process_frame
+	if _left_box == null or not is_inside_tree():
+		return
+	var want := _left_box.get_combined_minimum_size().y + 8.0
+	var palette_min := (_pane.get_child(1) as Control).get_combined_minimum_size().y
+	var room := _pane.size.y - palette_min - _pane.get_theme_constant(&"separation")
+	if want > room:
+		var screen := DisplayServer.screen_get_usable_rect(current_screen).size.y
+		size.y = mini(screen - 40, size.y + int(want - room))
+		await get_tree().process_frame
+	if want > _left_scroll.size.y:
+		# The panes share the height by their stretch ratios (Chrome.open_at); set the top's.
+		var share := clampf(want / maxf(1.0, _pane.size.y - _pane.get_theme_constant(&"separation")), 0.05, 0.95)
+		Chrome.open_at(_pane, share)
+
+
+func _open_autoassign() -> void:
+	if _refuse_if_inherited():
+		return
+	_pane.visible = false
+	_auto_page.visible = true
+	Chrome.open_at(_split, 0.62)
+	_auto_page.open(tile_set, _bt, terrain_index)
+
+
+func _close_autoassign() -> void:
+	_auto_page.visible = false
+	_pane.visible = true
+	Chrome.open_at(_split, 0.30)
+	_auto_cfg = {}
+	_repaint_preview()
+
+
+# The preview shows the face the picked block would give, without touching the real one.
+func _on_autoassign_block(source_id: int, block: Rect2i) -> void:
+	_auto_cfg = {}
+	if block.size != Vector2i.ZERO:
+		_auto_cfg = _cfg.duplicate(true)
+		CliffData.autoassign(_auto_cfg, source_id, block)
+	_repaint_preview()
+
+
+func _on_autoassign_chosen(source_id: int, block: Rect2i) -> void:
+	_close_autoassign()
+	var before := _cfg.duplicate(true)
+	var count := CliffData.autoassign(_cfg, source_id, block)
+	_selected = ""
+	_save()
+	_commit("Autoassign cliff face", before)
+	_refresh()
+	_status.text = "[color=#7ec87e]%d slots filled from the %d×%d block.[/color] Ctrl+Z undoes it." % [count, block.size.x, block.size.y]
+
+
+func _sync_more_menu() -> void:
 	_inherit_names = CliffData.inheritable_sources(tile_set, terrain_name)
+	var current := _inherited_from()
 	_inherit_menu.clear()
 	if _inherit_names.is_empty():
-		_inherit_menu.add_item("(no other terrain has a sheet)", -1)
+		_inherit_menu.add_item("(no other terrain has a face)", -1)
 		_inherit_menu.set_item_disabled(0, true)
 	else:
 		for i in _inherit_names.size():
-			_inherit_menu.add_item(_inherit_names[i], i)
-	_inherit_menu.position = Vector2i(_inherit_button.get_screen_position()) \
-		+ Vector2i(0, int(_inherit_button.size.y))
-	_inherit_menu.reset_size()
-	_inherit_menu.popup()
+			_inherit_menu.add_check_item(_inherit_names[i], i)
+			_inherit_menu.set_item_checked(i, _inherit_names[i] == current)
+	var menu := _more.get_popup()
+	menu.set_item_disabled(menu.get_item_index(MORE_LOCAL), current == "")
+
+
+func _on_more_pressed(id: int) -> void:
+	match id:
+		MORE_LOCAL:
+			_on_make_local()
+		MORE_COPY:
+			DisplayServer.clipboard_set(_info.text)
+		MORE_CLEAR:
+			_on_clear_all()
+
+
+func _on_shape_menu(id: int) -> void:
+	match id:
+		SHAPE_NARROW:
+			_narrow_check.button_pressed = not _show_narrow
+		SHAPE_DRAW:
+			if not _build_mode:
+				_build_toggle.button_pressed = true
+		SHAPE_EDIT:
+			_edit_selected_shape()
+		SHAPE_CLEAR:
+			_clear_canvas()
+
+
+## Done: leave the drawing (kept until cleared) and any shape being edited.
+func _finish_drawing() -> void:
+	_editing_shape = ""
+	_refresh_shape_buttons()
+	_build_toggle.button_pressed = false
+
+
+## The inherited line and the ⋮ state, for every kind (Pattern refreshes return early).
+func _sync_inherit_ui() -> void:
+	var inherited := _inherited_from()
+	if _inherit_banner != null:
+		_inherit_banner.visible = inherited != ""
+		_inherit_label.text = "Uses %s's face (read-only)" % inherited
+
+
+## Edits to the face go through the editor's undo, against the tile set it is kept in.
+func _commit(action: String, before: Dictionary) -> void:
+	var undo := EditorInterface.get_editor_undo_redo()
+	undo.create_action(action, UndoRedo.MERGE_DISABLE, tile_set)
+	undo.add_do_method(CliffData, &"store_config", tile_set, terrain_name, _cfg.duplicate(true))
+	undo.add_undo_method(CliffData, &"store_config", tile_set, terrain_name, before)
+	undo.commit_action(false)
+
+
+# Undo and redo write the face back into the tile set; follow them, keeping the selection.
+func _on_tile_set_changed() -> void:
+	if _inherited_from() != "":
+		return
+	var now := CliffData.config_of(tile_set, terrain_name)
+	if now == _cfg:
+		return
+	_cfg = now
+	config_changed.emit()
+	_refresh()
+
+
+# The editor's shortcuts don't reach this window, so undo and redo are taken here.
+func _input(event: InputEvent) -> void:
+	if not (event is InputEventKey and event.pressed and not event.echo):
+		return
+	if event.keycode != KEY_Z and event.keycode != KEY_Y:
+		return
+	if not (event.ctrl_pressed or event.meta_pressed):
+		return
+	var undo := EditorInterface.get_editor_undo_redo()
+	var history := undo.get_history_undo_redo(undo.get_object_history_id(tile_set))
+	if event.keycode == KEY_Y or event.shift_pressed:
+		history.redo()
+	else:
+		history.undo()
+	set_input_as_handled()
 
 
 func _on_inherit_chosen(id: int) -> void:
@@ -1913,13 +2169,6 @@ func _on_save_shape_pressed() -> void:
 		_ask_shape_name()
 
 
-func _on_edit_shape_pressed() -> void:
-	if _editing_shape != "":
-		_exit_shape_edit()
-	else:
-		_edit_selected_shape()
-
-
 func _exit_shape_edit() -> void:
 	var was := _editing_shape
 	_editing_shape = ""
@@ -1930,7 +2179,7 @@ func _exit_shape_edit() -> void:
 		_refresh_mask()
 		_refresh()
 	if was != "":
-		_status.text = "Stopped editing [b]%s[/b].  The canvas is kept as it is; “Clear canvas” empties it." % was
+		_status.text = "Stopped editing [b]%s[/b]. The drawing is kept until cleared." % was
 
 
 func _refresh_shape_buttons() -> void:
@@ -1939,15 +2188,6 @@ func _refresh_shape_buttons() -> void:
 	var editing := _editing_shape != ""
 	_save_shape_btn.text = "Overwrite \"%s\"" % _editing_shape if editing else "Save as shape"
 	_save_new_btn.visible = editing
-	if _edit_shape_btn != null:
-		_edit_shape_btn.text = "Cancel edit" if editing else "Edit shape"
-		_edit_shape_btn.tooltip_text = \
-			("Stop editing \"%s\" and go back to the shape list.\n\nThe canvas is kept; " % _editing_shape) + \
-			"“Clear canvas” is what empties it." if editing else \
-			"Loads the selected shape into the Build canvas so you can change it.\n\n" + \
-			"Nothing is written until you press Save as shape; the name is then\n" + \
-			"prefilled with this shape's, so saving replaces it. Type another name\n" + \
-			"to keep the original and save a variant."
 
 
 func _ask_shape_name() -> void:
@@ -2109,25 +2349,29 @@ func _build_simple_grid(parent: Control) -> void:
 	_simple_grid = GridContainer.new()
 	_simple_grid.columns = 1
 	parent.add_child(_simple_grid)
-	var shape_name := {"E": "edge", "W": "wall", "G": "ground"}
-	var titles := {"wall": "Wall carries on below   (rows top, middle)",
-		"ground": "Touches the ground   (rows base, only)"}
+	var shape_name := SIDE_NAMES
+	var titles := {"wall": "Wall continues below", "ground": "Wall ends on the ground"}
+	var tips := {"wall": "Rows: top, middle", "ground": "Rows: base, only"}
 	for band in CliffData.SIMPLE_ROWS:
 		var t := Label.new()
 		t.text = titles[band]
+		t.tooltip_text = tips[band]
+		t.mouse_filter = Control.MOUSE_FILTER_PASS
 		t.add_theme_color_override("font_color", Color(0.85, 0.85, 0.85))
 		_simple_grid.add_child(t)
 		var g := GridContainer.new()
 		g.columns = CliffData.SIMPLE_SIDES.size() + 1
 		_simple_grid.add_child(g)
 		var corner := Label.new()
-		corner.text = "left \\ right"
+		corner.text = "left ↓  right →"
 		corner.add_theme_color_override("font_color", Color(0.55, 0.55, 0.55))
 		g.add_child(corner)
 		for r in CliffData.SIMPLE_SIDES:
 			var h := Label.new()
 			h.text = shape_name[r]
 			h.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			# Every column as wide as the widest name, so the squares sit evenly apart.
+			h.custom_minimum_size.x = _simple_column_width()
 			g.add_child(h)
 		for l in CliffData.SIMPLE_SIDES:
 			var rl := Label.new()
@@ -2136,13 +2380,24 @@ func _build_simple_grid(parent: Control) -> void:
 			for r in CliffData.SIMPLE_SIDES:
 				var key := "%s|%s%s" % [band, l, r]
 				var b := Button.new()
-				b.custom_minimum_size = Vector2(SLOT_PX * 1.6, SLOT_PX * 1.6)
+				b.custom_minimum_size = Vector2(SIMPLE_PX, SIMPLE_PX)
+				b.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 				b.toggle_mode = true
 				b.expand_icon = true
 				b.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 				b.pressed.connect(_on_slot_pressed.bind("simple:" + key))
+				b.gui_input.connect(_on_slot_gui_input.bind("simple:" + key))
 				_simple_buttons[key] = b
 				g.add_child(b)
+
+
+func _simple_column_width() -> float:
+	var font := EditorInterface.get_editor_theme().get_font(&"font", &"Label")
+	var size := EditorInterface.get_editor_theme().get_font_size(&"font_size", &"Label")
+	var widest := 0.0
+	for name: String in SIDE_NAMES.values():
+		widest = maxf(widest, font.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x)
+	return ceilf(widest) + 8.0
 
 
 func _simple_state(group: String) -> Dictionary:
@@ -2188,20 +2443,21 @@ func _refresh_simple() -> void:
 		match st.state:
 			"filled":
 				b.icon = _tile_texture(st.tiles.values()[0])
-				b.tooltip_text = "%s: one tile in all %d slots." % [g, st.members.size()]
+				b.tooltip_text = "%s\nOne tile in all %d slots. Right-click to empty them." % [_group_name(g), st.members.size()]
 			"partial":
 				b.icon = _tile_texture(st.tiles.values()[0])
 				b.add_theme_stylebox_override("normal", _frame_urgent() if st.asked else _frame_empty())
-				b.tooltip_text = "%s: %d of %d slots still empty. Assign here to fill them all." % [
-					g, st.empty_count, st.members.size()]
+				b.tooltip_text = "%s\n%d of %d slots still empty. A tile here fills them all." % [
+					_group_name(g), st.empty_count, st.members.size()]
 			"mixed":
-				b.text = "mixed\n%d tiles" % st.tiles.size()
+				# Too small for words: one of its tiles, in the purple frame that says "mixed".
+				b.icon = _tile_texture(st.tiles.values()[0])
 				b.add_theme_stylebox_override("normal", _frame_mixed())
-				b.tooltip_text = "%s: its %d slots hold %d different tiles, fine-tuned in Advanced. Assigning here overwrites all of them." % [
-					g, st.members.size(), st.tiles.size()]
+				b.tooltip_text = "%s\nIts %d slots hold %d different tiles (set in Advanced). A tile here replaces them all." % [
+					_group_name(g), st.members.size(), st.tiles.size()]
 			_:
 				b.add_theme_stylebox_override("normal", _frame_urgent() if st.asked else _frame_empty())
-				b.tooltip_text = "%s: empty, %d slots. Pick a tile below." % [g, st.members.size()]
+				b.tooltip_text = "%s\nEmpty, %d slots. Pick a tile below." % [_group_name(g), st.members.size()]
 
 
 func _selected_slots() -> Array:
@@ -2280,7 +2536,7 @@ func _update_info() -> void:
 		group = _selected.trim_prefix("simple:")
 		concrete = _slot_by_cell.get(_last_cell, "")
 		if concrete == "":
-			_info.text = "%s  group=%s  height=%d  (hover a cell of the preview for its slot)" % [
+			_info.text = "%s  group=%s  height=%d  (click a cell of the preview for its slot)" % [
 				terrain_name, group, _height()]
 			return
 	var parts := concrete.split("/")

@@ -34,6 +34,11 @@ const ICON_DIR := "res://addons/better-tile-editor/icons/"
 const BT_SCRIPT := preload("res://addons/better-tile-editor/BetterTerrain.gd")
 
 const TOOL_MODES := {
+	# Selecting copies, pastes and clears peering bits: only terrains with bits use it.
+	"select_tiles": [
+		BT_SCRIPT.TerrainType.MATCH_TILES, BT_SCRIPT.TerrainType.MATCH_VERTICES,
+		BT_SCRIPT.TerrainType.CATEGORY,
+	],
 	"live_test": [
 		BT_SCRIPT.TerrainType.MATCH_TILES, BT_SCRIPT.TerrainType.MATCH_VERTICES,
 		BT_SCRIPT.TerrainType.CATEGORY, BT_SCRIPT.TerrainType.DECORATION,
@@ -66,7 +71,9 @@ const COLLAPSED_SETTING := "editors/better_terrain/collapsed_groups"
 const QUICK_MODE_SETTING := "editors/better_terrain/quick_mode"
 const HIDE_SUPPORT_SETTING := "editors/better_terrain/hide_support_layers"
 const SHOW_ZOOM_SETTING := "editors/better_terrain/show_zoom_control"
+const SHOW_TOOL_NAMES_SETTING := "editors/better_terrain/show_tool_names"
 const SHOW_TILE_GRID_SETTING := "editors/better_terrain/show_tile_grid"
+const SHOW_EMPTY_ATLAS_SETTING := "editors/better_terrain/show_empty_atlas_space"
 const SHOW_REFRESH_SETTING := "editors/better_terrain/show_refresh_button"
 const HIDE_NATIVE_TERRAINS_SETTING := "editors/better_terrain/hide_native_terrains"
 const HIDE_NATIVE_TILES_SETTING := "editors/better_terrain/hide_native_tiles"
@@ -87,6 +94,8 @@ const GROUP_HEADER_SCRIPT := preload("res://addons/better-tile-editor/editor/Gro
 const TERRAIN_LIST_SCRIPT := preload("res://addons/better-tile-editor/editor/TerrainList.gd")
 const SCENES_GROUP := TERRAIN_LIST_SCRIPT.SCENES_GROUP
 const SCENE_META := &"better_terrain_scene"
+## Survives a reload of the plugin, which frees the dock: [tile set instance id, entry].
+const LAST_ENTRY_META := &"_better_tile_editor_last_entry"
 
 
 # Buttons
@@ -225,6 +234,7 @@ func _ready() -> void:
 	rectangle_button.icon = get_theme_icon("Rectangle", "EditorIcons")
 	fill_button.icon = get_theme_icon("Bucket", "EditorIcons")
 	select_tiles.icon = get_theme_icon("ToolSelect", "EditorIcons")
+	select_tiles.tooltip_text = "Select tiles in the atlas, then:\nCtrl+C / Ctrl+V to copy and paste their peering bits\nDelete to clear their bits\nEnter to add them to, or take them out of, this terrain"
 	add_terrain_button.icon = get_theme_icon("Add", "EditorIcons")
 	edit_terrain_button.icon = get_theme_icon("Tools", "EditorIcons")
 	pick_icon_button.icon = get_theme_icon("ColorPick", "EditorIcons")
@@ -281,6 +291,7 @@ func _ready() -> void:
 	tile_view.terrain_updated.connect(_on_terrain_updated)
 
 	_build_scatter_bag()
+	_build_collision_panel()
 	_build_fill_scope()
 	
 	# Zoom slider is manipulated by settings, make it at runtime
@@ -321,6 +332,7 @@ func _ready() -> void:
 	scroll_container.resized.connect(_update_group_header_widths)
 	_restore_view_modes()
 	_arrange_toolbar()
+	_apply_tool_names()
 
 
 #region Display groups
@@ -787,7 +799,25 @@ func tiles_changed() -> void:
 	_on_quick_mode_pressed()
 
 	live_test_button.modulate = Color(1.0, 0.7, 0.3) if layer_stale else Color.WHITE
+	_restore_last_entry()
 	update_overlay.emit()
+
+
+## A reload of the plugin makes a new dock with nothing selected; pick what was.
+func _restore_last_entry() -> void:
+	if tileset == null or selected_entry != -2 or not Engine.has_meta(LAST_ENTRY_META):
+		return
+	var last: Array = Engine.get_meta(LAST_ENTRY_META)
+	if last[0] != tileset.get_instance_id():
+		return
+	var id: int = last[1]
+	var entry = _entry_for_id(id)
+	if entry == null:
+		return
+	_on_entry_select(id)
+	entry.selected = true
+	entry.queue_redraw()
+	_sync_scene_selection()
 
 
 func about_to_be_visible(becoming_visible: bool) -> void:
@@ -850,6 +880,8 @@ func _on_entry_edit_requested(id: int) -> void:
 
 func _on_entry_select(id:int):
 	selected_entry = id
+	if tileset != null:
+		Engine.set_meta(LAST_ENTRY_META, [tileset.get_instance_id(), id])
 	if selected_entry >= BetterTerrain.terrain_count(tileset):
 		selected_entry = BetterTerrain.TileCategory.EMPTY
 	for c in terrain_list.get_children():
@@ -1028,7 +1060,7 @@ func _apply_entry_filters() -> void:
 			var paintable : bool = c.terrain.type in [BetterTerrain.TerrainType.MATCH_TILES,
 				BetterTerrain.TerrainType.MATCH_VERTICES, BetterTerrain.TerrainType.OBJECT,
 				BetterTerrain.TerrainType.EXEMPLAR, BetterTerrain.TerrainType.SCATTER,
-				BetterTerrain.TerrainType.SINGLE]
+				BetterTerrain.TerrainType.SINGLE] or c.terrain.has("tool_icon")
 			c.visible = in_filter and (!quick or paintable)
 		else:
 			c.visible = in_filter
@@ -1036,7 +1068,6 @@ func _apply_entry_filters() -> void:
 
 func update_tile_view_paint() -> void:
 	tile_view.paint = selected_entry
-	select_tiles.visible = not _is_single(selected_entry)
 	_update_picker_tooltip()
 	tile_view.dim_unassigned_tiles = not _is_single(selected_entry)
 	tile_view.queue_redraw()
@@ -1077,6 +1108,13 @@ func update_tile_view_paint() -> void:
 	if is_exemplar and (paint_terrain.button_pressed or paint_symmetry.button_pressed):
 		paint_type.button_pressed = true
 		_on_bit_button_pressed(paint_type)
+	# A hidden Select must not stay the tool in use where painting has a tool of its own.
+	if select_tiles.button_pressed and not select_tiles.visible:
+		for fallback: Button in [paint_type, object_lone]:
+			if fallback.visible:
+				fallback.button_pressed = true
+				_on_bit_button_pressed(fallback)
+				break
 	if mode in [BetterTerrain.TerrainType.SCATTER, BetterTerrain.TerrainType.SINGLE] \
 			and not select_tiles.button_pressed:
 		select_tiles.button_pressed = true
@@ -1084,10 +1122,12 @@ func update_tile_view_paint() -> void:
 	_sync_cliff_rows()
 	_sync_scatter_bag()
 	_sync_oven_button()
+	_sync_collision_mode()
 
 
 func _tool_button(mode_name: String) -> Button:
 	match mode_name:
+		"select_tiles": return select_tiles
 		"live_test": return live_test_button
 		"paint_type": return paint_type
 		"paint_terrain": return paint_terrain
@@ -1106,15 +1146,22 @@ func _open_terrain_context(group: String, id: int = -1) -> void:
 	var menu := PopupMenu.new()
 	menu.name = "TerrainContextMenu"
 	add_child(menu)
-	menu.add_item("Add new terrain in %s" % (group if not group.is_empty() else "General"), 0)
+	# Editor icons, or the plugin's own where the toolbar uses them, so both read as one.
+	var item := func(icon: String, text: String, action: int) -> void:
+		var texture: Texture2D = load(ICON_DIR + icon) if icon.ends_with(".svg") else get_theme_icon(icon, "EditorIcons")
+		menu.add_icon_item(texture, text, action)
+		menu.set_item_icon_max_width(menu.get_item_index(action), int(16 * EditorInterface.get_editor_scale()))
+	item.call("Add", "Add new terrain in %s" % (group if not group.is_empty() else "General"), 0)
 	if id >= 0:
 		menu.add_separator()
-		menu.add_item("Open terrain properties…", 1)
+		item.call("Edit", "Open terrain properties…", 1)
 		var terrain := BetterTerrain.get_terrain(tileset, id)
 		if terrain.type in TOOL_MODES["cliff"] or CLIFF_DATA.all_configs(tileset).has(str(terrain.name)):
-			menu.add_item("Open cliff editor…", 2)
+			item.call("CliffFace.svg", "Open cliff editor…", 2)
 		if terrain.type == BetterTerrain.TerrainType.MATCH_TILES:
-			menu.add_item("Set up slopes…", 5)
+			item.call("Slope.svg", "Set up slopes…", 5)
+		if COVERAGE.unsupported(tileset, id).is_empty():
+			item.call("MatchTiles.svg", "Complete terrain…", 6)
 		var move := PopupMenu.new()
 		move.name = "MoveTo"
 		menu.add_child(move)
@@ -1126,10 +1173,12 @@ func _open_terrain_context(group: String, id: int = -1) -> void:
 			move.set_item_disabled(index, groups[index] == group)
 		move.id_pressed.connect(func(index): _drop_terrain_into_group(id, groups[index]))
 		menu.add_submenu_item("Move to", "MoveTo")
+		menu.set_item_icon(menu.item_count - 1, get_theme_icon("Folder", "EditorIcons"))
+		menu.set_item_icon_max_width(menu.item_count - 1, int(16 * EditorInterface.get_editor_scale()))
 		menu.add_separator()
-		menu.add_item("Delete terrain…", 3)
+		item.call("Remove", "Delete terrain…", 3)
 	menu.add_separator()
-	menu.add_item("Manage terrain groups…", 4)
+	item.call("GroupAll.svg", "Manage terrain groups…", 4)
 	menu.id_pressed.connect(func(action):
 		if action == 0:
 			_on_add_terrain_pressed(group)
@@ -1143,6 +1192,7 @@ func _open_terrain_context(group: String, id: int = -1) -> void:
 				2: _on_cliff_pressed()
 				3: _on_remove_terrain_pressed()
 				5: _open_slope_roles()
+				6: _open_coverage(id)
 	)
 	menu.popup_hide.connect(menu.queue_free)
 	menu.position = Vector2i(get_screen_transform() * get_local_mouse_position())
@@ -1294,11 +1344,16 @@ func _on_remove_terrain_pressed() -> void:
 	# store confirmation in array to pass by ref
 	var t := BetterTerrain.get_terrain(tileset, selected_entry)
 	var whole_set: bool = SLOPE_TERRAIN.is_set_ground(tileset, selected_entry)
+	var atlases := _pieces_atlases_of(selected_entry)
+	var turns := _terrain_turns(selected_entry)
 	var confirmed := [false]
 	var popup := ConfirmationDialog.new()
 	popup.dialog_text = tr("Are you sure you want to remove {0}?").format([t.name])
 	if whole_set:
 		popup.dialog_text += "\nIts slopes go with it: the slope pieces, their flipped copies and the slope set-up."
+	if not atlases.is_empty():
+		popup.dialog_text += "\nThe atlas of pieces made for it goes too, as no other terrain uses it: %s. Its PNG stays on disk." % \
+			", ".join(atlases.map(func(a): return a.path.get_file() if not a.path.is_empty() else "atlas %d" % a.id))
 	popup.dialog_hide_on_ok = false
 	popup.confirmed.connect(func():
 		confirmed[0] = true
@@ -1326,10 +1381,73 @@ func _on_remove_terrain_pressed() -> void:
 		undo_manager.add_undo_method(self, &"perform_add_terrain", t.name, t.color, t.type, t.categories, t.icon, t.group)
 		for n in range(BetterTerrain.terrain_count(tileset) - 1, selected_entry, -1):
 			undo_manager.add_undo_method(self, &"perform_swap_terrain", n, n - 1)
+		# Undo runs in the order added: the atlases come back before their tiles' bits do.
+		for atlas: Dictionary in atlases:
+			undo_manager.add_do_method(tileset, &"remove_source", atlas.id)
+			undo_manager.add_undo_method(self, &"_bring_back_pieces_atlas", atlas.src, atlas.id)
 		if t.type == BetterTerrain.TerrainType.CATEGORY:
 			terrain_undo.create_terrain_type_restore_point(undo_manager, tileset)
 		terrain_undo.create_peering_restore_point_specific(undo_manager, tileset, selected_entry)
+		# The bits come back without the tiles' turns; these follow them.
+		undo_manager.add_undo_method(self, &"_restore_terrain_turns", turns)
 		undo_manager.commit_action()
+
+
+## The atlases of pieces made for a terrain that no other terrain uses:
+## [{id, src, path, image}], to go with the terrain.
+func _pieces_atlases_of(terrain_id: int) -> Array:
+	var out := []
+	for s in tileset.get_source_count():
+		var id := tileset.get_source_id(s)
+		var src := tileset.get_source(id) as TileSetAtlasSource
+		if src == null or not src.has_meta(QUARTER_PIECES.GENERATED_META):
+			continue
+		var mine := false
+		var foreign := false
+		for t in src.get_tiles_count():
+			var coord := src.get_tile_id(t)
+			for a in src.get_alternative_tiles_count(coord):
+				var type := BetterTerrain.get_tile_terrain_type(src.get_tile_data(coord, src.get_alternative_tile_id(coord, a)))
+				if type == terrain_id:
+					mine = true
+				elif type != BetterTerrain.TileCategory.NON_TERRAIN:
+					foreign = true
+		if mine and not foreign:
+			var path: String = src.texture.resource_path if src.texture != null and src.texture.resource_path.begins_with("res://") else ""
+			out.append({id = id, src = src, path = path})
+	return out
+
+
+## Every turn kept on the terrain's tiles: [[source_id, coord, alt, transforms, weight]].
+func _terrain_turns(terrain_id: int) -> Array:
+	var out := []
+	for s in tileset.get_source_count():
+		var id := tileset.get_source_id(s)
+		var src := tileset.get_source(id) as TileSetAtlasSource
+		if src == null:
+			continue
+		for t in src.get_tiles_count():
+			var coord := src.get_tile_id(t)
+			for a in src.get_alternative_tiles_count(coord):
+				var alt := src.get_alternative_tile_id(coord, a)
+				var td := src.get_tile_data(coord, alt)
+				if BetterTerrain.get_tile_terrain_type(td) == terrain_id and not BetterTerrain.get_tile_transforms(td).is_empty():
+					out.append([id, coord, alt, BetterTerrain.get_tile_transforms(td), BetterTerrain.get_tile_transform_weight(td)])
+	return out
+
+
+func _restore_terrain_turns(turns: Array) -> void:
+	for entry: Array in turns:
+		var src := tileset.get_source(entry[0]) as TileSetAtlasSource if tileset.has_source(entry[0]) else null
+		if src != null and src.has_alternative_tile(entry[1], entry[2]):
+			BetterTerrain.set_tile_transforms(tileset, src.get_tile_data(entry[1], entry[2]), entry[3], entry[4])
+
+
+# Files are never deleted here: the atlas leaves the tile set in memory, and the tile set on
+# disk keeps pointing at the PNG until it is saved, so trashing it broke scenes reopened unsaved.
+func _bring_back_pieces_atlas(src: TileSetAtlasSource, id: int) -> void:
+	if not tileset.has_source(id):
+		tileset.add_source(src, id)
 
 
 func _after_set_removed() -> void:
@@ -1360,6 +1478,8 @@ func rebuild_terrain_list() -> void:
 		add_terrain_entry(decoration)
 	if single.valid:
 		add_terrain_entry(single)
+	add_terrain_entry(_collision_entry_terrain())
+	add_terrain_entry(_data_entry_terrain())
 
 	var grouped := {"": []}
 	for group in groups_by_name:
@@ -1403,6 +1523,11 @@ func rebuild_terrain_list() -> void:
 		var entry = _entry_for_id(selected_entry)
 		if entry:
 			entry.set_selected(true)
+	elif selected_entry in [COLLISION_ENTRY, DATA_ENTRY]:
+		var entry = _entry_for_id(selected_entry)
+		if entry:
+			entry.selected = true
+			entry.queue_redraw()
 	_sync_scene_selection()
 
 
@@ -1846,6 +1971,13 @@ func canvas_draw(overlay: Control) -> void:
 		overlay.draw_string(status_font, at, line, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize,
 			Color(0.85, 0.92, 1.0))
 
+	if _collision_mode():
+		_draw_map_collisions(overlay, transform)
+		return
+	if _data_mode():
+		_draw_map_data(overlay, transform)
+		return
+
 	if _map_select_active() and not _map_sel.is_empty():
 		var mesh := _map_selection_mesh(Rect2(Vector2.ZERO, overlay.size), transform)
 		if not mesh.indices.is_empty():
@@ -1995,6 +2127,8 @@ func _draw_outline(overlay: Control, poly: PackedVector2Array, color: Color) -> 
 func canvas_input(event: InputEvent) -> bool:
 	if not tilemap:
 		return false
+	if _collision_mode() or _data_mode():
+		return _collision_canvas_input(event)
 	# The WM can swallow a key release (Alt+click); mouse events carry the real modifiers
 	if event is InputEventMouse:
 		_modifier_stale = _raw_modifier_down() and not _picker_modifier_held(event)
@@ -2336,6 +2470,9 @@ func _cells_in_area(area: Rect2i) -> Array:
 
 func canvas_mouse_exit() -> void:
 	draw_overlay = false
+	_collision_tip_ready = false
+	if _collision_tip_timer != null:
+		_collision_tip_timer.stop()
 	update_overlay.emit()
 
 
@@ -2888,7 +3025,8 @@ func _raw_modifier_down() -> bool:
 
 ## True when a left click would pick instead of paint.
 func picker_armed() -> bool:
-	if tilemap == null or _map_select_active():
+	# Collisions pick only in Stamp (a tile's shape); Custom data's picker click takes a tile's fields.
+	if tilemap == null or _map_select_active() or (_collision_mode() and not _collision_stamp_mode):
 		return false
 	return _picker_active() or picker_modifier_down()
 
@@ -2917,7 +3055,7 @@ func _select_entry(id: int) -> void:
 # Visible while a pick is armed.
 func _sync_select_layer() -> void:
 	if _picker_select_layer != null:
-		_picker_select_layer.visible = _picker_active() or _picker_lit
+		_picker_select_layer.visible = (_picker_active() or _picker_lit) and not (_collision_mode() or _data_mode())
 
 
 func _update_picker_tooltip() -> void:
@@ -3238,10 +3376,10 @@ func _ask_unlock(layer: TileMapLayer) -> void:
 	var label := str(layer.name).trim_prefix("_")
 	var kind: String = SUPPORT_KIND.get(label, "object layers" if label.begins_with("Mass") else "generated tiles")
 	var parent := layer.get_parent()
-	_unlock_dialog.dialog_text = ("%s holds the %s that BetterTileEditor generates from %s. "
+	_unlock_dialog.dialog_text = ("%s holds the %s that Better Tile Editor generates from %s. "
 		+ "It is locked so the generator can keep it in step.\n\n"
 		+ "Unlock it to edit it by hand?\n\n"
-		+ "While it is unlocked BetterTileEditor stops regenerating it: changes to %s will no "
+		+ "While it is unlocked Better Tile Editor stops regenerating it: changes to %s will no "
 		+ "longer update this layer, so the two can fall out of step. To hand it back, lock it "
 		+ "again from the Scene tree; the next rebuild regenerates it and your hand edits are lost.") \
 		% [layer.name, kind, parent.name, parent.name]
@@ -3822,7 +3960,8 @@ func _offer_first_wall() -> void:
 	CLIFF_TERRAIN.set_rows_override(tilemap, height)
 	_rebuild_cliffs_now()
 	_sync_cliff_rows()
-	_say(tr("This layer is on its own, so it is the base and grows no wall. Its wall height is set to %d to show the sheet working; `rows` in the toolbar changes it, 0 turns it off.") % height)
+	# Said in passing: the wall appeared on its own, and Height in the toolbar is where to change it.
+	EditorInterface.get_editor_toaster().push_toast(tr("Cliff walls shown on this layer, %d high. Change it with Height in the toolbar.") % height)
 
 
 func _on_rebuild_cliffs_pressed() -> void:
@@ -3837,7 +3976,7 @@ func _on_rebuild_cliffs_pressed() -> void:
 		if not CLIFF_TERRAIN.is_level(tilemap):
 			_say(tr("This layer paints no terrain with a cliff sheet, so there is nothing to build."))
 		elif CLIFF_TERRAIN.rows_for(tilemap) <= 0:
-			_say(tr("This layer's wall is zero rows tall. Set `rows`, or raise its level."))
+			_say(tr("This layer's wall height is 0. Raise Height in the toolbar, or the layer's level."))
 		else:
 			_say(tr("The faces on this layer already match the terrain. Nothing to rebuild."))
 		return
@@ -3937,7 +4076,7 @@ func show_unsupported(node: TileMap) -> void:
 	_unsupported_notice.visible = node != null
 	$VBox.visible = node == null
 	if node != null:
-		_unsupported_notice.text = "%s is a TileMap node. BetterTileEditor does not support TileMap nodes, only TileMapLayer nodes.\n\n%s" % [node.name, TILEMAP_CONVERT_HINT]
+		_unsupported_notice.text = "%s is a TileMap node. Better Tile Editor does not support TileMap nodes, only TileMapLayer nodes.\n\n%s" % [node.name, TILEMAP_CONVERT_HINT]
 
 
 const OPTION_LABELS := {
@@ -3945,9 +4084,11 @@ const OPTION_LABELS := {
 	HIDE_NATIVE_TILES_SETTING: "Hide Godot Tiles tab",
 	HIDE_NATIVE_PATTERNS_SETTING: "Hide Godot Patterns tab",
 	HIDE_NATIVE_TERRAINS_SETTING: "Hide Godot Terrains tab",
-	RENAME_TAB_SETTING: "Rename BetterTileEditor to Tiles, like a badass",
+	RENAME_TAB_SETTING: "Rename Better Tile Editor and TileMap to Tiles, like a badass",
 	SHOW_TILE_GRID_SETTING: "Show tile grid",
+	SHOW_EMPTY_ATLAS_SETTING: "Show the atlases' empty space",
 	SHOW_ZOOM_SETTING: "Show zoom control",
+	SHOW_TOOL_NAMES_SETTING: "Show tool names in the toolbar",
 	HIDE_SUPPORT_SETTING: "Hide support layers in scene tree",
 	HIDE_TYPE_ICONS_SETTING: "Hide terrain type icons in the list",
 	SHOW_HIDDEN_SETTING: "Show the _hidden group (terrains the slope set-up makes)",
@@ -3959,6 +4100,8 @@ var _option_checks := {}
 var _rebuild_cliffs_button: Button
 var _picker_modifier_options: OptionButton
 var _reload_button: Button
+var _collision_color_button: ColorPickerButton
+var _collision_on_map_check: CheckBox
 
 
 func _add_options_button() -> void:
@@ -3974,6 +4117,7 @@ func _add_options_button() -> void:
 		settings.set_setting(PICKER_MODIFIER_SETTING, PickerModifier.ALT)
 	settings.set_initial_value(PICKER_MODIFIER_SETTING, PickerModifier.ALT, false)
 	tile_view.show_grid = bool(settings.get_setting(SHOW_TILE_GRID_SETTING))
+	tile_view.trim_empty = not bool(settings.get_setting(SHOW_EMPTY_ATLAS_SETTING))
 	zoom_slider_container.visible = bool(settings.get_setting(SHOW_ZOOM_SETTING))
 	var options := Button.new()
 	options.name = "Options"
@@ -4003,13 +4147,21 @@ func _build_options_window() -> void:
 	var settings := EditorInterface.get_editor_settings()
 	_options_window = AcceptDialog.new()
 	_options_window.name = "OptionsWindow"
-	_options_window.title = "BetterTileEditor options"
+	_options_window.title = "Better Tile Editor options"
 	_options_window.ok_button_text = "Close"
 	_options_window.exclusive = false
 	_options_window.transient = true
+	var columns := HBoxContainer.new()
+	columns.add_theme_constant_override("separation", 14)
+	_options_window.add_child(columns)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 6)
-	_options_window.add_child(box)
+	columns.add_child(box)
+	columns.add_child(VSeparator.new())
+	var side := VBoxContainer.new()
+	side.add_theme_constant_override("separation", 6)
+	side.custom_minimum_size.x = 300
+	columns.add_child(side)
 
 	box.add_child(_options_heading("Interface"))
 	for setting in OPTION_LABELS:
@@ -4021,8 +4173,7 @@ func _build_options_window() -> void:
 		box.add_child(check)
 		_option_checks[setting] = check
 
-	box.add_child(HSeparator.new())
-	box.add_child(_options_heading("Tile picker"))
+	side.add_child(_options_heading("Tile picker"))
 	var row := HBoxContainer.new()
 	var label := Label.new()
 	label.text = "Pick with click while holding"
@@ -4037,27 +4188,44 @@ func _build_options_window() -> void:
 		settings.set_setting(PICKER_MODIFIER_SETTING, index)
 		_update_picker_tooltip())
 	row.add_child(_picker_modifier_options)
-	box.add_child(row)
+	side.add_child(row)
 
-	box.add_child(HSeparator.new())
-	box.add_child(_options_heading("Cliffs"))
+	side.add_child(HSeparator.new())
+	side.add_child(_options_heading("Collisions"))
+	var color_row := HBoxContainer.new()
+	var color_label := Label.new()
+	color_label.text = "Overlay colour and opacity"
+	color_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	color_row.add_child(color_label)
+	_collision_color_button = ColorPickerButton.new()
+	_collision_color_button.name = "CollisionColor"
+	_collision_color_button.custom_minimum_size = Vector2(48, 0)
+	_collision_color_button.edit_alpha = true
+	_collision_color_button.color_changed.connect(func(color: Color) -> void:
+		settings.set_setting(COLLISIONS.OVERLAY_COLOR_SETTING, color)
+		_sync_collision_mode())
+	color_row.add_child(_collision_color_button)
+	side.add_child(color_row)
+	_collision_on_map_check = CheckBox.new()
+	_collision_on_map_check.name = "CollisionOnMap"
+	_collision_on_map_check.text = "Show collisions on the map too"
+	_collision_on_map_check.focus_mode = Control.FOCUS_NONE
+	_collision_on_map_check.toggled.connect(func(on: bool) -> void:
+		settings.set_setting(COLLISIONS.OVERLAY_ON_MAP_SETTING, on)
+		update_overlay.emit())
+	side.add_child(_collision_on_map_check)
+
+	# Actions, not settings, kept apart from them. Slopes are set up from the right-click
+	# menu of a Match tiles terrain, where they are used.
+	side.add_child(HSeparator.new())
+	side.add_child(_options_heading("Actions"))
 	_rebuild_cliffs_button = Button.new()
 	_rebuild_cliffs_button.text = "Rebuild cliff faces…"
 	_rebuild_cliffs_button.tooltip_text = "Preview and rebuild the generated cliff faces on the selected layer."
 	_rebuild_cliffs_button.pressed.connect(func() -> void:
 		_options_window.hide()
 		_on_rebuild_cliffs_pressed())
-	box.add_child(_rebuild_cliffs_button)
-
-	box.add_child(HSeparator.new())
-	box.add_child(_options_heading("Slopes"))
-	var slopes := Button.new()
-	slopes.text = "Set up slopes…"
-	slopes.tooltip_text = "Pick the terrains that draw steep and gentle slopes. Once all are set,\nthe slope tool shows in the toolbar for those terrains."
-	slopes.pressed.connect(func() -> void:
-		_options_window.hide()
-		_open_slope_roles())
-	box.add_child(slopes)
+	side.add_child(_rebuild_cliffs_button)
 
 	_options_window.about_to_popup.connect(_sync_options_window)
 	add_child(_options_window)
@@ -4071,7 +4239,7 @@ func _options_heading(text: String) -> Label:
 
 
 func _open_options() -> void:
-	_options_window.popup_centered(Vector2i(420, 0))
+	_options_window.popup_centered(Vector2i(820, 0))
 
 
 func _sync_options_window() -> void:
@@ -4079,6 +4247,8 @@ func _sync_options_window() -> void:
 	for setting in _option_checks:
 		_option_checks[setting].set_pressed_no_signal(bool(settings.get_setting(setting)))
 	_picker_modifier_options.select(_picker_modifier())
+	_collision_color_button.color = COLLISIONS.overlay_color()
+	_collision_on_map_check.set_pressed_no_signal(COLLISIONS.overlay_on_map())
 	_rebuild_cliffs_button.disabled = tilemap == null or tileset == null
 
 
@@ -4086,8 +4256,13 @@ func _set_option(enabled: bool, setting: String) -> void:
 	var settings := EditorInterface.get_editor_settings()
 	_store_view_mode(setting, enabled)
 	tile_view.show_grid = bool(settings.get_setting(SHOW_TILE_GRID_SETTING))
+	if setting == SHOW_EMPTY_ATLAS_SETTING:
+		tile_view.trim_empty = not enabled
+		tile_view.queue_redraw()
 	zoom_slider_container.visible = bool(settings.get_setting(SHOW_ZOOM_SETTING))
 	_reload_button.visible = bool(settings.get_setting(SHOW_REFRESH_SETTING))
+	if setting == SHOW_TOOL_NAMES_SETTING:
+		_apply_tool_names()
 	if setting in [HIDE_TYPE_ICONS_SETTING, SHOW_HIDDEN_SETTING, HIDE_SCENES_SETTING] and tileset != null:
 		rebuild_terrain_list()
 	options_changed.emit()
@@ -4309,6 +4484,12 @@ func _fill_by_sight() -> bool:
 #region the scatter bag
 
 const SINGLE_BAG_SCRIPT := preload("res://addons/better-tile-editor/editor/SingleTileBag.gd")
+const QUICK_MATCH := preload("res://addons/better-tile-editor/editor/QuickMatch.gd")
+const QUICK_ANIMATION_SCRIPT := preload("res://addons/better-tile-editor/editor/QuickAnimation.gd")
+const COVERAGE := preload("res://addons/better-tile-editor/editor/TerrainCoverage.gd")
+const COVERAGE_WINDOW := preload("res://addons/better-tile-editor/editor/CoverageWindow.gd")
+const QUARTER_PIECES := preload("res://addons/better-tile-editor/editor/QuarterPieces.gd")
+const QUICK_MATCH_PREVIEW := preload("res://addons/better-tile-editor/editor/QuickMatchPreview.gd")
 var _single_bag: HBoxContainer
 var _bag_column: VBoxContainer
 var _add_favorite_button: Button
@@ -4336,7 +4517,7 @@ func _build_scatter_bag() -> void:
 	var toolbar := replace_button.get_parent()
 	toolbar.add_child(_add_favorite_button)
 	toolbar.move_child(_add_favorite_button, replace_button.get_index() + 1)
-	tile_view.favorite_requested.connect(_add_single_favorite)
+	tile_view.favorite_requested.connect(_favorite_from_atlas)
 	_build_quick_terrain_buttons(toolbar, _add_favorite_button.get_index() + 1)
 	_single_bag.hide()
 	_bag_column.hide()
@@ -4399,6 +4580,12 @@ func _sync_scatter_outlines() -> void:
 
 
 func _on_scatter_picked(source_id: int, origin: Vector2i, block_size: Vector2i) -> void:
+	if _collision_mode():
+		_open_collision_shape(source_id, origin, block_size)
+		return
+	if _data_mode():
+		_data_select_box(source_id, origin, block_size, Input.is_key_pressed(KEY_SHIFT))
+		return
 	if _is_single(selected_entry):
 		_set_single_tile(source_id, origin, block_size)
 		return
@@ -4558,10 +4745,33 @@ func _scatter_paint(cells: Array, erasing: bool, merged: bool) -> void:
 #endregion
 
 
+## The pin button keeps the brush picked.
 func _add_single_favorite() -> void:
 	if not _is_single(selected_entry):
 		return
-	var entry := BetterTerrain.single_block_of(tileset, selected_entry)
+	_add_favorite_entry(BetterTerrain.single_block_of(tileset, selected_entry))
+
+
+## A right click in the atlas keeps the tile under the mouse, or the whole group picked
+## when the click lands inside it; nothing has to be picked first.
+func _favorite_from_atlas(source_id: int, coord: Vector2i, alternate: int) -> void:
+	if not _is_single(selected_entry):
+		return
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src == null:
+		return
+	var origin := src.get_tile_at_coords(coord)
+	if origin == Vector2i(-1, -1):
+		return
+	var block := BetterTerrain.single_block_of(tileset, selected_entry)
+	if not block.is_empty() and block.size != Vector2i.ONE and block.source == source_id \
+			and block.alt == alternate and Rect2i(block.origin, block.size).has_point(coord):
+		_add_favorite_entry(block)
+		return
+	_add_favorite_entry({source = source_id, origin = origin, alt = alternate, size = src.get_tile_size_in_atlas(origin)})
+
+
+func _add_favorite_entry(entry: Dictionary) -> void:
 	if entry.is_empty():
 		return
 	var entries: Array = tileset.get_meta(SINGLE_BAG_SCRIPT.META, []).duplicate(true)
@@ -4660,7 +4870,7 @@ func _arrange_toolbar() -> void:
 	var terrain_options := HBoxContainer.new()
 	terrain_options.name = "TerrainOptions"
 	context.add_child(terrain_options)
-	for control: Control in [_picker, _fill_rule, _fill_seen, _fill_layer, _slope_autofill, _slope_freehand, _slope_smooth, _add_favorite_button, _quick_terrain_box, select_tiles, paint_type, paint_terrain, object_lone, object_joined, _oven_button, _exemplar_button, paint_symmetry, symmetry_options, _cliff_button, live_test_button]:
+	for control: Control in [_picker, _fill_rule, _fill_seen, _fill_layer, _slope_autofill, _slope_freehand, _slope_smooth, _add_favorite_button, _quick_terrain_box, select_tiles, paint_type, paint_terrain, object_lone, object_joined, _oven_button, _exemplar_button, paint_symmetry, symmetry_options, _cliff_button, live_test_button, _collision_mode_box, _data_panel.mode_bar]:
 		control.reparent(terrain_options)
 	_picker_select_layer.reparent(terrain_options)
 	terrain_options.move_child(_picker_select_layer, _picker.get_index() + 1)
@@ -4812,13 +5022,13 @@ enum QuickKind { MATCH, PATCH, OBJECT, SCATTER }
 const PATCH_MIN_SIZE := Vector2i(5, 5)
 const QUICK_LABELS := {
 	QuickKind.MATCH: ["Create quick terrain", "MatchTiles.svg",
-		"Create a Match tiles terrain from the selected block: every tile joins, by its\nsides, the neighbours inside the block, like a 9-slice (square tiles only)."],
+		"Create a Match tiles terrain from the selected tiles, reading its joins from the drawing:\na side joins where the fill reaches it. Several shapes can be selected at once;\ncorners are read too when an inner corner is drawn (square tiles only)."],
 	QuickKind.PATCH: ["Create Patch", "Exemplar.svg",
 		"Create a Patch terrain that reads the selected block like a pond: the outer ring is\nthe bank around the painted shape, the inside is the water and its rim (5×5 or more).\nEmpty cells in the block (a rounded drawing's corners) are made into tiles first."],
 	QuickKind.OBJECT: ["Create Object", "ObjectTerrain.svg",
 		"Create an Object terrain whose drawing is the whole selection, e.g. a tree.\nEmpty cells in it are made into tiles first. Mark a joined block later to let objects fuse."],
-	QuickKind.SCATTER: ["Create Scatter", "Scatter.svg",
-		"Create a Scatter terrain whose bag holds every tile of the selection."],
+	QuickKind.SCATTER: ["Create quick scatter", "Scatter.svg",
+		"Create a Scatter terrain whose bag holds every tile of the selection (two or more)."],
 }
 const QUICK_TYPES := {
 	QuickKind.MATCH: BetterTerrain.TerrainType.MATCH_TILES,
@@ -4837,6 +5047,7 @@ const SQUARE_SIDES := {
 
 var _quick_terrain_box: HBoxContainer
 var _quick_buttons := {}
+var _quick_animation_button: Button
 
 
 func _build_quick_terrain_buttons(parent: Control, at: int) -> void:
@@ -4850,9 +5061,16 @@ func _build_quick_terrain_buttons(parent: Control, at: int) -> void:
 		b.focus_mode = Control.FOCUS_NONE
 		_icon_or_text(b, ICON_DIR + QUICK_LABELS[kind][1], [], QUICK_LABELS[kind][0])
 		b.tooltip_text = "%s\n%s" % [QUICK_LABELS[kind][0], QUICK_LABELS[kind][2]]
-		b.pressed.connect(_create_quick_terrain.bind(kind))
+		b.pressed.connect(_on_quick_pressed.bind(kind))
 		_quick_terrain_box.add_child(b)
 		_quick_buttons[kind] = b
+	_quick_animation_button = Button.new()
+	_quick_animation_button.name = "QuickAnimation"
+	_quick_animation_button.flat = true
+	_quick_animation_button.focus_mode = Control.FOCUS_NONE
+	_icon_or_text(_quick_animation_button, "", ["Animation"], QUICK_ANIMATION_LABEL[0])
+	_quick_animation_button.pressed.connect(_open_quick_animation)
+	_quick_terrain_box.add_child(_quick_animation_button)
 	parent.add_child(_quick_terrain_box)
 	parent.move_child(_quick_terrain_box, at)
 	_quick_terrain_box.hide()
@@ -4891,6 +5109,16 @@ func _quick_refusal(kind: int, block: Dictionary) -> String:
 					return "The block has gaps inside a bigger tile; select one where every cell is free or holds a tile."
 			if kind == QuickKind.MATCH and tileset.tile_shape != TileSet.TILE_SHAPE_SQUARE:
 				return "Only for square tiles."
+		QuickKind.SCATTER:
+			# A bag of one tile scatters nothing but copies of it.
+			var found := {}
+			for y in range(rect.position.y, rect.end.y):
+				for x in range(rect.position.x, rect.end.x):
+					var at := src.get_tile_at_coords(Vector2i(x, y))
+					if at != Vector2i(-1, -1):
+						found[at] = true
+			if found.size() < 2:
+				return "Select at least two tiles to scatter."
 		QuickKind.OBJECT:
 			if rect.size.x * rect.size.y < 2:
 				return "Select the whole drawing, at least two tiles."
@@ -4914,6 +5142,9 @@ func _sync_quick_terrain_buttons() -> void:
 		_quick_buttons[kind].disabled = not why.is_empty()
 		_quick_buttons[kind].tooltip_text = "%s\n%s" % [QUICK_LABELS[kind][0], QUICK_LABELS[kind][2]] \
 			+ ("" if why.is_empty() else "\n\n" + why)
+	var animation_why := _quick_animation_refusal(block)
+	_quick_animation_button.disabled = not animation_why.is_empty()
+	_quick_animation_button.tooltip_text = "%s\n%s" % QUICK_ANIMATION_LABEL + ("" if animation_why.is_empty() else "\n\n" + animation_why)
 
 
 func _quick_terrain_name(source_id: int, kind: int) -> String:
@@ -4932,7 +5163,45 @@ func _quick_terrain_name(source_id: int, kind: int) -> String:
 	return candidate
 
 
-func _create_quick_terrain(kind: int) -> void:
+# Match shows what it will make first; the other kinds are made at once.
+func _on_quick_pressed(kind: int) -> void:
+	if kind != QuickKind.MATCH:
+		_create_quick_terrain(kind)
+		return
+	var block := _quick_block()
+	if block.is_empty() or not _quick_refusal(kind, block).is_empty():
+		return
+	var src := tileset.get_source(block.source) as TileSetAtlasSource
+	var tiles := []
+	for y in range(block.origin.y, block.origin.y + block.size.y):
+		for x in range(block.origin.x, block.origin.x + block.size.x):
+			var c := Vector2i(x, y)
+			if src.has_tile(c) and src.has_alternative_tile(c, block.alt) and not QUICK_MATCH.blank(src, c):
+				tiles.append(c)
+	if tiles.is_empty():
+		return
+	var owners := _terrain_owners(src, tiles, block.alt)
+	if not owners.is_empty():
+		_show_quick_error(owners)
+		return
+	var dialog := QUICK_MATCH_PREVIEW.new()
+	add_child(dialog)
+	dialog.chosen.connect(func(bits: Dictionary, color: Color, follow: bool):
+		var options := {bits = bits, color = color}
+		var before := BetterTerrain.terrain_count(tileset)
+		_create_quick_terrain(QuickKind.MATCH, options)
+		if follow and BetterTerrain.terrain_count(tileset) > before:
+			_open_coverage.call_deferred(BetterTerrain.terrain_count(tileset) - 1))
+	dialog.close_requested.connect(dialog.queue_free)
+	dialog.confirmed.connect(dialog.queue_free, CONNECT_DEFERRED)
+	dialog.canceled.connect(dialog.queue_free)
+	dialog.popup_centered(Vector2i(900, 560) * EditorInterface.get_editor_scale())
+	dialog.setup(src, QUICK_MATCH.read(src, tiles), QUICK_MATCH.contrast_color(src, tiles))
+
+
+## options: bits (Match joins as adjusted, {coords: [bits]}), name, color; otherwise read and
+## worked out here.
+func _create_quick_terrain(kind: int, options := {}) -> void:
 	var block := _quick_block()
 	if block.is_empty() or not _quick_refusal(kind, block).is_empty():
 		return
@@ -4944,6 +5213,9 @@ func _create_quick_terrain(kind: int) -> void:
 			var c := Vector2i(x, y)
 			if src.has_tile(c) and src.has_alternative_tile(c, block.alt):
 				tiles.append(c)
+	# Tiles with nothing drawn are gaps between shapes, not pieces of the terrain.
+	if kind == QuickKind.MATCH:
+		tiles = tiles.filter(func(c: Vector2i): return not QUICK_MATCH.blank(src, c))
 	# Patch and Object read the whole rectangle, so empty cells become tiles.
 	var new_tiles: Array = _atlas_gaps(src, rect) if kind in [QuickKind.PATCH, QuickKind.OBJECT] else []
 	if tiles.is_empty() and new_tiles.is_empty():
@@ -4962,15 +5234,16 @@ func _create_quick_terrain(kind: int) -> void:
 		if tileset.has_meta(BetterTerrain.TERRAIN_META) else null
 	var before_tables = tileset.get_meta(EXEMPLAR_DATA.META).duplicate(true) \
 		if tileset.has_meta(EXEMPLAR_DATA.META) else null
-	var terrain_name := _quick_terrain_name(block.source, kind)
-	var color := Color.from_hsv(randf(), 0.3 + 0.7 * randf(), 0.6 + 0.4 * randf())
+	var terrain_name: String = options.get("name", _quick_terrain_name(block.source, kind))
+	var color: Color = options.get("color", QUICK_MATCH.contrast_color(src, tiles if not tiles.is_empty() else new_tiles))
 	undo_manager.create_action(tr("Create %s") % terrain_name, UndoRedo.MERGE_DISABLE, tileset)
-	undo_manager.add_do_method(self, &"perform_quick_terrain", kind, terrain_name, color, block.source, rect, block.alt, tiles, new_tiles)
+	undo_manager.add_do_method(self, &"perform_quick_terrain", kind, terrain_name, color, block.source, rect, block.alt, tiles, new_tiles,
+		options.get("bits", {}))
 	undo_manager.add_undo_method(self, &"_restore_quick_terrain", before_meta, before_tables, tile_metas, block.source, new_tiles)
 	undo_manager.commit_action()
 
 
-func perform_quick_terrain(kind: int, terrain_name: String, color: Color, source_id: int, rect: Rect2i, alt: int, tiles: Array, new_tiles: Array = []) -> void:
+func perform_quick_terrain(kind: int, terrain_name: String, color: Color, source_id: int, rect: Rect2i, alt: int, tiles: Array, new_tiles: Array = [], bits: Dictionary = {}) -> void:
 	var src := tileset.get_source(source_id) as TileSetAtlasSource
 	tiles = tiles.duplicate()
 	for c: Vector2i in new_tiles:
@@ -4995,6 +5268,8 @@ func perform_quick_terrain(kind: int, terrain_name: String, color: Color, source
 			BetterTerrain.set_tile_terrain_type(tileset, src.get_tile_data(c, alt), id)
 	match kind:
 		QuickKind.MATCH:
+			# Joins read from the drawing; without a readable texture, the neighbours in the block.
+			var drawn: Dictionary = bits if not bits.is_empty() else QUICK_MATCH.read(src, tiles)
 			var inside := {}
 			for c in tiles:
 				inside[c] = true
@@ -5006,6 +5281,10 @@ func perform_quick_terrain(kind: int, terrain_name: String, color: Color, source
 						BetterTerrain.remove_tile_peering_type(tileset, td, key, type)
 					for type in BetterTerrain.tile_not_peering_types(td, key):
 						BetterTerrain.remove_tile_not_peering_type(tileset, td, key, type)
+				if drawn.has(c):
+					for bit: int in drawn[c]:
+						BetterTerrain.add_tile_peering_type(tileset, td, bit, id)
+					continue
 				for neighbor in SQUARE_SIDES:
 					if inside.has(c + SQUARE_SIDES[neighbor]):
 						BetterTerrain.add_tile_peering_type(tileset, td, neighbor, id)
@@ -5087,5 +5366,1339 @@ func _restore_quick_terrain(before_meta, before_tables, tile_metas: Array, sourc
 	tileset.emit_changed()
 	rebuild_terrain_list()
 	update_tile_view_paint()
+
+#endregion
+
+
+#region Quick animation from a single-tile block
+
+const QUICK_ANIMATION_LABEL := ["Quick animation",
+	"Split the selected tiles into equal frames and animate the first one. A frame can be\none tile or a whole block of them. Opens a window to set the frames, speed and mode."]
+
+
+## The selection in tiles of the first tile's size, or {} when it doesn't start on a tile or split into them.
+func _quick_animation_layout(block: Dictionary) -> Dictionary:
+	var src := tileset.get_source(block.source) as TileSetAtlasSource
+	if src.get_tile_at_coords(block.origin) != block.origin:
+		return {}
+	var tile_size := src.get_tile_size_in_atlas(block.origin)
+	var cells: Vector2i = block.size
+	if cells.x % tile_size.x != 0 or cells.y % tile_size.y != 0:
+		return {}
+	return {src = src, tile_size = tile_size, grid = cells / tile_size}
+
+
+## Why the selection can't become an animation at all, or "".
+func _quick_animation_refusal(block: Dictionary) -> String:
+	if block.alt != 0:
+		return "Animations belong to the base tile; select base tiles, not alternatives."
+	var layout := _quick_animation_layout(block)
+	if layout.is_empty():
+		return "Start the selection on a tile, and make it a whole number of tiles of that size."
+	if layout.grid.x * layout.grid.y < 2:
+		return "Select at least two tiles, one per frame."
+	return ""
+
+
+## Which tiles play (those in the first frame) and which go (those in the other frames), or {error}.
+func _quick_animation_plan(block: Dictionary, frame_cells: Vector2i, frames: int) -> Dictionary:
+	var src := tileset.get_source(block.source) as TileSetAtlasSource
+	var rect := Rect2i(block.origin, block.size)
+	var grid: Vector2i = rect.size / frame_cells
+	if frames < 2 or frames > grid.x * grid.y:
+		return {error = "The selection holds %d frames of that size." % (grid.x * grid.y)}
+	var first := Rect2i(block.origin, frame_cells)
+	var bases := {}
+	for y in range(first.position.y, first.end.y):
+		for x in range(first.position.x, first.end.x):
+			var holder := src.get_tile_at_coords(Vector2i(x, y))
+			if holder == Vector2i(-1, -1) or bases.has(holder):
+				continue
+			if not first.encloses(Rect2i(holder, src.get_tile_size_in_atlas(holder))):
+				return {error = "A tile of the first frame crosses into the next one; frames must hold whole tiles."}
+			bases[holder] = true
+	var doomed := {}
+	for i in range(1, frames):
+		@warning_ignore("integer_division")
+		var corner: Vector2i = block.origin + Vector2i(i % grid.x, i / grid.x) * frame_cells
+		for y in frame_cells.y:
+			for x in frame_cells.x:
+				var holder := src.get_tile_at_coords(corner + Vector2i(x, y))
+				if holder == Vector2i(-1, -1) or bases.has(holder):
+					continue
+				if not rect.has_point(holder):
+					return {error = "A tile under the frames starts outside the selection; select whole tiles only."}
+				doomed[holder] = true
+	return {bases = bases.keys(), doomed = doomed.keys(), columns = grid.x}
+
+
+func _open_quick_animation() -> void:
+	var block := _quick_block()
+	if block.is_empty() or not _quick_animation_refusal(block).is_empty():
+		return
+	var layout := _quick_animation_layout(block)
+	var dialog := QUICK_ANIMATION_SCRIPT.new()
+	add_child(dialog)
+	dialog.setup(layout.src, block.origin, layout.tile_size, layout.grid,
+		func(frame_cells: Vector2i, frames: int) -> String: return _quick_animation_plan(block, frame_cells, frames).get("error", ""))
+	dialog.animation_accepted.connect(_create_quick_animation.bind(block))
+	dialog.popup_centered()
+
+
+func _create_quick_animation(frame_cells: Vector2i, frames: int, speed: float, mode: int, block: Dictionary) -> void:
+	var plan := _quick_animation_plan(block, frame_cells, frames)
+	if plan.has("error"):
+		return
+	var busy := _show_busy(tr("Creating animation…"))
+	# Let the notice paint before the work holds the editor.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var src := tileset.get_source(block.source) as TileSetAtlasSource
+	var snapshots := _tile_snapshots(src, plan.doomed + plan.bases)
+	var doomed_snapshots := []
+	for c: Vector2i in plan.doomed:
+		doomed_snapshots.append(snapshots[c])
+	var base_snapshots := []
+	for c: Vector2i in plan.bases:
+		base_snapshots.append(snapshots[c].filter(func(p): return str(p[0]).get_slice("/", 1).begins_with("animation_")))
+	var was: Dictionary = BetterTerrain.single_block_of(tileset, selected_entry)
+	undo_manager.create_action(tr("Create tile animation"), UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(self, &"perform_quick_animation", block.source, plan.bases, plan.doomed, frame_cells, plan.columns, frames, speed, mode)
+	undo_manager.add_do_method(BetterTerrain, &"set_single_tile", tileset, block.source, block.origin, 0, frame_cells, false)
+	undo_manager.add_undo_method(self, &"_restore_quick_animation", block.source, plan.bases, base_snapshots, doomed_snapshots)
+	undo_manager.add_undo_method(BetterTerrain, &"set_single_tile", tileset, was.source, was.origin, was.alt, was.size, false)
+	undo_manager.add_do_method(self, &"_after_single_pick")
+	undo_manager.add_undo_method(self, &"_after_single_pick")
+	undo_manager.commit_action()
+	busy.hide()
+	busy.queue_free()
+
+
+func _show_busy(text: String) -> PopupPanel:
+	var panel := PopupPanel.new()
+	var label := Label.new()
+	label.text = text
+	label.custom_minimum_size = Vector2(220, 48)
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	panel.add_child(label)
+	add_child(panel)
+	panel.popup_centered()
+	return panel
+
+
+func perform_quick_animation(source_id: int, bases: Array, doomed: Array, frame_cells: Vector2i, columns: int, frames: int, speed: float, mode: int) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	for c: Vector2i in doomed:
+		if src.has_tile(c):
+			src.remove_tile(c)
+	# Shrink every old animation first: its frames may sit where another tile's new ones go.
+	for c: Vector2i in bases:
+		src.set_tile_animation_frames_count(c, 1)
+	for c: Vector2i in bases:
+		# Godot steps size + separation per frame, so a frame block of 4 tiles is 1 + 3.
+		src.set_tile_animation_separation(c, frame_cells - src.get_tile_size_in_atlas(c))
+		src.set_tile_animation_columns(c, columns)
+		src.set_tile_animation_speed(c, speed)
+		src.set_tile_animation_mode(c, mode)
+		src.set_tile_animation_frames_count(c, frames)
+		for i in frames:
+			src.set_tile_animation_frame_duration(c, i, 1.0)
+	_after_atlas_change()
+
+
+func _restore_quick_animation(source_id: int, bases: Array, base_snapshots: Array, doomed_snapshots: Array) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	for c: Vector2i in bases:
+		src.set_tile_animation_frames_count(c, 1)
+	for snapshot: Array in doomed_snapshots:
+		_apply_snapshot(src, snapshot)
+	for snapshot: Array in base_snapshots:
+		_apply_snapshot(src, snapshot)
+	_after_atlas_change()
+
+
+## Every stored property of each tile, alternatives and their metadata included, in load order, by coords.
+## One pass over the property list: it holds the whole atlas, so a pass per tile is quadratic.
+func _tile_snapshots(src: TileSetAtlasSource, coords: Array) -> Dictionary:
+	var out := {}
+	var by_prefix := {}
+	for c: Vector2i in coords:
+		out[c] = []
+		by_prefix["%d:%d" % [c.x, c.y]] = c
+	for p in src.get_property_list():
+		var property_name: String = p.name
+		var tile := property_name.get_slice("/", 0)
+		if not by_prefix.has(tile) or property_name.get_slice_count("/") < 2:
+			continue
+		var value = src.get(property_name)
+		out[by_prefix[tile]].append([property_name, value.duplicate(true) if value is Array or value is Dictionary else value])
+	return out
+
+
+func _apply_snapshot(src: TileSetAtlasSource, snapshot: Array) -> void:
+	for p: Array in snapshot:
+		src.set(p[0], p[1])
+
+
+func _after_atlas_change() -> void:
+	BetterTerrain._purge_cache(tileset)
+	tileset.emit_changed()
+	update_tile_view_paint()
+
+#endregion
+
+
+#region Collisions tool
+
+const COLLISIONS := preload("res://addons/better-tile-editor/editor/Collisions.gd")
+const COLLISION_PANEL_SCRIPT := preload("res://addons/better-tile-editor/editor/CollisionPanel.gd")
+## List id of the Collisions entry; below every TileCategory so it never names a terrain.
+const COLLISION_ENTRY := -10
+const COLLISION_COLOR := Color(0.85, 0.2, 0.2)
+## Beyond this many cells in view, only used cells are walked for the map overlay.
+const MAX_COLLISION_SCAN := 60000
+
+var _collision_panel: PanelContainer
+var _collision_layer_index := 0
+## Tiles changed by the stroke in progress: key -> [source_id, coords, state before].
+var _collision_stroke := {}
+var _collision_stroking := false
+var _collision_added_layer := false
+var _collision_solid := true
+var _collision_rect := false
+var _collision_from := Vector2i.ZERO
+var _tools_off_for_collisions: Array[Button] = []
+var _collision_mode_box: HBoxContainer
+## Resting the mouse on the map this long lists the shapes under it.
+const COLLISION_TIP_DELAY := 0.7
+var _collision_tip_timer: Timer
+var _collision_tip_ready := false
+## Where the mouse rests, in overlay coordinates.
+var _collision_tip_at := Vector2.ZERO
+var _collision_shape_mode := false
+## Stamp: clicks write the copied shape (Shapes.clipboard) instead of a full square.
+var _collision_stamp_mode := false
+var _collision_stamp_button: Button
+var _collision_action := ""
+var _collision_shape_window: Window
+const COLLISION_SHAPE_EDITOR_SCRIPT := preload("res://addons/better-tile-editor/editor/CollisionShapeEditor.gd")
+const SHAPES := preload("res://addons/better-tile-editor/editor/CollisionShapes.gd")
+
+
+## Solid: clicks make tiles a full square or clear. Shape: clicks open the shape editor.
+func _build_collision_mode_buttons() -> void:
+	_collision_mode_box = HBoxContainer.new()
+	_collision_mode_box.name = "CollisionModes"
+	_collision_mode_box.add_theme_constant_override("separation", 0)
+	var group := ButtonGroup.new()
+	for mode in [["Solid", "SolidBox", "Solid\nLeft click makes a tile a full square, right click clears it."],
+			["Shape", "ShapePolygon", "Shape\nClick a tile, or drag over a group in the atlas, to open the shape editor:\ndetect the collision from the sprite and edit its points."],
+			["Stamp", "ShapeStamp", "Stamp\nCopy one tile's collision shape onto others: the first click takes a tile's shape,\nthen a click or drag writes it on tiles and a right click clears them.\nAlt+click takes another tile's shape."]]:
+		var b := Button.new()
+		b.name = mode[0]
+		b.set_meta(&"tool_name", mode[0])
+		b.flat = true
+		b.toggle_mode = true
+		b.button_group = group
+		b.focus_mode = Control.FOCUS_NONE
+		b.button_pressed = mode[0] == "Solid"
+		_icon_or_text(b, ICON_DIR + mode[1] + ".svg", [], mode[0])
+		b.tooltip_text = mode[2]
+		b.toggled.connect(func(on: bool) -> void:
+			if on:
+				_collision_shape_mode = mode[0] == "Shape"
+				_collision_stamp_mode = mode[0] == "Stamp"
+				_sync_collision_mode())
+		_collision_mode_box.add_child(b)
+		if mode[0] == "Stamp":
+			_collision_stamp_button = b
+	$VBox/Toolbar.add_child(_collision_mode_box)
+	_collision_mode_box.hide()
+
+
+## Copies a tile's shape, on the edited physics layer, to paste or stamp elsewhere.
+func _copy_collision(source_id: int, coords: Vector2i) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src == null or not src.has_tile(coords):
+		return
+	var cells := src.get_tile_size_in_atlas(coords)
+	var lay: Dictionary = SHAPES.layout(src, coords, cells)
+	var found: Dictionary = SHAPES.gather(src, tileset, lay, _collision_physics_layer())
+	SHAPES.clipboard = SHAPES.make_clip(found.normal, found.one_way, found.margin, lay, cells)
+	_sync_collision_clipboard()
+
+
+func _sync_collision_clipboard() -> void:
+	if _collision_panel == null:
+		return
+	var copied: Dictionary = SHAPES.clipboard
+	var pick: String = PICKER_MODIFIER_NAMES[_picker_modifier()]
+	var text := SHAPES.describe_clip(copied)
+	if _collision_stamp_mode and copied.is_empty():
+		text = "Nothing copied yet: click a tile to take its shape."
+	_collision_panel.show_clipboard(text, copied, _collision_stamp_mode or not copied.is_empty())
+	if _collision_shape_mode:
+		_collision_panel.set_keys([["Click", "open the shape editor"], ["Drag in the atlas", "edit a group"]])
+	elif _collision_stamp_mode and copied.is_empty():
+		_collision_panel.set_keys([["Click a tile", "take its shape"], ["Right click", "clear"]])
+	elif _collision_stamp_mode:
+		_collision_panel.set_keys([["Left click", "paste the shape"], ["Right click", "clear"], ["%s + click" % pick, "take another shape"]])
+	else:
+		_collision_panel.set_keys([["Left click", "solid"], ["Right click", "clear"]])
+
+
+## Stamp takes the shape of the tile clicked: with nothing copied yet, or with the picker's key.
+func _collision_takes_shape(event: InputEventWithModifiers) -> bool:
+	return _collision_mode() and _collision_stamp_mode \
+		and (SHAPES.clipboard.is_empty() or _picker_modifier_held(event))
+
+
+func _open_collision_shape(source_id: int, origin: Vector2i, cells: Vector2i) -> void:
+	if tileset == null or not (tileset.get_source(source_id) is TileSetAtlasSource):
+		return
+	if is_instance_valid(_collision_shape_window):
+		_collision_shape_window.queue_free()
+	_collision_shape_window = COLLISION_SHAPE_EDITOR_SCRIPT.new()
+	get_tree().root.add_child(_collision_shape_window)
+	_collision_shape_window.setup(tileset, source_id, origin, cells, maxi(0, _collision_physics_layer()))
+	_collision_shape_window.apply_requested.connect(_apply_collision_shape)
+	_collision_shape_window.clipboard_changed.connect(_sync_collision_clipboard)
+	# The window's physics layer is the tool's: both show and paint the same one.
+	_collision_shape_window.physics_layer_changed.connect(func(index: int) -> void:
+		_collision_layer_index = index
+		_sync_collision_mode())
+	_collision_shape_window.physics_layer_add_requested.connect(func() -> void:
+		_add_collision_physics_layer()
+		if is_instance_valid(_collision_shape_window):
+			_collision_shape_window.show_physics_layer(tileset.get_physics_layers_count() - 1))
+	_collision_shape_window.popup_centered()
+
+
+## per_tile: {coords: [[points, one_way, margin], ...]}, for the base tile and the alternatives
+## the scope takes in. Physics layers are added up to the one written to.
+func _apply_collision_shape(source_id: int, layer: int, per_tile: Dictionary) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src == null:
+		return
+	var missing := maxi(0, layer + 1 - tileset.get_physics_layers_count())
+	var scope := COLLISIONS.alt_scope()
+	undo_manager.create_action(tr("Edit tile collision shape"), UndoRedo.MERGE_DISABLE, tileset)
+	for i in missing:
+		undo_manager.add_do_method(tileset, &"add_physics_layer")
+	for coords: Vector2i in per_tile:
+		if not src.has_tile(coords):
+			continue
+		var alts := COLLISIONS.target_alts(src, coords, scope)
+		undo_manager.add_do_method(self, &"_set_collision_state", source_id, coords, layer, COLLISIONS.shape_state(per_tile[coords], alts))
+		if missing == 0:
+			undo_manager.add_undo_method(self, &"_set_collision_state", source_id, coords, layer, COLLISIONS.tile_state(src, coords, layer, alts))
+	for i in missing:
+		undo_manager.add_undo_method(tileset, &"remove_physics_layer", tileset.get_physics_layers_count() + missing - 1 - i)
+	undo_manager.add_do_method(self, &"_sync_collision_mode")
+	undo_manager.add_undo_method(self, &"_sync_collision_mode")
+	undo_manager.commit_action()
+
+
+func _add_collision_physics_layer() -> void:
+	undo_manager.create_action(tr("Add physics layer"), UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(tileset, &"add_physics_layer")
+	undo_manager.add_undo_method(tileset, &"remove_physics_layer", tileset.get_physics_layers_count())
+	undo_manager.add_do_method(self, &"_sync_collision_mode")
+	undo_manager.add_undo_method(self, &"_sync_collision_mode")
+	undo_manager.commit_action()
+
+
+func _collision_entry_terrain() -> Dictionary:
+	return {id = COLLISION_ENTRY, name = "Collisions", color = COLLISION_COLOR, type = -1,
+		categories = [], icon = {}, group = "", object = {}, valid = true, collision = true,
+		tool_icon = ICON_DIR + "Collision.svg", tool_hint = "Collisions: mark which tiles are solid"}
+
+
+func _collision_mode() -> bool:
+	return selected_entry == COLLISION_ENTRY and tileset != null
+
+
+func _data_mode() -> bool:
+	return selected_entry == DATA_ENTRY and tileset != null
+
+
+func _build_collision_panel() -> void:
+	var editors := $VBox/HSplit/Editors
+	var atlas: Control = $VBox/HSplit/Editors/Panel
+	var row := HBoxContainer.new()
+	row.name = "AtlasRow"
+	row.add_theme_constant_override("separation", 0)
+	editors.add_child(row)
+	editors.move_child(row, atlas.get_index())
+	atlas.reparent(row)
+	atlas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_collision_panel = COLLISION_PANEL_SCRIPT.new()
+	row.add_child(_collision_panel)
+	_collision_panel.hide()
+	_build_data_panel(row)
+	_collision_panel.physics_layer_picked.connect(func(index: int) -> void:
+		_collision_layer_index = index
+		_sync_collision_mode()
+		if is_instance_valid(_collision_shape_window):
+			_collision_shape_window.show_physics_layer(index))
+	_collision_panel.bits_changed.connect(_set_collision_bits)
+	_collision_panel.all_layers_toggled.connect(func(on: bool) -> void:
+		COLLISIONS.set_show_all_layers(on)
+		update_overlay.emit())
+	_collision_tip_timer = Timer.new()
+	_collision_tip_timer.one_shot = true
+	_collision_tip_timer.wait_time = COLLISION_TIP_DELAY
+	_collision_tip_timer.timeout.connect(func() -> void:
+		_collision_tip_ready = true
+		update_overlay.emit())
+	add_child(_collision_tip_timer)
+	_build_collision_mode_buttons()
+	tile_view.collision_marked.connect(func(source_id: int, coord: Vector2i, solid: bool) -> void:
+		if not _collision_stroking:
+			_collision_begin()
+		_collision_mark(source_id, coord, solid))
+	tile_view.collision_stroke_ended.connect(_collision_end)
+	tile_view.collision_pick_check = func(event: InputEventWithModifiers) -> bool: return _collision_takes_shape(event)
+	tile_view.collision_copy_requested.connect(_copy_collision)
+	tile_view.collision_paste_requested.connect(func(source_id: int, coord: Vector2i) -> void:
+		if SHAPES.clipboard.is_empty():
+			return
+		_collision_begin()
+		_collision_stamp(source_id, coord)
+		_collision_end())
+
+
+## Physics layer the marks go to, or -1 when the tile set has none.
+func _collision_physics_layer() -> int:
+	var count := tileset.get_physics_layers_count() if tileset != null else 0
+	return clampi(_collision_layer_index, 0, count - 1) if count > 0 else -1
+
+
+func _sync_collision_mode() -> void:
+	if _collision_panel == null:
+		return
+	var collisions := _collision_mode()
+	var data := _data_mode()
+	# Both tools mark tiles with clicks; collision_mode carries those clicks in the atlas.
+	var on := collisions or data
+	tile_view.collision_mode = on
+	tile_view.collision_shape_mode = collisions and _collision_shape_mode
+	if on:
+		tile_view.pick_tiles = collisions and _collision_shape_mode
+	_collision_mode_box.visible = collisions
+	_sync_collision_clipboard()
+	tile_view.collision_layer = _collision_physics_layer() if collisions else -1
+	tile_view.collision_color = COLLISIONS.overlay_color()
+	_collision_panel.visible = collisions
+	if collisions:
+		_collision_panel.setup(tileset, _collision_physics_layer())
+	tile_view.data_mode = data
+	_data_panel.mode_bar.visible = data
+	tile_view.data_inspect = data and _data_inspecting()
+	if data:
+		tile_view.pick_tiles = _data_inspecting()
+	_data_panel.visible = data
+	if data:
+		_data_panel.setup(tileset)
+		_sync_data_marks()
+	if on:
+		select_tiles.visible = false
+		tile_view.dim_unassigned_tiles = false
+	# The toolbar's picker picks brushes for painting terrain; these tools have none to pick.
+	if _picker != null:
+		_picker.visible = not on
+	_sync_select_layer()
+	# Only the pencil and the rectangle make sense for marking tiles.
+	for button in _tools_off_for_collisions:
+		button.disabled = false
+	_tools_off_for_collisions.clear()
+	if on:
+		for button: Button in [_map_select, line_button, fill_button, _slope_button, replace_button]:
+			if button == null:
+				continue
+			button.disabled = true
+			_tools_off_for_collisions.append(button)
+		if not (draw_button.button_pressed or rectangle_button.button_pressed):
+			draw_button.button_pressed = true
+	tile_view.queue_redraw()
+	update_overlay.emit()
+
+
+func _collision_canvas_input(event: InputEvent) -> bool:
+	if not (event is InputEventMouseButton or event is InputEventMouseMotion):
+		return false
+	var cell := tilemap.local_to_map(canvas_tilemap_transform().affine_inverse() * Vector2(event.position))
+	var last := current_position
+	draw_overlay = true
+	if event is InputEventMouseMotion:
+		_collision_tip_at = event.position
+		if _collision_tip_ready:
+			_collision_tip_ready = false
+			update_overlay.emit()
+		_collision_tip_timer.start()
+	elif event.pressed:
+		_collision_tip_ready = false
+		_collision_tip_timer.stop()
+	if cell != current_position:
+		current_position = cell
+		update_overlay.emit()
+	if event is InputEventMouseButton:
+		if event.button_index not in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+			return false
+		if event.pressed and _data_mode() and event.button_index == MOUSE_BUTTON_LEFT \
+				and (_picker_modifier_held(event) or _data_panel.pick_armed or _data_inspecting()):
+			# Inspect selects the tile, Shift adding it, whatever the picker's key is;
+			# copying a tile's fields belongs to Paint.
+			var picked := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))
+			if not picked.is_empty():
+				if _data_inspecting():
+					_data_select([[picked[0], picked[1]]], event.shift_pressed)
+				else:
+					_data_pick(picked[0], picked[1])
+			return true
+		if event.pressed and _data_inspecting():
+			return true
+		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _collision_takes_shape(event):
+			var source := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))
+			if not source.is_empty():
+				_copy_collision(source[0], source[1])
+			return true
+		if event.pressed and _collision_shape_mode and _collision_mode():
+			if event.button_index == MOUSE_BUTTON_LEFT:
+				var found := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))
+				if not found.is_empty():
+					var src := tileset.get_source(found[0]) as TileSetAtlasSource
+					_open_collision_shape(found[0], found[1], src.get_tile_size_in_atlas(found[1]))
+			return true
+		if event.pressed:
+			if _collision_stroking:
+				return true
+			_collision_solid = event.button_index == MOUSE_BUTTON_LEFT
+			_collision_rect = rectangle_button.button_pressed
+			_collision_from = cell
+			_collision_begin()
+			if not _collision_rect:
+				_collision_mark_cells([cell])
+		elif _collision_stroking:
+			if _collision_rect:
+				_collision_mark_cells(_cells_in_area(Rect2i(_collision_from, cell - _collision_from).abs()))
+			_collision_end()
+		update_overlay.emit()
+		return true
+	if _collision_stroking:
+		if event.button_mask & (MOUSE_BUTTON_MASK_LEFT | MOUSE_BUTTON_MASK_RIGHT) == 0:
+			_collision_end()
+		elif not _collision_rect and cell != last:
+			_collision_mark_cells(_get_tileset_line(last, cell, tileset))
+		return true
+	return false
+
+
+## Marks the tile seen in each of these cells (of the selected layer's grid), once each.
+func _collision_mark_cells(cells: Array) -> void:
+	var layers := _collision_layers()
+	var seen := {}
+	for c: Vector2i in cells:
+		var found := _collision_tile_at(layers, tilemap.to_global(tilemap.map_to_local(c)))
+		if found.is_empty():
+			continue
+		var key := Vector3i(found[1].x, found[1].y, found[0])
+		if seen.has(key):
+			continue
+		seen[key] = true
+		_collision_mark(found[0], found[1], _collision_solid)
+
+
+## Visible layers of the edited scene drawn with this tile set, selected layer included.
+func _collision_layers() -> Array:
+	var out: Array = []
+	var root: Node = EditorInterface.get_edited_scene_root() if tilemap.is_inside_tree() else null
+	if root == null or not root.is_ancestor_of(tilemap):
+		root = tilemap
+		while root.get_parent() != null and not root.get_parent() is Viewport:
+			root = root.get_parent()
+	if root != null:
+		out = root.find_children("*", "TileMapLayer", true, false)
+		if root is TileMapLayer:
+			out.push_front(root)
+	if not out.has(tilemap):
+		out.append(tilemap)
+	return out.filter(func(layer: TileMapLayer): return layer.tile_set == tileset \
+		and (layer == tilemap or layer.is_visible_in_tree()))
+
+
+## [source_id, atlas coords] of the atlas tile drawn on top at this point, or [].
+func _collision_tile_at(layers: Array, point: Vector2) -> Array:
+	var best: Array = []
+	var best_z := 0
+	for layer: TileMapLayer in layers:
+		var c := layer.local_to_map(layer.to_local(point))
+		var source_id := layer.get_cell_source_id(c)
+		if source_id < 0 or not (tileset.get_source(source_id) is TileSetAtlasSource):
+			continue
+		# Same z: later in the tree draws on top.
+		var z := _effective_z(layer)
+		if best.is_empty() or z >= best_z:
+			best_z = z
+			best = [source_id, layer.get_cell_atlas_coords(c)]
+	return best
+
+
+func _collision_begin() -> void:
+	_collision_stroke.clear()
+	_collision_stroking = true
+	_collision_added_layer = false
+	# Holds back the list rebuild each polygon change would queue, as painting rules does.
+	tile_view.collision_stroking = true
+
+
+func _collision_mark(source_id: int, coords: Vector2i, solid: bool) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src == null or not src.has_tile(coords):
+		return
+	if _data_mode():
+		_data_mark(source_id, coords, solid)
+		return
+	if tileset.get_physics_layers_count() == 0:
+		if not solid:
+			return
+		tileset.add_physics_layer()
+		_collision_added_layer = true
+		_collision_layer_index = 0
+		_sync_collision_mode()
+	if solid and _collision_stamp_mode:
+		_collision_stamp(source_id, coords)
+		return
+	_collision_action = tr("Mark collisions") if solid else tr("Clear collisions")
+	_collision_write(source_id, coords, [[COLLISIONS.full_polygon(tileset, src, coords), false, 1.0]] if solid else [])
+
+
+## Writes the copied shape with this tile as the top-left of the copied block.
+func _collision_stamp(source_id: int, coords: Vector2i) -> void:
+	var copied: Dictionary = SHAPES.clipboard
+	if copied.is_empty():
+		return
+	# A copied group lands once per stroke, where it was pressed.
+	if copied.cells != Vector2i.ONE and not _collision_stroke.is_empty():
+		return
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	var lay: Dictionary = SHAPES.layout(src, coords, copied.cells)
+	_collision_action = tr("Paste collision shape")
+	var per_tile: Dictionary = SHAPES.clip_per_tile(copied, src, tileset, lay)
+	for tile_coords: Vector2i in per_tile:
+		_collision_write(source_id, tile_coords, per_tile[tile_coords])
+
+
+## Sets a tile's polygons ([[points, one_way, margin], ...]) on the tile and the alternatives
+## the scope takes in, remembering how it was for the stroke's undo step.
+func _collision_write(source_id: int, coords: Vector2i, polygons: Array) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src == null or not src.has_tile(coords):
+		return
+	var layer := _collision_physics_layer()
+	var alts := COLLISIONS.target_alts(src, coords, COLLISIONS.alt_scope())
+	var want := COLLISIONS.shape_state(polygons, alts)
+	var key := Vector3i(coords.x, coords.y, source_id)
+	if not _collision_stroke.has(key):
+		var before := COLLISIONS.tile_state(src, coords, layer, alts)
+		if before == want:
+			return
+		_collision_stroke[key] = [source_id, coords, before, alts]
+	COLLISIONS.apply_state(src, coords, layer, want)
+	tile_view.queue_redraw()
+	update_overlay.emit()
+
+
+## One undo step per stroke; the changes are already applied, so it commits without running.
+func _collision_end() -> void:
+	if not _collision_stroking:
+		return
+	_collision_stroking = false
+	tile_view.collision_stroking = false
+	if _collision_stroke.is_empty() and not _collision_added_layer:
+		return
+	var layer := _collision_physics_layer()
+	undo_manager.create_action(_collision_action, UndoRedo.MERGE_DISABLE, tileset)
+	if _collision_added_layer:
+		undo_manager.add_do_method(tileset, &"add_physics_layer")
+	for entry: Array in _collision_stroke.values():
+		var src := tileset.get_source(entry[0]) as TileSetAtlasSource
+		if entry.size() > 4:
+			# Custom data: [source, coords, before, alts, fields].
+			undo_manager.add_do_method(self, &"_set_data_state", entry[0], entry[1],
+				CUSTOM_DATA.tile_state(src, entry[1], entry[4], entry[3]))
+			undo_manager.add_undo_method(self, &"_set_data_state", entry[0], entry[1], entry[2])
+			continue
+		undo_manager.add_do_method(self, &"_set_collision_state", entry[0], entry[1], layer,
+			COLLISIONS.tile_state(src, entry[1], layer, entry[3]))
+		undo_manager.add_undo_method(self, &"_set_collision_state", entry[0], entry[1], layer, entry[2])
+	if _collision_added_layer:
+		undo_manager.add_undo_method(tileset, &"remove_physics_layer", 0)
+	undo_manager.add_do_method(self, &"_sync_collision_mode")
+	undo_manager.add_undo_method(self, &"_sync_collision_mode")
+	undo_manager.commit_action(false)
+	_collision_stroke.clear()
+	queue_tiles_changed()
+	if _data_mode():
+		_sync_data_marks()
+
+
+func _set_collision_state(source_id: int, coords: Vector2i, layer: int, state: Array) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src != null and layer < tileset.get_physics_layers_count():
+		COLLISIONS.apply_state(src, coords, layer, state)
+
+
+func _set_collision_bits(index: int, collision_layer: int, collision_mask: int) -> void:
+	if tileset == null or index >= tileset.get_physics_layers_count():
+		return
+	undo_manager.create_action(tr("Change physics layer bits"), UndoRedo.MERGE_ENDS, tileset)
+	undo_manager.add_do_method(tileset, &"set_physics_layer_collision_layer", index, collision_layer)
+	undo_manager.add_do_method(tileset, &"set_physics_layer_collision_mask", index, collision_mask)
+	undo_manager.add_undo_method(tileset, &"set_physics_layer_collision_layer", index, tileset.get_physics_layer_collision_layer(index))
+	undo_manager.add_undo_method(tileset, &"set_physics_layer_collision_mask", index, tileset.get_physics_layer_collision_mask(index))
+	undo_manager.add_do_method(self, &"_sync_collision_mode")
+	undo_manager.add_undo_method(self, &"_sync_collision_mode")
+	undo_manager.commit_action()
+
+
+func _draw_map_collisions(overlay: Control, transform: Transform2D) -> void:
+	var mesh := _map_collision_mesh(transform)
+	if not mesh.indices.is_empty():
+		RenderingServer.canvas_item_add_triangle_array(overlay.get_canvas_item(), mesh.indices, mesh.points, mesh.colors)
+	if _collision_tip_ready and not _collision_stroking:
+		_draw_collision_tip(overlay, _collision_hits_at(transform.affine_inverse() * _collision_tip_at))
+	_draw_hover_cell(overlay, transform)
+
+
+## The cell (or box) the next click changes.
+func _draw_hover_cell(overlay: Control, transform: Transform2D) -> void:
+	if not draw_overlay:
+		return
+	var tint := Color.WHITE if not (_collision_stroking and not _collision_solid) else Color(1.0, 0.6, 0.5)
+	var box := Rect2i(current_position, Vector2i.ZERO)
+	if _collision_stroking and _collision_rect:
+		box = Rect2i(_collision_from, current_position - _collision_from).abs()
+	var half := Vector2(tilemap.tile_set.tile_size) * 0.5
+	var outline := PackedVector2Array([
+		tilemap.map_to_local(box.position) - half,
+		tilemap.map_to_local(Vector2i(box.end.x, box.position.y)) + Vector2(half.x, -half.y),
+		tilemap.map_to_local(box.end) + half,
+		tilemap.map_to_local(Vector2i(box.position.x, box.end.y)) + Vector2(-half.x, half.y),
+	])
+	_draw_outline(overlay, transform * outline, tint)
+
+## Every visible tile's polygons, in overlay coordinates, as one triangle mesh.
+func _map_collision_mesh(transform: Transform2D) -> Dictionary:
+	var mesh := COLLISIONS.new_mesh()
+	var layer := _collision_physics_layer()
+	if layer >= 0 and COLLISIONS.overlay_on_map():
+		var drawn := {}
+		if COLLISIONS.show_all_layers():
+			for i in tileset.get_physics_layers_count():
+				drawn[i] = Color(COLLISIONS.layer_color(i), 0.5 if i == layer else 0.28)
+		else:
+			drawn[layer] = COLLISIONS.overlay_color()
+		var shapes := {}
+		var view_world := Rect2(tilemap.to_global(tilemap.map_to_local(_view_cells.position)), Vector2.ZERO) \
+			.expand(tilemap.to_global(tilemap.map_to_local(_view_cells.end)))
+		var to_overlay := transform * tilemap.global_transform.affine_inverse()
+		for map_layer: TileMapLayer in _collision_layers():
+			var lo := map_layer.local_to_map(map_layer.to_local(view_world.position)) - Vector2i.ONE
+			var hi := map_layer.local_to_map(map_layer.to_local(view_world.end)) + Vector2i.ONE
+			var area := Rect2i(lo, hi - lo).intersection(map_layer.get_used_rect())
+			var cells: Array = []
+			if area.get_area() <= MAX_COLLISION_SCAN:
+				cells = _cells_in_area(Rect2i(area.position, area.size - Vector2i.ONE)) if area.has_area() else []
+			else:
+				cells = map_layer.get_used_cells().filter(func(c): return area.has_point(c))
+			var layer_transform := to_overlay * map_layer.global_transform
+			for c: Vector2i in cells:
+				var source_id := map_layer.get_cell_source_id(c)
+				if source_id < 0:
+					continue
+				var coords := map_layer.get_cell_atlas_coords(c)
+				var alt := map_layer.get_cell_alternative_tile(c)
+				var cell_transform := layer_transform * Transform2D(0.0, map_layer.map_to_local(c))
+				for physics: int in drawn:
+					var key := [source_id, coords, alt, physics]
+					if not shapes.has(key):
+						var td := _cell_tile_data(source_id, coords, alt)
+						shapes[key] = COLLISIONS.cell_polygons(td, physics, alt & COLLISIONS.FLIP_FLAGS) if td != null else []
+					for polygon: PackedVector2Array in shapes[key]:
+						COLLISIONS.add_to_mesh(mesh, cell_transform * polygon, drawn[physics])
+	return mesh
+
+## The tile data a map cell draws, flips taken off the alternative id, or null.
+func _cell_tile_data(source_id: int, coords: Vector2i, alt: int) -> TileData:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	var base := alt & ~COLLISIONS.FLIP_FLAGS
+	if src == null or not src.has_tile(coords) or not src.has_alternative_tile(coords, base):
+		return null
+	return src.get_tile_data(coords, base)
+
+
+## What collides at a point (selected layer's local coordinates), on every map layer
+## and physics layer: [{map_layer, cell, coords, physics, one_way}].
+func _collision_hits_at(point: Vector2) -> Array:
+	var hits := []
+	var world := tilemap.to_global(point)
+	for map_layer: TileMapLayer in _collision_layers():
+		var local := map_layer.to_local(world)
+		var c := map_layer.local_to_map(local)
+		var source_id := map_layer.get_cell_source_id(c)
+		if source_id < 0:
+			continue
+		var coords := map_layer.get_cell_atlas_coords(c)
+		var alt := map_layer.get_cell_alternative_tile(c)
+		var td := _cell_tile_data(source_id, coords, alt)
+		if td == null:
+			continue
+		var inside := local - map_layer.map_to_local(c)
+		for physics in tileset.get_physics_layers_count():
+			var polygons := COLLISIONS.cell_polygons(td, physics, alt & COLLISIONS.FLIP_FLAGS)
+			for i in polygons.size():
+				if Geometry2D.is_point_in_polygon(inside, polygons[i]):
+					hits.append({map_layer = map_layer, cell = c, coords = coords, physics = physics,
+						one_way = td.is_collision_polygon_one_way(physics, i)})
+	return hits
+
+
+func _draw_collision_tip(overlay: Control, hits: Array) -> void:
+	if hits.is_empty():
+		return
+	var font := get_theme_font("font", "Label")
+	var font_size := get_theme_font_size("font_size", "Label")
+	var lines := []
+	for hit: Dictionary in hits:
+		lines.append([COLLISIONS.layer_color(hit.physics), "Physics layer %d · on %s%s · tile %s in %s" % [
+			hit.physics, COLLISIONS.bits_text(tileset, hit.physics), " · one-way" if hit.one_way else "",
+			str(hit.coords), hit.map_layer.name]])
+	var line_height := font.get_height(font_size) + 2
+	var width := 0.0
+	for line: Array in lines:
+		width = maxf(width, font.get_string_size(line[1], HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
+	var box := Rect2(_collision_tip_at + Vector2(18, 18), Vector2(width + 32, line_height * lines.size() + 10))
+	box.position.x = minf(box.position.x, overlay.size.x - box.size.x - 4)
+	box.position.y = minf(box.position.y, overlay.size.y - box.size.y - 4)
+	overlay.draw_rect(box, Color(0.08, 0.09, 0.11, 0.92))
+	overlay.draw_rect(box, Color(1, 1, 1, 0.25), false, 1.0)
+	for i in lines.size():
+		var y := box.position.y + 5 + line_height * i
+		overlay.draw_rect(Rect2(box.position.x + 8, y + line_height * 0.5 - 5, 10, 10), lines[i][0])
+		overlay.draw_string(font, Vector2(box.position.x + 24, y + font.get_ascent(font_size)), lines[i][1],
+			HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.9, 0.93, 1.0))
+
+#endregion
+
+
+#region Custom data tool
+
+const CUSTOM_DATA := preload("res://addons/better-tile-editor/editor/CustomData.gd")
+const DATA_PANEL_SCRIPT := preload("res://addons/better-tile-editor/editor/CustomDataPanel.gd")
+## List id of the Custom data entry, next to Collisions'.
+const DATA_ENTRY := -11
+const DATA_COLOR := Color(0.86, 0.71, 0.42)
+
+var _data_panel: PanelContainer
+## Inspect: the selected tiles, [[source_id, coords], ...].
+var _data_selection: Array = []
+
+
+func _data_entry_terrain() -> Dictionary:
+	return {id = DATA_ENTRY, name = "Custom data", color = DATA_COLOR, type = -1,
+		categories = [], icon = {}, group = "", object = {}, valid = true,
+		tool_icon = ICON_DIR + "CustomData.svg", tool_hint = "Custom data: paint the tile set's custom data fields on tiles"}
+
+
+func _data_inspecting() -> bool:
+	return _data_panel != null and _data_panel.mode == _data_panel.Mode.INSPECT
+
+
+func _build_data_panel(row: Control) -> void:
+	_data_panel = DATA_PANEL_SCRIPT.new()
+	row.add_child(_data_panel)
+	_data_panel.hide()
+	$VBox/Toolbar.add_child(_data_panel.mode_bar)
+	_data_panel.mode_bar.hide()
+	_data_panel.brush_changed.connect(_sync_data_marks)
+	_data_panel.view_changed.connect(_sync_data_marks)
+	_data_panel.mode_changed.connect(_sync_collision_mode)
+	_data_panel.add_requested.connect(_add_data_field)
+	_data_panel.rename_requested.connect(_rename_data_field)
+	_data_panel.retype_requested.connect(_retype_data_field)
+	_data_panel.delete_requested.connect(_delete_data_field)
+	_data_panel.inspect_edited.connect(_data_inspect_edit)
+	_data_panel.presets_changed.connect(_store_data_presets)
+	_data_panel.field_hovered.connect(func(index: int) -> void:
+		tile_view.data_hover = index
+		tile_view.queue_redraw()
+		update_overlay.emit())
+	tile_view.data_pick_check = func(event: InputEventWithModifiers) -> bool:
+		return _picker_modifier_held(event) or _data_panel.pick_armed
+	tile_view.data_pick_requested.connect(_data_pick)
+	tile_view.data_preset_key.connect(func(index: int) -> void:
+		if _data_panel.mode == _data_panel.Mode.PAINT:
+			_data_panel.apply_preset_index(index))
+
+
+## What the atlas and the map show, and the counts the panel reports.
+func _sync_data_marks() -> void:
+	tile_view.data_view = _data_panel.view()
+	tile_view.data_brush = _data_panel.brush()
+	tile_view.data_color = get_theme_color("accent_color", "Editor")
+	var selected := {}
+	for entry: Array in _data_selection:
+		selected[Vector3i(entry[1].x, entry[1].y, entry[0])] = true
+	tile_view.data_selected = selected
+	_data_panel.set_pick_key(PICKER_MODIFIER_NAMES[_picker_modifier()])
+	var matches := 0
+	var used := {}
+	var ranges := {}
+	var brush: Dictionary = tile_view.data_brush
+	for s in tileset.get_source_count():
+		var src := tileset.get_source(tileset.get_source_id(s)) as TileSetAtlasSource
+		if src == null:
+			continue
+		for t in src.get_tiles_count():
+			var td := src.get_tile_data(src.get_tile_id(t), 0)
+			if CUSTOM_DATA.matches(td, brush):
+				matches += 1
+			var set_values := CUSTOM_DATA.tile_values(tileset, td)
+			for field: int in set_values:
+				used[field] = true
+				if CUSTOM_DATA.numeric(tileset.get_custom_data_layer_type(field)):
+					var v := float(set_values[field])
+					ranges[field] = Vector2(minf(v, ranges[field].x), maxf(v, ranges[field].y)) if ranges.has(field) else Vector2(v, v)
+	tile_view.data_ranges = ranges
+	_data_panel.set_match_count(matches if not brush.is_empty() else -1)
+	_data_panel.set_used(used)
+	tile_view.queue_redraw()
+	update_overlay.emit()
+
+
+## Left writes the brush's values, right puts those fields back to their default.
+func _data_mark(source_id: int, coords: Vector2i, paint: bool) -> void:
+	var brush: Dictionary = _data_panel.brush()
+	if brush.is_empty() or _data_inspecting():
+		return
+	var values := {}
+	for field: int in brush:
+		values[field] = brush[field] if paint else CUSTOM_DATA.default_for(tileset.get_custom_data_layer_type(field))
+	_collision_action = tr("Paint custom data") if paint else tr("Clear custom data")
+	_data_write(source_id, coords, values)
+
+
+## Sets some fields on a tile and the alternatives the scope takes in, remembering how it was
+## for the stroke's undo step.
+func _data_write(source_id: int, coords: Vector2i, values: Dictionary) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src == null or not src.has_tile(coords):
+		return
+	var fields := values.keys()
+	var alts := COLLISIONS.target_alts(src, coords, CUSTOM_DATA.alt_scope())
+	var want := CUSTOM_DATA.values_state(values, alts)
+	var key := Vector3i(coords.x, coords.y, source_id)
+	if not _collision_stroke.has(key):
+		var before := CUSTOM_DATA.tile_state(src, coords, fields, alts)
+		if before == want:
+			return
+		_collision_stroke[key] = [source_id, coords, before, alts, fields]
+	CUSTOM_DATA.apply_state(src, coords, want)
+	tile_view.queue_redraw()
+	update_overlay.emit()
+
+
+func _set_data_state(source_id: int, coords: Vector2i, state: Array) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src != null:
+		CUSTOM_DATA.apply_state(src, coords, state)
+	if _data_mode():
+		_refresh_data_selection()
+		_sync_data_marks()
+
+
+## The picker takes a tile's configuration as the brush, to change it or paint it elsewhere.
+func _data_pick(source_id: int, coords: Vector2i) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src == null or not src.has_tile(coords):
+		return
+	_data_panel.set_mode(_data_panel.Mode.PAINT)
+	_data_panel.load_values(CUSTOM_DATA.tile_values(tileset, src.get_tile_data(coords, 0)))
+	if _data_panel.pick_armed:
+		_data_panel._pick_button.button_pressed = false
+
+
+## Inspect: a box of tiles from the atlas, added to the selection with Shift.
+func _data_select_box(source_id: int, origin: Vector2i, cells: Vector2i, add: bool) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src == null:
+		return
+	var tiles := []
+	for y in cells.y:
+		for x in cells.x:
+			var at := src.get_tile_at_coords(origin + Vector2i(x, y))
+			if at != Vector2i(-1, -1) and not tiles.has([source_id, at]):
+				tiles.append([source_id, at])
+	_data_select(tiles, add)
+
+
+func _data_select(tiles: Array, add: bool) -> void:
+	if not add:
+		_data_selection.clear()
+	for tile: Array in tiles:
+		if not _data_selection.has(tile):
+			_data_selection.append(tile)
+	_refresh_data_selection()
+	_sync_data_marks()
+
+
+## The values the selected tiles share per field, MIXED where they differ.
+func _refresh_data_selection() -> void:
+	var values := {}
+	var valid := _data_selection.filter(func(tile: Array):
+		var src := tileset.get_source(tile[0]) as TileSetAtlasSource
+		return src != null and src.has_tile(tile[1]))
+	_data_selection = valid
+	for field in tileset.get_custom_data_layers_count():
+		var first := true
+		for tile: Array in valid:
+			var src := tileset.get_source(tile[0]) as TileSetAtlasSource
+			var value: Variant = src.get_tile_data(tile[1], 0).get_custom_data_by_layer_id(field)
+			if first:
+				values[field] = value
+				first = false
+			elif values[field] != value:
+				values[field] = _data_panel.MIXED
+				break
+	_data_panel.show_selection(values, valid.size())
+
+
+## Inspect: one value on every selected tile, as one undo step.
+func _data_inspect_edit(field: int, value: Variant) -> void:
+	if _data_selection.is_empty():
+		return
+	_collision_begin()
+	_collision_action = tr("Set custom data")
+	for tile: Array in _data_selection:
+		_data_write(tile[0], tile[1], {field: value})
+	_collision_end()
+	_refresh_data_selection()
+	_sync_data_marks()
+
+
+func _store_data_presets(list: Array) -> void:
+	undo_manager.create_action(tr("Change custom data presets"), UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(CUSTOM_DATA, &"set_presets", tileset, list)
+	undo_manager.add_undo_method(CUSTOM_DATA, &"set_presets", tileset, CUSTOM_DATA.presets(tileset))
+	undo_manager.add_do_method(self, &"_sync_collision_mode")
+	undo_manager.add_undo_method(self, &"_sync_collision_mode")
+	undo_manager.commit_action()
+
+
+func _add_data_field(field_name: String, type: int) -> void:
+	if tileset == null:
+		return
+	var index := tileset.get_custom_data_layers_count()
+	undo_manager.create_action(tr("Add custom data field"), UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(tileset, &"add_custom_data_layer")
+	undo_manager.add_do_method(tileset, &"set_custom_data_layer_name", index, field_name)
+	undo_manager.add_do_method(tileset, &"set_custom_data_layer_type", index, type)
+	undo_manager.add_undo_method(tileset, &"remove_custom_data_layer", index)
+	undo_manager.add_do_method(self, &"_sync_collision_mode")
+	undo_manager.add_undo_method(self, &"_sync_collision_mode")
+	undo_manager.commit_action()
+
+
+## Presets name their fields, so a rename carries over to them.
+func _rename_data_field(index: int, field_name: String) -> void:
+	var old := tileset.get_custom_data_layer_name(index)
+	var before := CUSTOM_DATA.presets(tileset)
+	var after := before.duplicate(true)
+	for preset: Dictionary in after:
+		if preset.values.has(old):
+			preset.values[field_name] = preset.values[old]
+			preset.values.erase(old)
+	undo_manager.create_action(tr("Rename custom data field"), UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(tileset, &"set_custom_data_layer_name", index, field_name)
+	undo_manager.add_undo_method(tileset, &"set_custom_data_layer_name", index, old)
+	undo_manager.add_do_method(CUSTOM_DATA, &"set_presets", tileset, after)
+	undo_manager.add_undo_method(CUSTOM_DATA, &"set_presets", tileset, before)
+	undo_manager.add_do_method(self, &"_sync_collision_mode")
+	undo_manager.add_undo_method(self, &"_sync_collision_mode")
+	undo_manager.commit_action()
+
+
+## A new type resets the values, so undo puts back the type and every tile's value.
+func _retype_data_field(index: int, type: int) -> void:
+	var before := tileset.get_custom_data_layer_type(index)
+	if before == type:
+		return
+	undo_manager.create_action(tr("Change custom data field type"), UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(tileset, &"set_custom_data_layer_type", index, type)
+	undo_manager.add_undo_method(tileset, &"set_custom_data_layer_type", index, before)
+	undo_manager.add_undo_method(CUSTOM_DATA, &"restore_field", tileset, index, CUSTOM_DATA.field_snapshot(tileset, index))
+	undo_manager.add_do_method(self, &"_sync_collision_mode")
+	undo_manager.add_undo_method(self, &"_sync_collision_mode")
+	undo_manager.commit_action()
+
+
+func _delete_data_field(index: int) -> void:
+	undo_manager.create_action(tr("Delete custom data field"), UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(tileset, &"remove_custom_data_layer", index)
+	undo_manager.add_undo_method(tileset, &"add_custom_data_layer", index)
+	undo_manager.add_undo_method(tileset, &"set_custom_data_layer_name", index, tileset.get_custom_data_layer_name(index))
+	undo_manager.add_undo_method(tileset, &"set_custom_data_layer_type", index, tileset.get_custom_data_layer_type(index))
+	undo_manager.add_undo_method(CUSTOM_DATA, &"restore_field", tileset, index, CUSTOM_DATA.field_snapshot(tileset, index))
+	undo_manager.add_do_method(self, &"_sync_collision_mode")
+	undo_manager.add_undo_method(self, &"_sync_collision_mode")
+	undo_manager.commit_action()
+
+
+## The map follows the atlas: the shown field lit and named, or the tiles holding the whole
+## brush outlined; the selection in Inspect outlined in white.
+func _draw_map_data(overlay: Control, transform: Transform2D) -> void:
+	var field: int = tile_view.data_hover if tile_view.data_hover >= 0 else tile_view.data_view
+	if field >= tileset.get_custom_data_layers_count():
+		field = -1
+	var brush: Dictionary = tile_view.data_brush
+	var showing: bool = field >= 0 or (tile_view.data_view == tile_view.DATA_VIEW_MATCHES and not brush.is_empty()) \
+		or (_data_inspecting() and not _data_selection.is_empty())
+	if showing:
+		var accent := get_theme_color("accent_color", "Editor")
+		var mesh := COLLISIONS.new_mesh()
+		var outlines := []
+		var labels := []
+		var shape: PackedVector2Array = BetterTerrain.data.cell_polygon(tileset)
+		var cell_size := Vector2(tileset.tile_size)
+		var view_world := Rect2(tilemap.to_global(tilemap.map_to_local(_view_cells.position)), Vector2.ZERO) \
+			.expand(tilemap.to_global(tilemap.map_to_local(_view_cells.end)))
+		var to_overlay := transform * tilemap.global_transform.affine_inverse()
+		var looks := {}
+		for map_layer: TileMapLayer in _collision_layers():
+			var lo := map_layer.local_to_map(map_layer.to_local(view_world.position)) - Vector2i.ONE
+			var hi := map_layer.local_to_map(map_layer.to_local(view_world.end)) + Vector2i.ONE
+			var area := Rect2i(lo, hi - lo).intersection(map_layer.get_used_rect())
+			if not area.has_area() or area.get_area() > MAX_COLLISION_SCAN:
+				continue
+			var layer_transform := to_overlay * map_layer.global_transform
+			for c: Vector2i in _cells_in_area(Rect2i(area.position, area.size - Vector2i.ONE)):
+				var source_id := map_layer.get_cell_source_id(c)
+				if source_id < 0:
+					continue
+				var alt := map_layer.get_cell_alternative_tile(c)
+				var key := [source_id, map_layer.get_cell_atlas_coords(c), alt]
+				if not looks.has(key):
+					looks[key] = _data_cell_look(_cell_tile_data(source_id, key[1], alt), field, brush, accent,
+						_data_selection.has([source_id, key[1]]))
+				var look: Array = looks[key]
+				if look[0].a <= 0.0 and not look[2]:
+					continue
+				var cell := PackedVector2Array()
+				for p in shape:
+					cell.append(layer_transform * (map_layer.map_to_local(c) + p * cell_size))
+				if look[0].a > 0.0:
+					COLLISIONS.add_to_mesh(mesh, cell, look[0])
+				if look[2] or look[3]:
+					outlines.append([cell, Color.WHITE if look[2] else Color(look[0], 1.0)])
+				if not look[1].is_empty() and labels.size() < 400:
+					labels.append([layer_transform * map_layer.map_to_local(c), look[1]])
+		if not mesh.indices.is_empty():
+			RenderingServer.canvas_item_add_triangle_array(overlay.get_canvas_item(), mesh.indices, mesh.points, mesh.colors)
+		for outline: Array in outlines:
+			_draw_outline(overlay, outline[0], outline[1])
+		var cell_width := (transform.basis_xform(Vector2(tileset.tile_size.x, 0))).length()
+		if cell_width >= 28.0:
+			var font := get_theme_font("font", "Label")
+			var font_size := clampi(int(cell_width / 5.0), 8, 14)
+			for entry: Array in labels:
+				var text: String = entry[1]
+				var at: Vector2 = entry[0] + Vector2(-minf(font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x, cell_width) * 0.5,
+					font.get_ascent(font_size) * 0.5)
+				overlay.draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, cell_width, font_size, 3, Color.BLACK)
+				overlay.draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, cell_width, font_size, Color.WHITE)
+	if _collision_tip_ready and not _collision_stroking:
+		_draw_data_tip(overlay, transform.affine_inverse() * _collision_tip_at)
+	_draw_hover_cell(overlay, transform)
+
+
+## How a map cell shows: [fill, label, selected, outlined].
+func _data_cell_look(td: TileData, field: int, brush: Dictionary, accent: Color, selected: bool) -> Array:
+	if td == null:
+		return [Color.TRANSPARENT, "", false, false]
+	if field >= 0:
+		var value: Variant = td.get_custom_data_by_layer_id(field)
+		if CUSTOM_DATA.is_set(value, tileset.get_custom_data_layer_type(field)):
+			var ranges: Dictionary = tile_view.data_ranges
+			var fill := Color(CUSTOM_DATA.heat(float(value), ranges[field]), 0.5) if ranges.has(field) else Color(accent, 0.35)
+			return [fill, CUSTOM_DATA.label(tileset, td, field), selected, true]
+		return [Color(0, 0, 0, 0.6), "", selected, false]
+	if tile_view.data_view == tile_view.DATA_VIEW_MATCHES and CUSTOM_DATA.matches(td, brush):
+		return [Color(accent, 0.3), "", selected, true]
+	return [Color.TRANSPARENT, "", selected, false]
+
+
+## The fields set on the tile seen under the mouse.
+func _draw_data_tip(overlay: Control, point: Vector2) -> void:
+	var found := _collision_tile_at(_collision_layers(), tilemap.to_global(point))
+	if found.is_empty():
+		return
+	var src := tileset.get_source(found[0]) as TileSetAtlasSource
+	var td := src.get_tile_data(found[1], 0)
+	var lines := ["Tile %s" % str(found[1])]
+	var set_values := CUSTOM_DATA.tile_values(tileset, td)
+	for field: int in set_values:
+		lines.append("%s = %s" % [tileset.get_custom_data_layer_name(field), CUSTOM_DATA.format(set_values[field])])
+	if set_values.is_empty():
+		lines.append("No field set")
+	var font := get_theme_font("font", "Label")
+	var font_size := get_theme_font_size("font_size", "Label")
+	var line_height := font.get_height(font_size) + 2
+	var width := 0.0
+	for line: String in lines:
+		width = maxf(width, font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x)
+	var box := Rect2(_collision_tip_at + Vector2(18, 18), Vector2(width + 16, line_height * lines.size() + 10))
+	box.position.x = minf(box.position.x, overlay.size.x - box.size.x - 4)
+	box.position.y = minf(box.position.y, overlay.size.y - box.size.y - 4)
+	overlay.draw_rect(box, Color(0.08, 0.09, 0.11, 0.92))
+	overlay.draw_rect(box, Color(1, 1, 1, 0.25), false, 1.0)
+	for i in lines.size():
+		overlay.draw_string(font, Vector2(box.position.x + 8, box.position.y + 5 + line_height * i + font.get_ascent(font_size)),
+			lines[i], HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, Color(0.9, 0.93, 1.0) if i > 0 else Color(0.65, 0.72, 0.85))
+
+## Toolbar buttons show their names beside the icons with the "Show tool names" option,
+## all of them at once, so one tool does not show text while the next does not.
+func _apply_tool_names() -> void:
+	var names := {draw_button: "Pencil", line_button: "Line", rectangle_button: "Rectangle",
+		fill_button: "Bucket", replace_button: "Replace"}
+	if _map_select != null:
+		names[_map_select] = "Select"
+	if _slope_button != null:
+		names[_slope_button] = "Slope"
+	for box: Node in [_collision_mode_box, _data_panel.mode_bar if _data_panel != null else null]:
+		if box != null:
+			for child in box.get_children():
+				if child is Button and child.has_meta(&"tool_name"):
+					names[child] = child.get_meta(&"tool_name")
+	var settings := EditorInterface.get_editor_settings()
+	var on := settings.has_setting(SHOW_TOOL_NAMES_SETTING) and bool(settings.get_setting(SHOW_TOOL_NAMES_SETTING))
+	for button: Button in names:
+		button.text = names[button] if on else ""
+
+#endregion
+
+
+#region Missing pieces
+
+func _open_coverage(terrain_id: int) -> void:
+	var dialog := COVERAGE_WINDOW.new()
+	dialog.applied.connect(_apply_coverage.bind(terrain_id))
+	add_child(dialog)
+	dialog.close_requested.connect(dialog.queue_free)
+	dialog.confirmed.connect(dialog.queue_free, CONNECT_DEFERRED)
+	dialog.canceled.connect(dialog.queue_free)
+	# Filled once open: laid out before, the card flow is one card wide and too tall.
+	dialog.popup_centered(Vector2i(1200, 680) * EditorInterface.get_editor_scale())
+	dialog.setup(tileset, terrain_id)
+
+
+func _apply_coverage_turns(added: Array, removed: Array, built: Array = [], terrain_id: int = -1) -> void:
+	_apply_coverage({added = added, removed = removed, built = built}, terrain_id)
+
+
+## Applies the window's plan as one undoable step: turns added to and taken from tiles, the
+## fill tiles' variety, and the pieces put together from quarters, in a new atlas.
+func _apply_coverage(plan: Dictionary, terrain_id: int) -> void:
+	# {TileData: [transforms before, weight before, transforms after, weight after]}
+	var lists := {}
+	var entry := func(source: Dictionary) -> Array:
+		var src := tileset.get_source(source.source_id) as TileSetAtlasSource
+		if src == null or not src.has_alternative_tile(source.coord, source.alt):
+			return []
+		var td := src.get_tile_data(source.coord, source.alt)
+		if not lists.has(td):
+			var weight := BetterTerrain.get_tile_transform_weight(td)
+			lists[td] = [BetterTerrain.get_tile_transforms(td), weight, BetterTerrain.get_tile_transforms(td), weight]
+		return lists[td]
+	for source: Dictionary in plan.get("added", []):
+		var item: Array = entry.call(source)
+		if not item.is_empty() and not source.flags in item[2]:
+			item[2].append(source.flags)
+	for source: Dictionary in plan.get("removed", []):
+		var item: Array = entry.call(source)
+		if not item.is_empty():
+			item[2].erase(source.flags)
+	var variety: Dictionary = plan.get("variety", {})
+	for tile: Dictionary in variety.get("tiles", []):
+		var item: Array = entry.call(tile.merged({alt = 0}))
+		if not item.is_empty():
+			item[2] = (variety.flags as Array).duplicate()
+			item[3] = variety.weight
+	for td: TileData in lists.keys():
+		if lists[td][0] == lists[td][2] and is_equal_approx(lists[td][1], lists[td][3]):
+			lists.erase(td)
+	var built: Array = plan.get("built", [])
+	var collision: Dictionary = plan.get("collision", {})
+	var shape_layer: int = collision.get("layer", 0)
+	var corners: Array = plan.get("corners", [])
+	if lists.is_empty() and (built.is_empty() or terrain_id < 0) and collision.is_empty() and corners.is_empty():
+		return
+	undo_manager.create_action("Make missing pieces", UndoRedo.MERGE_DISABLE, tileset)
+	# A terrain of sides only read with corners: its drawn tiles, unnotched, get their corner bits.
+	for tile: Dictionary in corners:
+		var corner_src := tileset.get_source(tile.source_id) as TileSetAtlasSource
+		var corner_td := corner_src.get_tile_data(tile.coord, tile.alt)
+		for bit: int in tile.bits:
+			undo_manager.add_do_method(BetterTerrain, &"add_tile_peering_type", tileset, corner_td, bit, terrain_id)
+			undo_manager.add_undo_method(BetterTerrain, &"remove_tile_peering_type", tileset, corner_td, bit, terrain_id)
+	for td: TileData in lists:
+		undo_manager.add_do_method(BetterTerrain, &"set_tile_transforms", tileset, td, lists[td][2], lists[td][3])
+		undo_manager.add_undo_method(BetterTerrain, &"set_tile_transforms", tileset, td, lists[td][0], lists[td][1])
+	if not collision.is_empty():
+		var layer_count := tileset.get_physics_layers_count()
+		if shape_layer >= layer_count:
+			shape_layer = layer_count
+			undo_manager.add_do_method(tileset, &"add_physics_layer")
+			undo_manager.add_undo_method(tileset, &"remove_physics_layer", shape_layer)
+		if collision.get("scope", 0) == COVERAGE_WINDOW.Scope.EVERY:
+			var sheets := {}
+			for tile: Dictionary in collision.get("tiles", []):
+				var src := tileset.get_source(tile.source_id) as TileSetAtlasSource
+				var td := src.get_tile_data(tile.coord, 0)
+				var before: Array = QUARTER_PIECES.get_shapes(td, shape_layer) if shape_layer < layer_count else []
+				var image := QUARTER_PIECES.tile_image(tileset, {source_id = tile.source_id, coord = tile.coord, flags = 0}, sheets)
+				var mask: int = COVERAGE.normalize(tile.mask, collision.get("type", 0), collision.get("with_corners", true))
+				undo_manager.add_do_method(QUARTER_PIECES, &"set_shapes", tileset, td, shape_layer, QUARTER_PIECES.piece_shapes(image, mask, collision))
+				undo_manager.add_undo_method(QUARTER_PIECES, &"set_shapes", tileset, td, shape_layer, before)
+	if not built.is_empty() and terrain_id >= 0:
+		var first: Dictionary = built[0].quarters[0]
+		var other: int = plan.get("other", -1)
+		var other_name: String = BetterTerrain.get_terrain(tileset, other).name if other >= 0 else ""
+		var path: String = QUARTER_PIECES.file_for(tileset, BetterTerrain.get_terrain(tileset, terrain_id).name, first.source_id, other_name)
+		var src: TileSetAtlasSource = QUARTER_PIECES.build_source(tileset, terrain_id, built, built[0].size, path)
+		var source_id := tileset.get_next_source_id()
+		var shapes := {}
+		if plan.get("shapes_off", false):
+			shapes = {off = true}
+		elif not collision.is_empty():
+			shapes = collision.merged({layer = shape_layer})
+			shapes.erase("tiles")
+			shapes.erase("masks")
+			# No list means every new piece.
+			if collision.has("masks"):
+				shapes.only = collision.masks
+		undo_manager.add_do_method(self, &"_add_quarter_source", src, source_id, terrain_id, built, shapes,
+			other, plan.get("with_corners", true))
+		undo_manager.add_undo_method(tileset, &"remove_source", source_id)
+	undo_manager.add_do_method(tile_view, &"queue_redraw")
+	undo_manager.add_undo_method(tile_view, &"queue_redraw")
+	undo_manager.commit_action()
+
+
+func _add_quarter_source(src: TileSetAtlasSource, source_id: int, terrain_id: int, pieces: Array,
+		shapes: Dictionary = {}, other: int = -1, with_corners: bool = true) -> void:
+	tileset.add_source(src, source_id)
+	QUARTER_PIECES.fill_source(tileset, src, terrain_id, pieces, shapes, other, with_corners)
 
 #endregion

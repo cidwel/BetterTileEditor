@@ -164,7 +164,7 @@ func _build_match_tiles() -> void:
 	_paint(_layer(scene, "Dirt", ts), _cells([GROUND_AREA]), dirt)
 	_paint(_layer(scene, "Grass", ts), _cells(ISLAND, ISLAND_HOLES), grass)
 	_note(scene, "Match Tiles: each grass tile says which of its sides and corners continue as grass.\n"
-		+ "Select the Grass layer, pick Grass in BetterTileEditor and paint: edges and corners follow.")
+		+ "Select the Grass layer, pick Grass in Better Tile Editor and paint: edges and corners follow.")
 	_save_scene(scene, "01_match_tiles.tscn")
 
 

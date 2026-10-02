@@ -1,6 +1,6 @@
-<p align="center"><img src="https://raw.githubusercontent.com/cidwel/BetterTileEditor/main/docs/logo.png" width="320" alt="BetterTileEditor for Godot"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/cidwel/BetterTileEditor/main/docs/logo.png" width="320" alt="Better Tile Editor for Godot"></p>
 
-# BetterTileEditor
+# Better Tile Editor
 
 A fork of [BetterTerrain](https://github.com/Portponky/better-terrain) by
 [Portponky](https://github.com/Portponky), with extra terrain modes and editor tools.
@@ -49,8 +49,8 @@ top of a 2×1 slope.
 ## Slopes
 
 For platformer tilesets with steep (1×1) and gentle (2×1) slopes, on floors and
-ceilings. Set them up in **Options → Slopes → Set up slopes…**, which opens over the
-dock: click a piece card, then its tile in the atlas (wheel zooms, middle button pans),
+ceilings. Set them up from the right-click menu of a Match tiles terrain, **Set up slopes…**,
+which opens over the dock: click a piece card, then its tile in the atlas (wheel zooms, middle button pans),
 and it moves on to the next piece. A tile another piece had is swapped with it.
 **Simple** asks only for Ground and the pieces rising right with the ground under them;
 rising left and the ceilings are those tiles flipped, as alternative tiles. **Advanced**
@@ -82,7 +82,7 @@ keeps it level. **Smooth** flattens bumps one row high up to that many columns w
    [latest release](https://github.com/cidwel/BetterTileEditor/releases/latest).
 3. Unzip it into your project folder. You should end up with
    `addons/better-tile-editor/` next to `project.godot`.
-4. Enable **BetterTileEditor** in **Project → Project Settings → Plugins**.
+4. Enable **Better Tile Editor** in **Project → Project Settings → Plugins**.
 5. Select a `TileMapLayer` with a `TileSet` and open the **Terrain** tab.
 
 Keep the folder name `better-tile-editor`. Restart Godot if prompted.

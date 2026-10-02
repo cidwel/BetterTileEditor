@@ -17,4 +17,4 @@ offset_top = -64.0
 offset_bottom = -64.0
 theme_override_font_sizes/font_size = 8
 text = "Match Tiles: each grass tile says which of its sides and corners continue as grass.
-Select the Grass layer, pick Grass in BetterTileEditor and paint: edges and corners follow."
+Select the Grass layer, pick Grass in Better Tile Editor and paint: edges and corners follow."

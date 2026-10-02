@@ -52,12 +52,28 @@ func _enter_tree() -> void:
 	_resume_selection.call_deferred()
 
 
-# After a reload, _edit may come before the dock exists or not at all
+# After a reload, only reselecting through the editor makes Godot forward canvas input
+# to this new plugin; otherwise clicks on the map never arrive.
 func _resume_selection() -> void:
-	var edited := EditorInterface.get_inspector().get_edited_object()
+	# The scene tree selection is what the user sees; the inspector may show something else.
+	var edited: Object = null
+	for node in EditorInterface.get_selection().get_selected_nodes():
+		if _handles(node):
+			edited = node
+			break
+	if edited == null:
+		edited = EditorInterface.get_inspector().get_edited_object()
 	if edited == null or not _handles(edited):
 		return
-	_edit(edited)
+	if edited is Node and (edited as Node).is_inside_tree():
+		var selection := EditorInterface.get_selection()
+		selection.clear()
+		selection.add_node(edited)
+		EditorInterface.edit_node(edited)
+	elif edited is Resource:
+		EditorInterface.edit_resource(edited)
+	if dock.tilemap != edited and dock.tileset != edited:
+		_edit(edited)
 	_make_visible(true)
 
 
@@ -84,7 +100,7 @@ func _try_integrate() -> void:
 
 func _ask_restart() -> void:
 	var confirm = ConfirmationDialog.new()
-	confirm.dialog_text = "The editor needs to be restarted for BetterTileEditor to load correctly. Restart now? Note: Unsaved changes will be lost."
+	confirm.dialog_text = "The editor needs to be restarted for Better Tile Editor to load correctly. Restart now? Note: Unsaved changes will be lost."
 	confirm.confirmed.connect(func():
 		OS.set_restart_on_exit(true, ["-e"])
 		get_tree().quit()
@@ -139,7 +155,7 @@ func _make_visible(visible) -> void:
 
 
 func _add_bottom_panel() -> void:
-	button = add_control_to_bottom_panel(dock, "BetterTileEditor")
+	button = add_control_to_bottom_panel(dock, "Better Tile Editor")
 	button.toggled.connect(dock.about_to_be_visible)
 	_apply_options()
 
@@ -155,7 +171,7 @@ func _apply_options() -> void:
 	if _integration != null:
 		_integration.apply_options([hide_tiles, hide_patterns, hide_native], rename_tab)
 	if button != null:
-		button.text = "Tiles" if rename_tab else "BetterTileEditor"
+		button.text = "Tiles" if rename_tab else "Better Tile Editor"
 
 
 func _mount_panel() -> void:
@@ -235,7 +251,7 @@ func _on_tileset_created(layer: TileMapLayer) -> void:
 		break
 
 
-const TILEMAP_NOT_SUPPORTED := "BetterTileEditor does not support TileMap nodes, only TileMapLayer nodes."
+const TILEMAP_NOT_SUPPORTED := "Better Tile Editor does not support TileMap nodes, only TileMapLayer nodes."
 
 
 func _warn_tilemap_node() -> void:
@@ -305,7 +321,8 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			dock.delete_selected(target)
 			return
-	if not _canvas_active() or dock.tilemap == null or not dock.fill_button.shortcut.matches_event(event):
+	if not _canvas_active() or dock.tilemap == null or dock.fill_button.disabled \
+			or not dock.fill_button.shortcut.matches_event(event):
 		return
 	var focus := get_viewport().gui_get_focus_owner()
 	var in_context := false
@@ -366,7 +383,7 @@ func _dock_to_floating_window() -> void:
 		dock.get_parent().remove_child(dock)
 
 	floating_window = Window.new()
-	floating_window.title = "BetterTileEditor"
+	floating_window.title = "Better Tile Editor"
 	floating_window.size = Vector2i(1100, 700)
 	floating_window.min_size = Vector2i(600, 400)
 	floating_window.wrap_controls = true

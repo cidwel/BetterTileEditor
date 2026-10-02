@@ -49,6 +49,8 @@ func update():
 	
 	name_label.text = terrain.name
 	tooltip_text = "" if terrain.type == BetterTerrain.TerrainType.SINGLE else "%s (%d)" % [terrain.name, terrain.id]
+	if terrain.has("tool_icon"):
+		tooltip_text = terrain.get("tool_hint", "")
 	if terrain.has("scene"):
 		tooltip_text = String(terrain.scene.path)
 	
@@ -114,7 +116,19 @@ func update():
 		_:
 			type_icon_slot.texture = null
 	type_icon_slot.visible = show_type_icon
-	
+
+	# Tools that are not terrains (Collisions, Custom data) only need their icon.
+	if terrain.has("tool_icon"):
+		type_icon_slot.texture = load(terrain.tool_icon)
+		var big := Image.new()
+		big.load_svg_from_string(FileAccess.get_file_as_string(terrain.tool_icon), 3.0)
+		_terrain_texture = ImageTexture.create_from_image(big)
+		_terrain_texture_rect = Rect2i(Vector2i.ZERO, big.get_size())
+		terrain_icon_slot.texture = null
+		_connect_icon_draw()
+		update_style()
+		return
+
 	var has_icon = false
 	if terrain.has("scene"):
 		var scene_icon := EditorInterface.get_base_control().get_theme_icon("PackedScene", "EditorIcons")
@@ -195,14 +209,18 @@ func update():
 	if _terrain_texture:
 		terrain_icon_slot.texture = null
 	
+	_connect_icon_draw()
+	update_style()
+
+
+func _connect_icon_draw() -> void:
 	if not _icon_draw_connected:
 		terrain_icon_slot.connect("draw", func():
 			if _terrain_texture:
 				terrain_icon_slot.draw_texture_rect_region(_terrain_texture, _icon_rect(), _terrain_texture_rect)
 		)
 		_icon_draw_connected = true
-	
-	update_style()
+	terrain_icon_slot.queue_redraw()
 
 
 ## Icons keep their shape, so a 2x4 object is not squashed into the square.
@@ -254,6 +272,9 @@ func _lone_block_region() -> Rect2i:
 
 
 func update_style():
+	# Before _ready the nodes are not there; update() styles the entry once they are.
+	if not is_node_ready():
+		return
 	if terrain.type == BetterTerrain.TerrainType.DECORATION:
 		type_icon_panel.visible = false
 		color_panel.custom_minimum_size = Vector2i(52,52)
@@ -385,7 +406,7 @@ func _on_focus_exited():
 func _make_custom_tooltip(for_text: String) -> Object:
 	if !tileset or !terrain or !terrain.get("valid", false):
 		return null
-	if terrain.type == BetterTerrain.TerrainType.SINGLE:
+	if terrain.type == BetterTerrain.TerrainType.SINGLE or terrain.has("tool_icon"):
 		return null
 	var img := _terrain_preview_image()
 	if img == null:

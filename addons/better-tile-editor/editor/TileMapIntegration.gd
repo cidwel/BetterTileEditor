@@ -48,7 +48,7 @@ func install(base: Control, terrain_panel: Control) -> bool:
 	tabs.clip_tabs = native_tabs.clip_tabs
 	for i in native_tabs.tab_count:
 		tabs.add_tab(native_tabs.get_tab_title(i), native_tabs.get_tab_icon(i))
-	tabs.add_tab("BetterTileEditor")
+	tabs.add_tab("Better Tile Editor")
 	tabs.current_tab = native_tabs.current_tab
 	_tabs_frame = PanelContainer.new()
 	_tabs_frame.theme_type_variation = _native_tabs_panel.theme_type_variation
@@ -59,7 +59,7 @@ func install(base: Control, terrain_panel: Control) -> bool:
 	native_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	native_tabs.hide()
 	_floating_notice = Label.new()
-	_floating_notice.text = "BetterTileEditor is open in a separate window."
+	_floating_notice.text = "Better Tile Editor is open in a separate window."
 	container.add_child(_floating_notice)
 	panel = terrain_panel
 	attach_panel()
@@ -93,7 +93,11 @@ func apply_options(hidden_tabs: Array, rename_tab: bool) -> void:
 		if hidden_tabs[index] and tabs.current_tab == index:
 			select_terrain()
 		tabs.set_tab_hidden(index, hidden_tabs[index])
-	tabs.set_tab_title(native_tabs.tab_count, "Tiles" if rename_tab else "BetterTileEditor")
+	tabs.set_tab_title(native_tabs.tab_count, "Tiles" if rename_tab else "Better Tile Editor")
+	# The bottom panel's "TileMap" tab too; its editor is an EditorDock from Godot 4.7, whose
+	# title names the tab, and an empty one gives the default back.
+	if "title" in editor:
+		editor.set("title", "Tiles" if rename_tab else "")
 
 func _select_tab(index: int) -> void:
 	var own := index == native_tabs.tab_count
@@ -134,6 +138,8 @@ func _visibility_changed() -> void:
 	active_changed.emit()
 
 func uninstall() -> void:
+	if editor != null and "title" in editor:
+		editor.set("title", "")
 	container.visibility_changed.disconnect(_visibility_changed)
 	native_tabs.tab_changed.disconnect(_native_tab_changed)
 	if _tabs_frame.get_parent() != container:

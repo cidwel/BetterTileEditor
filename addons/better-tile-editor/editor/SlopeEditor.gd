@@ -551,21 +551,11 @@ func _preview_input(event: InputEvent) -> void:
 			_preview.queue_redraw()
 
 
-# Must stack sources top to bottom like TileView does
 func _tile_rect(source_id: int, coord: Vector2i) -> Rect2:
-	var offset := Vector2.ZERO
-	for i in tileset.get_source_count():
-		var id := tileset.get_source_id(i)
-		if id in _palette.disabled_sources:
-			continue
-		var src := tileset.get_source(id) as TileSetAtlasSource
-		if src == null or src.texture == null:
-			continue
-		if id == source_id and src.has_tile(coord):
-			var r := Rect2(src.get_tile_texture_region(coord))
-			return Rect2(offset + r.position * _palette.zoom_level, r.size * _palette.zoom_level)
-		offset.y += _palette.zoom_level * src.texture.get_height()
-	return Rect2()
+	var src := tileset.get_source(source_id) as TileSetAtlasSource if tileset.has_source(source_id) else null
+	if src == null or not src.has_tile(coord):
+		return Rect2()
+	return _palette.atlas_rect(source_id, Rect2(src.get_tile_texture_region(coord)))
 
 
 func _draw_atlas() -> void:

@@ -1,4 +1,4 @@
-# BetterTileEditor, design notes
+# Better Tile Editor, design notes
 
 Why this addon is built the way it is: what was changed, what broke on the way,
 and which decisions look odd but are not. The README says what it does; this says
@@ -173,7 +173,7 @@ first click, so this only has to notice the second one.
 
 The toolbar's Options button opens a window (`_build_options_window`) where you can
 show the refresh button, independently hide Godot's native Tiles, Patterns and
-Terrains tabs, or rename BetterTileEditor to Tiles. The window also holds the tile
+Terrains tabs, or rename Better Tile Editor to Tiles. The window also holds the tile
 picker's modifier key and the cliff rebuild. The checkboxes apply as soon as they
 are clicked; there is nothing to confirm. These preferences are saved in
 EditorSettings and default to off. Hiding an active native tab
@@ -2767,21 +2767,49 @@ layer but does not bring the hand edits back. The canvas status line says which 
 `_object_halves`).
 
 With the single-tile brush on, four buttons sit after the pin: Create quick
-terrain, Create Patch, Create Object and Create Scatter. Each makes a terrain of
+terrain, Create Patch, Create Object and Create quick scatter. Each makes a terrain of
 that type from the selected block, named after the atlas texture, in the group
 being shown, and selects it. They are always there in single-tile mode; a button
 is disabled, with the reason in its tooltip, when the selection cannot make that
-type:
+type: The new terrain's colour is worked out from its tiles
+(`QuickMatch.contrast_color`): the opposite hue of their average colour, dark on
+light art and light on dark art, a strong magenta on grey art, so its marks stand
+out on the atlas. It used to be random, and a light blue terrain on ice tiles
+could not be seen.
 
 - **Quick terrain** (Match tiles): any block of two tiles or more, square tiles
-  only; each tile only needs a neighbour to join, so a 3×2 strip or a 1×3 path
-  works as well as a 3×3.
-  Gaps are allowed and read as outside the block, so a rounded drawing (a pond
-  with empty corners) works. Every tile joins, in its side peering bits, the neighbours that
-  are inside the block, so the block reads as a 9-slice: corners join inwards,
-  edges along and inwards, the middle on its four sides. The corner bits stay
-  unset, as a hand-made 9-slice has them; marking the diagonals too filled the
-  whole interior.
+  only. The joins are read from the drawing (`editor/QuickMatch.gd`), so one
+  selection can hold several shapes, even touching in the atlas (a strip beside a
+  block, a lone tile, a bar, a blob). A side joins where the tile's fill reaches
+  the middle half of that edge. When any tile of the selection has transparency,
+  the fill is whatever is opaque and the edge must be 95% of it (a wavy outline
+  touching the edge leaves gaps; a shape going on leaves none). Drawn all opaque,
+  the fill is what has the colours of the tile's middle third, so an outline on
+  the edge or another terrain painted around (grass round a path) ends the shape.
+  Corners are read only when an inner corner is drawn (two sides joined, the
+  corner between them not filled): then every tile gets a corner bit where 75% of
+  a small square at that corner has the colours of the two joined edges beside it;
+  without such a piece, corner
+  bits would only keep tiles from places they fit. Tiles with nothing drawn are
+  gaps between shapes and stay out of the terrain. Only when no tile ends anywhere
+  (a block of one flat colour, which gives no hint) do the neighbours inside the
+  selection decide, as a 9-slice, which is also the fallback when the texture
+  can't be read. An earlier version joined every tile to its neighbours in the
+  selection, which fused shapes that touch in the atlas; a stricter reading that
+  also required the neighbour in the selection lost the sides of inner corners
+  kept apart from their shape; and taking the fill from the middle's colours on
+  transparent art split a cloud shaded in bands (white top, blue underside), so
+  its lower pieces lost their top joins. An outline drawn on the tile's own edge
+  pixels (a cave plateau's dark rim) is opaque, so being opaque joined it: the
+  outline's colours are now learnt from the pixels touching the transparency (at
+  least three times as common there as in the tiles' middles, so a shape with no
+  outline has none, and dark cracks sharing the colour don't hide it), and an edge
+  mostly in them is open. And a selection that is one shape (a whole rectangle with
+  no edge drawn between two of its tiles) takes its rim from the selection: a 3x3
+  is a 9-slice, even where the drawing goes on past it, as a plateau's top does into
+  its rock face. Selecting a 3x3 says what is meant better than the art can. Checked on a real cloud sheet (every side
+  and inner corner of a 4x6 blob right) and against the hand-set demo: the sides of
+  all 14 grass tiles agree (its corners are not drawn, so they can't be read).
 - **Patch**: a block of 5×5 or more, read the way the Patch editor reads a
   drawing, like a pond: the outer ring is the bank drawn around the painted
   shape (`OUT_*`, and `CORNER_*` where the corners have ink), the inside is the
@@ -2805,7 +2833,8 @@ type:
   so an Area with only the tree fell back to a plain object and a stroke placed
   one tree per 2×4 slot. Now the tree alone is enough, its own tile marks the
   region (with the invisible marker), and Bake is an optional improvement.
-- **Scatter**: any selection; every tile goes in the bag.
+- **Quick scatter**: two tiles or more (tiles, not cells: one big tile is one);
+  every tile goes in the bag. A bag of one tile only scatters copies of it.
 
 Before creating a Match tiles, Patch or Object terrain, the selected tiles are
 checked: if any already belongs to a terrain (or is marked as Decoration),
@@ -2815,6 +2844,46 @@ takes any.
 
 The whole creation is one undo step; undo puts back the terrain list, the
 tiles' terrain metadata and the Patch tables as they were.
+
+#### Quick animation
+
+`editor/Dock.gd` (`_quick_animation_refusal`, `_quick_animation_plan`,
+`perform_quick_animation`, `_tile_snapshots`), `editor/QuickAnimation.gd`.
+
+A fifth button, after Create quick scatter, cuts the selected block into equal
+blocks, one per frame, and animates the first one, because doing it in Godot's
+TileSet editor takes several fields per tile. It opens a window with an
+animated preview, the whole selection cut into blocks (the one playing
+outlined) and these settings:
+
+- **Blocks**: how many blocks the selection holds, picked from a list that
+  only offers the counts that work: those that cut the selection evenly
+  (`split_for`: a row if the width divides, else a column, else the squarest
+  grid that fits) and leave whole tiles in each block. Each entry shows the
+  block size, e.g. "4  (4×2 tiles each)" for a 16×2 strip. The last entry,
+  one tile per block, is selected by default.
+- **Speed** in frames per second (default 5, every frame lasts the same) and
+  **mode** (in sync, or random start times).
+
+Godot animates tile by tile, so a frame bigger than a tile is made by
+animating every tile of the first frame with the same settings: columns is
+the number of frames per row and the separation is the frame size minus the
+tile's size, since Godot steps size + separation from one frame to the next.
+Godot needs the frame cells free, so the tiles in the other frames are removed
+from the atlas; the window warns that map cells using them turn empty.
+Afterwards the brush is the first frame, the whole animated block.
+
+The button is refused for an alternative tile (animations belong to the base
+tile), when the block does not start on a tile or is not a whole number of
+tiles of its size, and for a single tile. The window refuses a split where a
+tile of the first frame crosses into the next one, or where a tile under a
+later frame starts outside the selection, since removing it would delete a
+tile the user did not select.
+
+Undo recreates the removed tiles from a snapshot of every property the atlas
+source stores for them (`x:y/...`: size, alternatives, tile data, metadata such
+as their terrain) and puts back the old animation of the first frame's tiles and
+the brush.
 
 ### V. Shift in the middle of a pencil stroke
 
@@ -3084,3 +3153,616 @@ The mode is stored in the TileSet when the set-up opens: deciding it from whethe
 set is complete turned it advanced as soon as the pieces were filled in. Existing,
 complete set-ups open advanced. Going to advanced keeps the flipped pieces until they
 are replaced; going back to simple flips over them.
+
+### AE. Collisions: mark solid tiles in the atlas or on the map
+
+`editor/Collisions.gd`, `editor/CollisionPanel.gd`, `editor/Dock.gd` (the Collisions
+tool region), `editor/TileView.gd` (`collision_mode`, `_collision_input`).
+
+A fast way to set up collisions, which Godot's TileSet editor makes slow: a
+Collisions entry sits after Single tile in the list. It is not a terrain (its id,
+`COLLISION_ENTRY`, is below every `TileCategory`) and nothing of ours is stored:
+the marks are Godot's own collision polygons on a TileSet physics layer, so the
+game reads them as if they were drawn in the TileSet editor.
+
+- **Atlas:** left click or drag makes tiles solid, right click or drag clears them.
+- **Map:** the same buttons change the tile seen under the cursor, so it changes
+  everywhere that tile is used. That is the atlas tile drawn on top there, on any
+  visible layer of the scene with this tile set, not only the selected layer: a
+  map is usually several layers, and looking only at the selected one made clicks
+  on the others do nothing. Only the pencil and the rectangle apply;
+  the other tools (map select, line, fill, slope, replace, picker) are disabled
+  while the entry is selected and come back when another is picked. The
+  rectangle changes every distinct tile inside it on release. The toolbar's
+  picker, and its "Select Layer" box, are hidden in Collisions and Custom data:
+  they pick terrain brushes, which these tools have none of (Custom data has its
+  own picker in its panel).
+- **Solid** is one polygon covering the whole tile in the cell's shape (square,
+  diamond or hexagon), times the tile's size in the atlas. It replaces whatever
+  polygons the tile had, partial ones included; **clear** removes them all. Both
+  go to the base tile and to the alternatives picked in "Apply to" (see AF).
+- **Physics layer:** marks go to the first one. A tile set with none gets one on
+  the first mark (undo removes it again). With several, the side panel, right of
+  the atlas, picks which; it also sets that layer's collision layer and mask bits,
+  drawn like the inspector's: blocks of 2×4 small numbered cells for 1–16, with
+  an arrow that shows 17–32 (shown already when one of those is set).
+- **Every layer**: "Show every layer" in the side panel (an editor setting, shown
+  when the tile set has more than one physics layer) draws every physics layer on
+  the map in its own colour (`Collisions.layer_color`, the same in the shape
+  editor and in the panel's layer list), the one being edited stronger.
+- **What is under the mouse**: resting the mouse on the map for 0.7 s lists every
+  shape under it, on every visible map layer and every physics layer, whether
+  they are shown or not: physics layer and its colour, the collision layer bits it
+  is on, one-way, the atlas tile and the map layer. Moving or clicking hides it.
+- **Overlay:** each tile's polygons are drawn in red over the atlas and, while the
+  tool is active, over every visible layer of the scene with this tile set (tile
+  and cell flips applied, one triangle mesh per draw). The colour, its opacity and whether the map shows it are in the options
+  window.
+
+Each stroke, press to release, is one undo step. The polygons change live while
+dragging and the action is committed without running at the end; the terrain list
+rebuild each change would queue is held back during the stroke, as when painting
+rules in the atlas.
+
+While these tools have the atlas's keys, only the keys they use are taken (Ctrl+C
+and Ctrl+V over a tile, 1–9 in Custom data): taking every key, to keep the terrain
+shortcuts out, also swallowed Ctrl+Z, so an erase could not be undone while the
+atlas had the focus.
+
+### AF. Collision shapes: detected from the sprite, edited by hand, per group
+
+`editor/CollisionShapes.gd` (the geometry), `editor/CollisionShapeEditor.gd` (the
+window), `editor/Dock.gd` (`_build_collision_mode_buttons`, `_open_collision_shape`,
+`_apply_collision_shape`).
+
+With the Collisions entry selected the toolbar shows two modes. **Solid** is the
+full-square marking of AE. **Shape** turns a click on a tile (in the atlas, or on the
+map: the tile seen there) or a drag over several tiles in the atlas into opening the
+shape editor on that tile or group.
+
+The work happens in *block space*: the group's pixels side by side, atlas
+separation left out, top-left at (0, 0). The editor loads the tiles' current
+polygons into it and merges them across tile seams, so a group that was cut into
+tiles reads as one shape again. On Apply the shapes are cut by each tile's rect
+(`Geometry2D.intersect_polygons`) and turned into tile-local coordinates (cell
+centre at 0, tile size over texture region size, minus the texture origin). One
+undo step per Apply; physics layers are added up to the one written to.
+
+- **Physics layer**: the window edits one TileSet physics layer at a time, picked at
+  the top (each entry says which collision layer bits it is on) and kept in step
+  with the side panel's; "+" adds one. Switching applies pending changes first.
+  The shapes the tiles have on the other layers are drawn faint behind, each layer
+  in its own colour ("Show the other layers").
+- **Alternatives** ("Apply to", in the window and the side panel, one editor
+  setting): *Flipped alternatives* (default) also writes to the alternatives that
+  only flip or transpose the tile, which Godot turns with the shape; *All
+  alternatives*; *Base tile only*. Solid marking follows the same setting. Writing
+  every alternative, as the first version did, overwrote alternatives that had a
+  collision of their own on purpose.
+- **One-way**: each shape can be one-way (bodies pass from below and land on top),
+  drawn amber and dashed, with one margin for all of them. Loading keeps the tiles'
+  one-way polygons apart from the solid ones (`Shapes.gather` returns both and the
+  margin); they are merged, mirrored and cut per tile separately, since a one-way
+  shape can't join a solid one. Detection makes solid shapes.
+
+- **Detect**, from the painted pixels (`BitMap.create_from_image_alpha`, then
+  `opaque_to_polygons`, whose tolerance is the *smoothness*): Contour, Convex
+  (hull of every outline), Box, and two bases for things walked behind in a
+  top-down game: Precise base keeps the bottom band of the outline, Basic base is
+  the rectangle around it (simpler and steadier for physics). Settings: smoothness, alpha threshold
+  (pixel art is mostly hard alpha, so the default 0.5 splits it cleanly), specks
+  dropped below an area, grow or shrink (`offset_polygon`, mitred so pixel corners
+  stay square), the Base height, and "each tile on its own" for a group. Moving a
+  setting re-runs the last detection until the shape is edited by hand. The
+  settings are kept in the editor settings.
+- **By hand**: drag points, or a whole shape from inside it; click an edge to add a
+  point; right click removes one (a shape left with two points goes). A click on
+  empty space starts a new shape: each click adds a point, and clicking the first
+  one, a double click or Enter closes it; right click takes the last point back,
+  Escape drops it. Under live symmetry its points are clamped like any other and
+  the unfinished line is drawn mirrored too. Snapping to
+  whole pixels is on by default. The window keeps its own undo (Ctrl+Z,
+  Ctrl+Shift+Z or Ctrl+Y) until Apply.
+- **Live symmetry**: "Left ↔ right" and/or "Top ↔ bottom". Only the left and/or
+  top part is edited (points are clamped to it, and those within a few screen
+  pixels of an axis land on it, so the shape always joins its mirror image); the
+  whole shape is drawn with one outline and the edited shape shows by its points; the rest of the
+  picture is darkened and shows the mirror image, updated as points move. What is
+  kept is that part (`_polygons`); the whole shape (`Shapes.symmetric`) is what is
+  drawn, applied and detected into: turning it on clips the whole shape to the
+  part, turning it off keeps the whole shape to edit freely.
+- **Copy once**: copy the left half over the right, or the reverse, or top and
+  bottom; the kept half and its mirror image are merged.
+- The detection settings sit in a collapsed **Advanced** section.
+- For a single tile, Previous and Next apply and move to the neighbouring tile of
+  the atlas.
+- **Copy and paste**: a shape is copied with Ctrl+C over a tile in the atlas (its
+  shape on the edited physics layer) or with Copy in the shape editor (the whole
+  shape, a group's included). `Shapes.clipboard` keeps it in block px with the
+  tile region size and its one-way shapes and margin; pasting fits it to the
+  target (scaled if its tiles are another size, cut to the block). Paste in the
+  editor replaces the shape; Ctrl+V over a tile pastes once; the toolbar's third
+  mode, **Stamp**, writes it on every tile a click or drag touches (a copied group
+  lands once per stroke, with the pressed tile as its top-left), one undo step per
+  stroke. Solid, clear and stamp all go through `_collision_write`, which keeps
+  what each tile had for that undo step.
+  Copying first was the hidden step: Ctrl+C needs the atlas to have the keyboard
+  focus, which hovering does not give, and Stamp did nothing with nothing copied.
+  So Stamp takes a shape itself: with nothing copied its first click, in the atlas
+  or on the map, takes that tile's shape; after that clicks paste and the picker's
+  key plus a click takes another (`_collision_takes_shape`). The side panel says
+  what each click does in the mode at hand (`CollisionPanel.set_keys`) and shows
+  the copied shape, drawn small.
+
+
+### AG. Custom data: paint the tile set's custom data fields
+
+`editor/CustomData.gd`, `editor/CustomDataPanel.gd`, `editor/Dock.gd` (the Custom data
+tool region), `editor/TileView.gd` (`data_mode`, `_draw_data_marks`, `_get_tooltip`).
+
+A Custom data entry after Collisions paints Godot's own custom data: the TileSet's
+custom data layers, one value per tile and alternative. The values belong to the
+tile, not to a map cell, as in Godot; only the presets are ours (tile set metadata).
+
+The first version had a tick per field meaning "part of the brush", which read as
+"true" on a bool, no way to write false, colour badges per field, a dim toggle and
+Alt+click as the only way to edit a tile. A UX review (Tiled's inspector, LDtk's one
+tag at a time, Blender's active group, swatch strips) led to this design:
+
+- **Paint | Inspect** and a picker button sit in the toolbar's tool options, where
+  Collisions keeps Solid / Shape / Stamp (the panel builds them as `mode_bar`, the
+  dock moves it there); left empty, that part of the toolbar showed two separators
+  side by side. They are flat and lit when pressed, as Solid / Shape / Stamp. Like every tool in
+  the toolbar they show only their icon; the "Show tool names in the toolbar"
+  option puts the names beside all of them at once (`_apply_tool_names`: the map
+  tools, Collisions' and Custom data's modes), so none shows text alone. A hint line at the
+  top of the panel says what a click does in the current state (and how many tiles
+  hold the brush).
+- **Paint**: one row per field, filterable ("Used" keeps the fields set on some
+  tile). A bool row is `– ✓ ✗` (leave, true, false); another type is `–`/`●` and
+  its value, armed as soon as the value is edited. Armed rows have an accent bar;
+  the pressed state is drawn in the accent colour, grey for `–`. Left click or drag
+  writes the armed values, right click clears those fields to their default; one
+  undo step per stroke, riding on the Collisions machinery (a stroke entry with a
+  fifth item, the fields, is undone through `_set_data_state`).
+- **Inspect**: clicks select tiles (Shift adds, even when Shift is the picker's key:
+  copying a tile's fields belongs to Paint; a drag in the atlas takes a box);
+  the rows show the values the selection shares, "(mixed)" where they differ, and a
+  change is written to every selected tile as one undo step. "Use as brush" takes
+  the shared values to Paint.
+- **Picker**: the picker's key plus a click, or the picker button for one click,
+  takes a tile's set fields as the brush.
+- **Presets**: chips under the hint load a named brush (keys 1–9 over the atlas);
+  "+ Save…" stores the brush; once the brush moves away from the loaded preset,
+  Update and Save as… appear. Right click a chip: rename, delete. Presets name their
+  fields (`CustomData.to_named` / `from_named`), so renaming a field renames it in
+  them (same undo step); a field removed, or of another type now, is skipped when
+  loading and flagged on the chip (⚠ and the tooltip), with "Recreate the missing
+  fields" and "Drop the missing fields" in its menu. Stored in the tile set
+  (`CustomData.PRESETS_META`), with undo.
+- **One view at a time** (Options > Show): the tiles holding the whole brush
+  outlined and tinted (default), nothing, or one field: its tiles lit with the
+  name (and value) in the middle, the rest darkened. A numeric field is a heatmap
+  over its range across the tile set's base tiles (blue low, yellow, red high;
+  `CustomData.heat`), the range worked out with the match count in
+  `_sync_data_marks`. Hovering a field row, or its
+  ⋮ > Show on the atlas, shows that field meanwhile. The map follows the atlas;
+  names show once cells are 28 px wide. Resting the mouse on a tile lists its set
+  fields. The selection in Inspect is outlined in white.
+- **Fields**: `+` opens a row for a name and a type (Bool by default); each row's ⋮
+  (or a right click) renames, changes the type, shows it or deletes it. A new type
+  resets the values and deleting drops them, so undo puts every tile's value back
+  (`CustomData.field_snapshot`).
+- **Alternatives** (Options > Apply to): its own setting, all alternatives by
+  default, since a turned water tile is water too.
+
+### AH. Favourites from the tile under the mouse; the options in two columns
+
+`editor/Dock.gd` (`_favorite_from_atlas`, `_build_options_window`), `editor/TileView.gd`,
+`editor/SingleTileBag.gd` (`_tab_style`).
+
+A right click in the atlas, with the single-tile brush, used to keep the brush
+picked, so nothing happened until a tile had been picked first, and it was not the
+tile clicked. It now keeps the tile under the mouse (a big tile whole), or the whole
+group picked when the click lands inside it. The pin button still keeps the brush.
+
+The picked brush in the atlas is a 1.5 px white box on a thicker black edge, so it
+reads over light art, for a lone tile and a group alike.
+
+The collapsed Favourites drawer was a bare caption and arrow on the dock's
+background; it is now a framed tab, lit in the accent colour on hover, and a click
+anywhere on it opens or closes the drawer.
+
+The options window has two columns: the interface ticks on the left; the tile
+picker, the collision overlay and the actions on the right. Rebuild cliff faces is
+an action, not a setting, so it sits under "Actions". Set up slopes left the window:
+it lives in the right-click menu of a Match tiles terrain, where slopes are used.
+
+### AI. Atlases named in the view, their empty space cut out
+
+`editor/TileView.gd` (`_relayout`, `_trim_band`, `_texture_rect`, `_texture_at`,
+`atlas_rect`), `editor/Dock.gd` (`SHOW_EMPTY_ATLAS_SETTING`).
+
+The atlases of a tile set are stacked in one column. With more than one shown,
+each now has a header: its name (the source's, its texture's or its file's, with
+the ID, as in the atlas filter) in small muted type and a thin rule across the
+view, so it is plain where one atlas ends and the next begins.
+
+Sheets are often mostly empty: a 1024 px sheet with art in its top corner was
+1024 px of scrolling. The view now leaves out an atlas's empty space: the columns
+right of the last used one, the rows below the last used one, and runs of two or
+more empty rows inside (one empty row is spacing between drawings, and is kept).
+A cell is empty when nothing is drawn in it and it is no tile, so a tile on
+transparent art, or art not yet made into tiles, still shows. Each cut of rows is
+marked with a wavy line, like a scissor cut; the cut on the right is left plain,
+the atlas just ends there. Only whole rows are cut inside an atlas:
+cutting columns too would bend the grid, and the gaps that matter are below.
+
+Nothing is cut for good. The layout is worked out again on every refresh, zoom
+and atlas filter change, and when the texture changes (new art in a reimported
+sheet), so new art or new tiles show up where they are. "Show the atlases' empty
+space" in the options turns it off, for laying out a sheet by its full grid.
+
+Every position in the view goes through one layout (a list of bands, each with
+segments of texture rows and where they land); the Slope, Cliff and Exemplar
+editors ask it through `atlas_rect` instead of stacking textures themselves.
+
+### AJ. Select only where it does something
+
+`editor/Dock.gd` (`TOOL_MODES["select_tiles"]`).
+
+The Select tool, from Better Terrain, picks tiles in the atlas to copy and paste
+their peering bits (Ctrl+C / Ctrl+V), clear them (Delete) or add them to and take
+them out of the terrain (Enter). It was shown for every terrain and tool, where
+in most it did nothing, and its tooltip said only "Select", so the shortcuts
+that are the whole point of it could not be found. It is now shown only for
+Match tiles, Match vertices and Category terrains, which have peering bits, and
+its tooltip lists the shortcuts. When a hidden Select was the tool in use, the
+terrain's painting tool takes over; Scatter and Single tile keep it underneath,
+unseen, as their neutral mode.
+
+### AK. Missing pieces: what a Match terrain lacks, and turns that stand in
+
+`editor/TerrainCoverage.gd`, `editor/CoverageWindow.gd`, `editor/Dock.gd`
+(`_open_coverage`, `_apply_coverage_turns`), `BetterTerrain.gd` (`get_tile_transforms`,
+`set_tile_transforms`, the cache).
+
+Few sets are drawn whole: a 3x3 block and a few inner corners, and the map then
+finds no piece for a one-tile corridor, a T or a cross. "Complete terrain…" (first named "Missing pieces…"), in the
+right-click menu of a Match tiles or Match vertices terrain (square tiles), counts
+what the terrain has against a full set, read from the tiles' peering bits: the
+47 of a blob when any tile has corner bits, the 16 side sets when none has, the
+16 corner sets for Match vertices. A bit counts as joined when it names the
+terrain or one of its categories; bits towards other terrains count as open.
+Each missing piece is a card with a 3x3 sketch of the neighbours it joins.
+
+Many missing pieces are a drawn one mirrored, flipped or turned. Better Terrain's
+symmetry types already place tiles turned, but by whole sets (Mirror is "as drawn
+and mirrored"), so a mirrored copy would also compete with the pieces that are
+drawn. A tile now also keeps a list of single turns (`transforms`, the
+`TileSetAtlasSource.TRANSFORM_*` flags); the solver adds only those, each with the
+tile's whole probability, since it is the only tile with those joins. Godot turns
+the collision, navigation and occlusion shapes along with the art, and no tile or
+pixel is made, so nothing in the sheet changes.
+
+The window offers, for each missing piece, the gentlest turn of an existing tile
+that makes it, with a preview of the tile turned; ticked ones are applied as one
+undoable step. Which turns may be used is up to the user, mirroring only by
+default: flipping or turning art shaded from above puts its shade on the wrong
+side, and a cloud's blue underside showed on top. Turns in use are listed too;
+one whose joins a drawn tile now has as well only competes with the drawing, is
+marked "drawn now" and ticked for removal. A tile moved to another terrain drops
+its turns, which were picked for the old one's gaps.
+
+Checked on the cloud sheet: its 20 drawn pieces already include every turn of
+each other, so its 27 missing pieces (corridors, Ts, crosses, ends) need drawing;
+with three of its four inner corners taken away, the fourth, mirrored, flipped
+and turned, stands in for all three.
+
+### AL. Missing pieces put together from quarters
+
+`editor/QuarterPieces.gd`, `editor/CoverageWindow.gd`, `editor/Dock.gd` (`_add_quarter_source`).
+
+What no turn makes, quarters of drawn tiles can (Match tiles only). A quarter of a
+piece only depends on the two sides it touches and the corner between them, so it
+has one of five looks: outer corner, edge along either side, inner corner, fill. A
+missing piece takes each quarter from a drawn tile whose same quarter has the look
+it needs, turned too if the window allows that turn. Odd tile sizes give the right
+and bottom quarters the extra pixel, the same in every tile, so quarters still fit.
+
+Which tile gives each quarter is chosen by its seams: of up to eight tiles with each
+look, the mix whose quarters meet with the closest pixels across the four seams
+wins, with a small cost per extra tile so one tile is used whole when seams tie.
+The first version took the tile that gave the most quarters, and on the cloud
+sheet, which has a square block and a diamond drawn apart, it mixed the diamond's
+slanted corners with the square's straight edges; by seams, they never line up.
+
+Applying makes one new atlas: the pieces' art saved as a PNG beside the source
+sheet (`<sheet>_<terrain>_pieces.png`, to retouch like any other), its tiles in the
+terrain with their peering bits, and each quarter's collision polygons cut from the
+tile it came from, as one undoable step (undo takes the atlas out of the tile set;
+the file stays). When the file can't be written or imported, the art is kept in the
+tile set as an ImageTexture.
+
+The window has a preview column: a sample map (blocks with notches, corridors,
+ends, Ts, a cross, a ring) painted with the drawn pieces, the turns in use and the
+ticked new ones, redrawn on every tick, with cells still lacking a piece in red. It
+reads each cell's joins and draws the piece for them, as the solver would, without
+running it. A line under the cards says where new pieces go (the atlas and the
+file path) and that turned pieces make nothing new: neither could be seen before.
+
+Checked on the cloud sheet: its corridors are drawn (the one-tile bars), and the 27
+missing pieces (the bars' turns, Ts, crosses, double notches) are all put
+together; a map painted with them shows no seams.
+
+### AM. Missing pieces, more ways: fill variety, collision, corner terrains, transitions
+
+`editor/CoverageWindow.gd` (option rows), `editor/QuarterPieces.gd`, `editor/TerrainCoverage.gd`,
+`editor/Dock.gd` (`_apply_coverage`), `BetterTerrain.gd` (`transform_weight`).
+
+The window's options are rows, each with a tooltip; everything still lands as one
+undoable step, and the preview follows every change.
+
+**Fill variety.** Large areas of one fill tile show the grid. The fill tiles (those
+joined all round) can also be placed mirrored, flipped or turned, at random. These
+are the same single turns as the stand-ins, but they compete with the tile as drawn,
+so a tile keeps a `transform_weight` too: each copy is picked with the tile's
+probability times it ("each copy", 0.5 by default). They are kept apart from the
+stand-ins in the report, so they are not offered for removal as "drawn now". The
+preview picks among the fill and its copies at random per cell (Shuffle reseeds).
+
+**Collision.** "As the tiles have it" keeps drawn tiles' shapes and cuts new pieces'
+from their quarters; "whole tile" is a full square; "from the art" reads the shape
+from the drawing with the shape editor's detection (outline, convex, box, base). It
+goes on a chosen physics layer, or a new one the step adds, and on the new pieces
+only or every piece of the terrain (drawn tiles' old shapes on that layer are put
+back on undo). "Show collision" draws the shapes on the preview. The menu ids are
+not negative: -1 in an OptionButton means "pick an id", and "keep" took the
+outline's id, so the menu showed one mode while the preview drew another.
+
+Picking a collision mode ticks "Show collision": choosing one is wanting to see
+it, and the box was easy to miss. A "Reaches" row says where it goes: every piece,
+the edges only (pieces with an open side or a notch, a fence round a field) or the
+inside only (the fill), of the new pieces or the whole terrain; "none (remove)"
+takes the shapes off the pieces it reaches.
+
+**Removing a terrain** takes the atlases of pieces made for it when no tile of
+another terrain is in them, and the confirmation names them. The atlas leaves the
+tile set; its PNG stays on disk. It used to go to the trash, with undo writing it
+back, and that broke scenes: the tile set changes in memory, but on disk it keeps
+pointing at the PNG until it is saved, so a scene reopened without saving (a
+reload, a restart) found its texture in the trash. Nothing in the plugin deletes a
+file now. Undoing a removal used to bring the tiles' bits back without their turns,
+stand-ins and variety alike; they are restored after the bits now.
+
+**Corner terrains.** Match vertices pieces are put together from quarters too: a
+quarter there depends on its own corner and the two beside it along the edges,
+eight looks. The preview reads a corner as the terrain only when its four cells are,
+as the solver's vertex probe does.
+
+**Transitions.** "Open sides face" picks what lies across the open bits: nothing, or
+one of the terrains the tiles already border (listed with how many tiles do).
+With a terrain picked, only the tiles of that transition are counted and used (a
+tile bordering a third terrain belongs to neither), the new pieces' open bits name
+that terrain, the file is named after both, and the preview paints it around the
+shapes with its fill tile. Corners of a Match tiles terrain with no bits are not
+read, so a terrain of sides only isn't turned away from its transition.
+
+### AN. Missing pieces, reorganised after a UX review
+
+`editor/CoverageWindow.gd`, `editor/QuarterPieces.gd` (`strip_shapes`, `piece_shapes`).
+
+A heuristic review (Nielsen's ten, cognitive load, UX copy) scored the window 22/40:
+five paragraphs always on screen, "from quarters" written on every card, the same
+three ticks (mirrored, flipped, turned) meaning two things in two rows, about
+seventeen controls at once and a seven-item collision menu. It also found Shuffle
+dead: it only re-rolled the fill, and only with variety on, so by default it had
+nothing to change, while the preview always showed the first of a piece's variants.
+
+- The count is a heading ("20 / 47 pieces (blob)") with one line under it that
+  leaves out zero counts.
+- Three folding sections, each title carrying its state so a folded one still
+  says what it will do: Make missing pieces (open), "Vary the fill · off",
+  "Collision · Keep current".
+- Mirror, Flip and Rotate are icon toggles, named the same in both places. The
+  shading warning is a ⚠ shown only when Flip or Rotate is on.
+- Cards are grouped (Transformed, From quarters, Needs drawing, Transforms in
+  use) with All and None; their ticks have no text, and what a card is made of is
+  in its tooltip. The OK button says what it adds ("Add 27 pieces"); the footer
+  is one line with the file the art goes to.
+- Collision: Keep current, Full tile, Border strip, From art (Outline, Convex,
+  Box, Base in a menu beside it) and Remove. What doesn't apply is hidden, not
+  greyed out. "Apply to" picks all, edge or inner pieces, and replacing the drawn
+  tiles' shapes is its own tick, on by default, instead of a scope hidden in a menu.
+- Border strip: a band some pixels deep along each open side and round each notch,
+  built from the piece's joins, so it is exact on drawn and made pieces alike. In
+  Match vertices it runs along the half sides beside each corner not joined.
+- The preview picks among every variant of a piece with the solver's weights;
+  Shuffle re-rolls them and is disabled, saying why, when nothing is random. The
+  sample map has a bigger block, so the fill's variety shows.
+- Controls take keyboard focus again.
+
+The previews (here and in the quick match window, both a `PreviewMap`) zoom with the wheel around the mouse, in whole pixels per cell so pixel
+art shows no seams, and pans with a left or middle drag; a double-click or the fit
+button frames the map again. Folding "Make missing pieces" used to leave its height
+empty, since it takes the free height while open; folded, the sections now stack at
+the top. A quick terrain is named after its sheet, so the pieces' file no longer
+says the sheet's name twice.
+
+### AO. Inner corners made from the edges
+
+`editor/QuarterPieces.gd` (`_inner_from_edges`, `_inner_image`), `editor/TerrainCoverage.gd`
+(`analyse`'s `corners`), `editor/CoverageWindow.gd` (Inner corners), `editor/Dock.gd`.
+
+A terrain drawn as a plain 3x3 has no inner corner, so it reads as sides only, and
+its junctions were put together from fill quarters: the outlines stopped dead where
+an arm met a corridor instead of bending round the corner. An inner corner is where
+two drawn edges meet (the outline coming down the piece above, the one running along
+the piece to the left), so it can be made from them: the fill quarter, with the
+corner's square taken from the two edge quarters, each as deep as its outline (the
+columns or rows where at least 60% of the pixels differ from the fill, so texture
+dotted over a fill doesn't count). Worked out for the top left corner and flipped
+for the others. It is used for any quarter that needs an inner corner none is drawn
+for, and the seams pick among a few fill and edge tiles as for any quarter.
+
+"Inner corners", shown for a Match tiles terrain with no corner bits, reads the
+terrain as a blob: its drawn tiles have no notch, so each gets the corners between
+its joined sides, written as part of the same undo step, and the pieces with
+notches are made. On the cave plateau a 3x3 gives 9 of 47, and the 38 others are
+made, junctions bending their outlines.
+
+How a made inner corner bends the outline is a choice beside "Inner corners":
+**Round** (the default) turns it round the corner point, each pixel taking the colour
+the edge has as far in from its side, so the band's shading follows the curve;
+**Mitre** cuts the two bands along the diagonal, like a picture frame; **Square**
+crosses them in an L, the first version. On the cave plateau the L stepped over the
+vertical outline and the mitre left that outline's dark line crossing the band;
+the round one reads as drawn.
+
+### AP. Create quick terrain shows what it will make; Complete terrain
+
+`editor/QuickMatchPreview.gd` (**new**), `editor/Dock.gd` (`_on_quick_pressed`,
+`_create_quick_terrain`'s options, `perform_quick_terrain`'s bits),
+`editor/CoverageWindow.gd`, `editor/QuarterPieces.gd`.
+
+Create quick terrain (Match) used to make the terrain at once, and a wrong reading
+was only found by painting. It now opens a window first: the selected tiles, large,
+with the joins read from the drawing over them (a click on a side or corner turns
+it on or off), a map painted with them beside it (red where no piece fits yet), the
+name and colour, and "Generate missing pieces and/or collisions". Accepting makes the
+terrain with the joins as adjusted, as one undo step as before, and the tick opens
+the next window on it. The other quick kinds are made at once, as before.
+
+That window was "Missing pieces" and became "Complete terrain": the missing pieces,
+the fill's variety and the collision are each optional, with a tick in their
+section's title. Missing pieces starts on, variety off, and collision off every
+time it opens, so nothing gets shapes unasked: with it off, the new pieces get none,
+not even their quarters'.
+
+The section ticks sit before each section's name: FoldableContainer puts title bar
+controls on the right, where they were missed, so the sections are a small class
+of their own (arrow, then the tick carrying the name). The preview's Collision tick
+shows only while collision is on. A border strip starts a sixteenth of the tile
+deep (1 px on 16 px tiles), worked out each time rather than remembered. The quick
+match window lost its name field: the terrain takes the usual name and is renamed
+from its properties if wanted.
+Unticking a section folds it and ticking unfolds it: hiding only its insides left
+the height it takes while open standing empty. With Missing pieces off the terrain
+is shown as it is, inner corners not read in, and nothing is said to need drawing.
+
+The Collisions tool's Shape button only switches the mode; a click or a drag over a
+group in the atlas then opens the shape editor on release, the group's shapes
+loaded. For a while pressing Shape opened the editor on whatever was selected at
+once; that took away picking the group, and the shapes "not loading" had been the
+ring filled in (below), not the way in.
+
+Joining shapes into one (`CollisionShapes.merge`, used when a group of tiles opens
+in the shape editor and when a border strip is built) no longer closes rings: a
+join that leaves a hole is not made, since tile shapes can't have holes, and
+dropping the hole had filled the ring in. A 3x3's border strips opened in the
+editor as one solid 48x48 block; a lone piece's strip (all four sides open) was
+built as a solid square. Both are rings of two or more shapes now.
+
+The shape editor's "Detect from the sprite" has a sixth mode, **Border**
+(`CollisionShapes.rim`): a band along the inside of the drawing's outline, Border
+width deep (Advanced; a sixteenth of a tile until set by hand). It follows the
+outline, cut corners and all, unlike Complete terrain's Border strip, which follows
+the piece's joins. A ring has a hole, so each outline has its shrunk copy taken out
+and, where that would leave a hole, is cut through the hole first: a square block
+comes out as two U shapes. Outlines from `opaque_to_polygons` run clockwise, and so
+do their shrunk copies; the first version dropped those as holes and returned the
+outline whole.
+
+"Rename … to Tiles" renames the bottom panel's TileMap tab as well. From Godot 4.7
+the TileMap layer editor is an EditorDock, whose `title` names its tab; setting it
+holds across reselecting the layer, and an empty title (the option off, or the
+plugin uninstalled) gives "TileMap" back. On older Godots without that property
+only the plugin's own tab is renamed, as before.
+
+The terrain list's right-click menu has icons: the editor's (Add, Edit, Folder,
+Remove) and, where the toolbar already has one, the plugin's (CliffFace, Slope,
+MatchTiles, GroupAll), so a menu entry and its button read as the same thing.
+
+### AQ. The cliff face editor, with less text
+
+A UX pass found the window explaining itself in four places at once (two count
+paragraphs, a legend and a debug line), and some of it was wrong: it pointed at
+orange cells where the missing ones are red, printed `cell=(-9999, -9999)` in
+Pattern, and spoke of hovering in Simple, where hover did nothing. Nothing was
+taken away; things moved:
+
+- The top bar keeps Face and Height. Inherit from, Make local, Copy slot info and
+  Clear the sheet go in a ⋮ menu, with Clear no longer next to Clear slot. An
+  inherited face says so on one line with its own Make local.
+- The status is one line (what this preview still needs, done/total). Its tooltip
+  holds the rest: counts by row, slots that draw blank, the shape's coverage and the
+  colour legend (red no tile, orange borrowing, gold selected).
+- What the debug line told goes under the preview, for the cell under the mouse: its
+  slot or piece, and whether it has its own tile, borrows one or has none. The hidden
+  line is still what Copy slot info copies.
+- "Repeat from the bottom" (Simple/Advanced) and "build the middle from the ground
+  up" (Pattern) share one label, Anchor the repeat to the ground, in a folded Options
+  section with Pattern's offsets. The offsets say what they move, and a note appears
+  only when one is set and moves nothing.
+- Repeating block sits in the preview bar, since it changes what dragging there does.
+  Narrow shapes and drawing your own shape are in the preview's ⋮; drawing shows a
+  strip (Save, Save as new, Clear, Done) with the drawing's coverage.
+- Simple names its axes open / wall / plateau ("ground" clashed with "ends on the
+  ground"), and slots and groups get readable names instead of `top/l_step_hi` or
+  `wall|EW`. Empty Pattern pieces say which piece they use instead of `?x?`.
+- Right-click on a slot or group empties it, as it already did for Pattern pieces.
+  Assigning and emptying go through the TileSet's undo history, and the window takes
+  Ctrl+Z / Ctrl+Shift+Z itself (the editor's shortcuts don't reach it), reloading the
+  face on `TileSet.changed` while keeping the selection.
+
+Fixed along the way: Height edited an inherited face; a left click on a wall cell in
+Build selected a slot instead of painting; the Pattern refresh returned before the
+inherit state was updated. `tests/cliff_editor_ui.gd` covers the menu, undo,
+right-click and the per-kind visibility.
+
+### AR. Autoassign from tilemap
+
+Simple and Advanced have an "Autoassign from tilemap" button over the slots. It swaps
+the window for a page showing the atlas (zoom and pan; left drag picks, right or
+middle drag moves), opened on the block right under the terrain's own tiles: as wide
+as they are, two rows tall, both outlined and the block's parts named on it.
+
+`CliffData.autoassign` spreads the block over every slot. Columns: the first ends the
+wall on the left, the last on the right, the ones between repeat as a block along the
+run (four wide, two looping columns). Rows: the first is the top, the last the base,
+the ones between repeat down; with two rows the top repeats, with one it is used for
+everything. A side open to the air or next to a taller wall is an end; a side running
+on, into the plateau, or next to a lower wall takes the repeating columns. Two choices
+the block cannot answer: a lone one-cell column takes the repeating column (there is
+no art for it), and a 1-high face takes the base row, as Simple already files it with
+the base. A block with an empty cell can't be assigned. It writes all 66 slots in one
+undoable step.
+
+Autoassign opens on the sheet the terrain was drawn on: an atlas made by Complete terrain
+(`QuarterPieces.GENERATED_META`) only counts when there is no other, since the wall art lies
+under the drawn tiles. The picker names atlases by file and marks the generated ones; each
+atlas gets its own surface box and default block.
+
+The cliff window opens its slots' pane tall enough to show everything down to Options,
+taking room from the palette (down to the palette's minimum) and then making the window
+taller, up to the screen. It does that on open and when the face kind changes.
+
+### AS. Made pieces laid out like a drawn sheet
+
+Complete terrain used to put its pieces one after another, eight a row, so the PNG read as a
+jumble. `QuarterPieces.layout` now puts each in a fixed template, the way tile sheets are
+drawn: the 3x3 of outer corners, edges and fill at the top left; the four inner corners as a
+2x2 round a hole beside it; a one-wide column at the right; a one-tall row and the lone tile
+under them. A piece's place comes from shapes (a piece in a shape joins the cells of that
+shape around it), so the same template serves Match tiles with or without corners and Match
+vertices. Places the terrain already has stay empty; pieces with no place, or a second of
+one (fill variants, blob pieces like an edge with an inner corner), follow from row 6, a row
+per how many sides they join (Ls, Ts, crosses), sorted so the same turn sits together.
+Both building the PNG and filling the tiles' bits call it, so they agree. Atlases made before
+keep their layout.
+
+Autoassign's page takes the left side of the window only (the split opens to 62% while it is
+up). The preview stays on the right, with its shape picker, zoom and pan, and paints the face
+the block being dragged would give: a copy of the face run through `autoassign`, swapped in
+for the repaint (`_auto_cfg`), so nothing is stored until Assign. Zoomed out, the block's
+column names shorten to L, ↔, R when they don't fit.
