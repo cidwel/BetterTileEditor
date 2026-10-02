@@ -21,6 +21,11 @@ A fork of [BetterTerrain](https://github.com/Portponky/better-terrain) by
 - Floating editor dock
 - Must-not-match peering, from [BetterTerrain PR #144](https://github.com/Portponky/better-terrain/pull/144)
 - A slope tool for 2×1 and 1×1 slopes
+- Quick tile animations from a selection of frames
+- A Collisions tool: click tiles, in the atlas or on the map, to make them solid
+- Complete terrain: builds the pieces a Match terrain is missing from quarters of the ones you drew
+- A collision shape editor: detect shapes from the sprite or draw them by hand
+- A Custom data tool to paint, inspect and pick tile custom data, with presets
 
 ## Highlights
 
