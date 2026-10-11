@@ -64,6 +64,8 @@ func restore_tiles(tm: TileMapLayer, restore: Array, placements: Dictionary = {}
 		tm.remove_meta(ObjectTerrain.MASS_PLACEMENTS)
 	else:
 		tm.set_meta(ObjectTerrain.MASS_PLACEMENTS, placements.duplicate(true))
+	# Scripts drawing over the tiles (lava, water) rebuild on this signal.
+	tm.changed.emit.call_deferred()
 
 
 func create_peering_restore_point(undo_manager: EditorUndoRedoManager, ts: TileSet) -> void:

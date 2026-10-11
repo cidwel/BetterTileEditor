@@ -5,6 +5,8 @@ const AUTOLOAD_NAME = "BetterTerrain"
 const AUTOLOAD_SCRIPT = "res://addons/better-tile-editor/BetterTerrain.gd"
 
 const AUTO_OPEN_SETTING := "editors/better_terrain/open_panel_on_select"
+const PERF := preload("res://addons/better-tile-editor/Perf.gd")
+
 var _support_editor: Node
 var dock : Control
 var button : Button
@@ -264,7 +266,8 @@ func _forward_canvas_draw_over_viewport(overlay: Control) -> void:
 		dock.canvas_draw(overlay)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	PERF.frame(delta)
 	if dock == null:
 		return
 	var editing: bool = was_visible and dock.tilemap != null and _canvas_active()

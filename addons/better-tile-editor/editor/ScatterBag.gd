@@ -14,12 +14,20 @@ var _terrain_id := -1
 var _cfg := {}
 
 var _title: Label
+var _help: Button
 var _rows: VBoxContainer
 var _empty_spin: SpinBox
 var _edge: SpinBox
 var _live: CheckBox
+var _on_faces: CheckBox
 var _apply: Button
 var _syncing := false
+
+
+func _ready() -> void:
+	if Engine.is_editor_hint() and EditorInterface.get_editor_theme() != null:
+		_help.text = ""
+		_help.icon = EditorInterface.get_editor_theme().get_icon(&"Help", &"EditorIcons")
 
 
 func _init() -> void:
@@ -31,17 +39,35 @@ func _init() -> void:
 	outer.add_theme_constant_override("separation", 6)
 	add_child(outer)
 
+	var header := HBoxContainer.new()
+	outer.add_child(header)
 	_title = Label.new()
 	_title.text = "Bag"
 	_title.clip_text = true
-	outer.add_child(_title)
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	header.add_child(_title)
 
+	var help := PopupPanel.new()
 	var how := Label.new()
-	how.text = "Click to add, drag for one piece, right-click to remove."
-	how.tooltip_text = "Clicking a tile in the atlas puts it in the bag. Dragging a box over several adds the whole box as one piece. The right button takes out whatever entry covers the tile."
+	how.text = "• Atlas: click adds, drag adds one piece, right-click removes\n" + \
+		"• Map: paint the zone, right-click erases it\n" + \
+		"• Ctrl+right-click: remove single tiles\n\n" + \
+		"Clicking a tile in the atlas puts it in the bag. Dragging a box over several adds the whole box as one piece. The right button takes out whatever entry covers the tile.\n\n" + \
+		"On the map, painting marks the zone the bag fills and the right button erases it. Ctrl+right-click with the pencil removes the generated tiles under it and keeps the zone, to fine-tune a roll; Reroll brings them back."
 	how.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	how.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
-	outer.add_child(how)
+	how.custom_minimum_size.x = 320
+	help.add_child(how)
+	add_child(help)
+	_help = Button.new()
+	_help.text = "?"
+	_help.flat = true
+	_help.focus_mode = Control.FOCUS_NONE
+	_help.tooltip_text = "How the bag works"
+	_help.pressed.connect(func() -> void:
+		help.reset_size()
+		var at := _help.get_screen_position() + Vector2(0, _help.size.y)
+		help.popup(Rect2i(Vector2i(at), Vector2i.ZERO)))
+	header.add_child(_help)
 
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -87,6 +113,12 @@ func _init() -> void:
 	_edge.value_changed.connect(func(v: float): _set_edge(v))
 	rim.add_child(_edge)
 	outer.add_child(rim)
+
+	_on_faces = CheckBox.new()
+	_on_faces.text = "Grow on cliff faces"
+	_on_faces.tooltip_text = "Let pieces sit on cliff walls, like crystals on a cave wall. Off, the cells a cliff face covers stay bare.\n\nFilling with the bucket's \"cliff faces\" choice turns it on."
+	_on_faces.toggled.connect(func(on: bool): _set_on_faces(on))
+	outer.add_child(_on_faces)
 
 	_live = CheckBox.new()
 	_live.text = "Live change"
@@ -150,6 +182,7 @@ func _refresh() -> void:
 	_empty_spin.set_value_no_signal(float(_cfg.get("empty_pct", 0.0)))
 	_edge.set_value_no_signal(float(_cfg.get("edge", 0)))
 	_live.set_pressed_no_signal(bool(_cfg.get("live", false)))
+	_on_faces.set_pressed_no_signal(bool(_cfg.get("on_faces", false)))
 	_apply.disabled = bool(_cfg.get("live", false))
 	_syncing = false
 
@@ -300,6 +333,12 @@ func _set_edge(value: float) -> void:
 	if _syncing:
 		return
 	_commit({edge = int(value)})
+
+
+func _set_on_faces(on: bool) -> void:
+	if _syncing:
+		return
+	_commit({on_faces = on})
 
 
 func _set_live(on: bool) -> void:

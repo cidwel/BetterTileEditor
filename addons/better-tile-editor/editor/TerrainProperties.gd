@@ -324,6 +324,19 @@ func get_categories() -> Array:
 	return result
 
 
+func _ready() -> void:
+	register_text_enter(%NameEdit)
+	register_text_enter(%IconEdit)
+
+
+# Enter accepts the dialog from anywhere in it; a focused button or list takes it first.
+func _shortcut_input(event: InputEvent) -> void:
+	if visible and event is InputEventKey and event.pressed and not event.echo \
+			and event.keycode in [KEY_ENTER, KEY_KP_ENTER]:
+		get_viewport().set_input_as_handled()
+		get_ok_button().pressed.emit()
+
+
 func _on_confirmed() -> void:
 	# confirm valid name
 	if terrain_name.is_empty():

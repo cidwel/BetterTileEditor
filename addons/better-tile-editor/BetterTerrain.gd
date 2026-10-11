@@ -20,6 +20,10 @@ extends Node
 
 ## The meta-data key used to store terrain information.
 const TERRAIN_META = &"_better_terrain"
+## On a TileMapLayer: the cells whose tile was placed by hand, see [method hand_placed].
+const HAND_PLACED_META = &"_better_terrain_hand_placed"
+## On a TileMapLayer: the seam cells, where terrain stops joining, see [method seams].
+const SEAM_META = &"_better_terrain_seams"
 
 ## The current version. Used to handle future upgrades.
 const TERRAIN_SYSTEM_VERSION = "0.3"
@@ -50,11 +54,14 @@ enum TerrainType {
 	MAX,
 }
 
+const PERF := preload("res://addons/better-tile-editor/Perf.gd")
+
 enum TileCategory {
 	EMPTY = -1, ## An empty cell, or a tile marked as decoration
 	NON_TERRAIN = -2, ## A non-empty cell that does not contain a terrain tile
 	ERROR = -3,
 	SINGLE = -4,
+	SEAM = -5, ## A seam seen by the solver: it matches whatever a neighbour asks of it
 }
 
 enum SymmetryType {
@@ -397,6 +404,12 @@ func _has_invalid_peering_types(ts: TileSet) -> bool:
 
 
 func _update_terrain_data(ts: TileSet) -> void:
+	var t := PERF.begin()
+	_update_terrain_data_timed(ts)
+	PERF.end("bt._update_terrain_data", t)
+
+
+func _update_terrain_data_timed(ts: TileSet) -> void:
 	var ts_meta = _get_terrain_meta(ts)
 	var previous_version = ts_meta.get("version")
 	
@@ -478,10 +491,14 @@ func _update_tile_tiles(tm: TileMapLayer, coord: Vector2i, types: Dictionary, ca
 	for t in cache[type]:
 		var score := 0
 		for peering in t[3]:
-			score += reward if t[3][peering].has(types[tm.get_neighbor_cell(coord, peering)]) else penalty
+			var neighbor = types[tm.get_neighbor_cell(coord, peering)]
+			score += reward if neighbor == TileCategory.SEAM or t[3][peering].has(neighbor) else penalty
 		# A broken must-not rule costs a penalty; a kept one only earns on sides without a match rule
 		for peering in t[5]:
-			if t[5][peering].has(types[tm.get_neighbor_cell(coord, peering)]):
+			var neighbor = types[tm.get_neighbor_cell(coord, peering)]
+			if neighbor == TileCategory.SEAM:
+				continue
+			if t[5][peering].has(neighbor):
 				score += penalty
 			elif !t[3].has(peering):
 				score += reward
@@ -498,6 +515,10 @@ func _update_tile_tiles(tm: TileMapLayer, coord: Vector2i, types: Dictionary, ca
 func _probe(tm: TileMapLayer, coord: Vector2i, peering: int, type: int, types: Dictionary) -> int:
 	var targets = data.associated_vertex_cells(tm, coord, peering)
 	targets = targets.map(func(c): return types[c])
+	# A seam matches anything, so it takes no part in the vote.
+	targets = targets.filter(func(t): return t != TileCategory.SEAM)
+	if targets.is_empty():
+		return type
 	
 	var first = targets[0]
 	if targets.all(func(t): return t == first):
@@ -1559,6 +1580,8 @@ func set_cell(tm: TileMapLayer, coord: Vector2i, type: int, anchor := Vector2i.Z
 	if cache[type].is_empty():
 		return false
 	
+	if is_seam(tm, coord):
+		return false
 	var tile = cache[type].front()
 	tm.set_cell(coord, tile[0], tile[1], tile[2])
 	return true
@@ -1577,6 +1600,13 @@ func set_cell(tm: TileMapLayer, coord: Vector2i, type: int, anchor := Vector2i.Z
 ## [br][br]
 ## Use terrain type -1 to erase cells.
 func set_cells(tm: TileMapLayer, coords: Array, type: int, anchor := Vector2i.ZERO) -> bool:
+	var t := PERF.begin()
+	var r = _set_cells_timed(tm, coords, type, anchor)
+	PERF.end("bt.set_cells", t)
+	return r
+
+
+func _set_cells_timed(tm: TileMapLayer, coords: Array, type: int, anchor := Vector2i.ZERO) -> bool:
 	if !tm or !tm.tile_set or (type < TileCategory.EMPTY and type != TileCategory.SINGLE):
 		return false
 	
@@ -1601,8 +1631,10 @@ func set_cells(tm: TileMapLayer, coords: Array, type: int, anchor := Vector2i.ZE
 		return false
 	
 	var tile = cache[type].front()
+	var skip := seams(tm)
 	for c in coords:
-		tm.set_cell(c, tile[0], tile[1], tile[2])
+		if not skip.has(c):
+			tm.set_cell(c, tile[0], tile[1], tile[2])
 	return true
 
 
@@ -1630,6 +1662,8 @@ func replace_cell(tm: TileMapLayer, coord: Vector2i, type: int, anchor := Vector
 	if cache[type].is_empty():
 		return false
 	
+	if not tm.tile_set.has_source(tm.get_cell_source_id(coord)) or is_seam(tm, coord):
+		return false
 	var td = tm.get_cell_tile_data(coord)
 	if !td:
 		return false
@@ -1656,6 +1690,13 @@ func replace_cell(tm: TileMapLayer, coord: Vector2i, type: int, anchor := Vector
 ## for each tile.
 ## Returns [code]true[/code] if any tiles were changed.
 func replace_cells(tm: TileMapLayer, coords: Array, type: int, anchor := Vector2i.ZERO) -> bool:
+	var t := PERF.begin()
+	var r = _replace_cells_timed(tm, coords, type, anchor)
+	PERF.end("bt.replace_cells", t)
+	return r
+
+
+func _replace_cells_timed(tm: TileMapLayer, coords: Array, type: int, anchor := Vector2i.ZERO) -> bool:
 	if !tm or !tm.tile_set or (type < 0 and type != TileCategory.SINGLE):
 		return false
 	
@@ -1683,8 +1724,11 @@ func replace_cells(tm: TileMapLayer, coords: Array, type: int, anchor := Vector2
 	
 	var changed = false
 	var potential_tiles = get_tiles_in_terrain(tm.tile_set, type)
+	var skip := seams(tm)
 	for c in coords:
 		var found = false
+		if not tm.tile_set.has_source(tm.get_cell_source_id(c)) or skip.has(c):
+			continue
 		var td = tm.get_cell_tile_data(c)
 		if !td:
 			continue
@@ -1712,8 +1756,13 @@ func get_cell(tm: TileMapLayer, coord: Vector2i) -> int:
 	if !tm or !tm.tile_set:
 		return TileCategory.ERROR
 	
-	if tm.get_cell_source_id(coord) == -1:
+	var source := tm.get_cell_source_id(coord)
+	if source == -1:
 		return TileCategory.EMPTY
+	# A cell can point at a source the tile set no longer has; asking for its tile data
+	# raises an engine error every time, and the editor is slow to log those.
+	if not tm.tile_set.has_source(source):
+		return TileCategory.NON_TERRAIN
 	
 	var t := tm.get_cell_tile_data(coord)
 	if !t:
@@ -1793,10 +1842,19 @@ func same_visible_region(tm: TileMapLayer, a: Vector2i, b: Vector2i) -> bool:
 ## Runs the tile solving algorithm on the [TileMapLayer] for the given
 ## [Vector2i] coordinates in the [code]cells[/code] parameter. By default,
 ## the surrounding cells are also solved, but this can be adjusted by passing [code]false[/code]
-## to the [code]and_surrounding_cells[/code] parameter.
+## to the [code]and_surrounding_cells[/code] parameter. Cells placed by hand (see
+## [method set_hand_placed]) keep their tile and only shape their neighbours. Seams (see
+## [method set_seams]) keep their tile too, and match whatever their neighbours ask of them, so
+## the terrain runs up to them and stops there open instead of closing around them.
 ## [br][br]
 ## See also [method update_terrain_area] and [method update_terrain_cell].
 func update_terrain_cells(tm: TileMapLayer, cells: Array, and_surrounding_cells := true) -> void:
+	var t := PERF.begin()
+	_update_terrain_cells_timed(tm, cells, and_surrounding_cells)
+	PERF.end("bt.update_terrain_cells", t)
+
+
+func _update_terrain_cells_timed(tm: TileMapLayer, cells: Array, and_surrounding_cells := true) -> void:
 	if !tm or !tm.tile_set:
 		return
 	
@@ -1804,14 +1862,17 @@ func update_terrain_cells(tm: TileMapLayer, cells: Array, and_surrounding_cells 
 		cells = _widen(tm, cells)
 	var needed_cells := _widen(tm, cells)
 	
+	var seam_cells := seams(tm)
 	var types := {}
 	for c in needed_cells:
-		types[c] = get_cell(tm, c)
+		types[c] = _solver_type(tm, c, seam_cells)
 	
 	var ts_meta := _get_terrain_meta(tm.tile_set)
 	var cache := _get_cache(tm.tile_set)
+	var skip := _solver_skip(tm, seam_cells)
 	for c in cells:
-		_update_tile_immediate(tm, c, ts_meta, types, cache)
+		if not skip.has(c):
+			_update_tile_immediate(tm, c, ts_meta, types, cache)
 
 
 ## Runs the tile solving algorithm on the [TileMapLayer] for the given [Vector2i]
@@ -1829,6 +1890,12 @@ func update_terrain_cell(tm: TileMapLayer, cell: Vector2i, and_surrounding_cells
 ## [br][br]
 ## See also [method update_terrain_cells].
 func update_terrain_area(tm: TileMapLayer, area: Rect2i, and_surrounding_cells := true) -> void:
+	var t := PERF.begin()
+	_update_terrain_area_timed(tm, area, and_surrounding_cells)
+	PERF.end("bt.update_terrain_area", t)
+
+
+func _update_terrain_area_timed(tm: TileMapLayer, area: Rect2i, and_surrounding_cells := true) -> void:
 	if !tm or !tm.tile_set:
 		return
 	
@@ -1851,22 +1918,108 @@ func update_terrain_area(tm: TileMapLayer, area: Rect2i, and_surrounding_cells :
 		additional_cells = needed_cells
 		needed_cells = _widen_with_exclusion(tm, needed_cells, area)
 	
+	var seam_cells := seams(tm)
 	var types := {}
 	for y in range(area.position.y, area.end.y):
 		for x in range(area.position.x, area.end.x):
 			var coord = Vector2i(x, y)
-			types[coord] = get_cell(tm, coord)
+			types[coord] = _solver_type(tm, coord, seam_cells)
 	for c in needed_cells:
-		types[c] = get_cell(tm, c)
+		types[c] = _solver_type(tm, c, seam_cells)
 	
 	var ts_meta := _get_terrain_meta(tm.tile_set)
 	var cache := _get_cache(tm.tile_set)
+	var skip := _solver_skip(tm, seam_cells)
 	for y in range(area.position.y, area.end.y):
 		for x in range(area.position.x, area.end.x):
 			var coord := Vector2i(x, y)
-			_update_tile_immediate(tm, coord, ts_meta, types, cache)
+			if not skip.has(coord):
+				_update_tile_immediate(tm, coord, ts_meta, types, cache)
 	for c in additional_cells:
-		_update_tile_immediate(tm, c, ts_meta, types, cache)
+		if not skip.has(c):
+			_update_tile_immediate(tm, c, ts_meta, types, cache)
+
+
+## Cells of [param tm] whose tile was placed by hand, {cell: true}. The solver, objects and
+## patches leave them as placed; their terrain still shapes the cells around them.
+func hand_placed(tm: TileMapLayer) -> Dictionary:
+	return tm.get_meta(HAND_PLACED_META, {}) if tm != null else {}
+
+
+## Marks [param cells] of [param tm] as placed by hand, or clears the mark.
+func set_hand_placed(tm: TileMapLayer, cells: Array, on: bool) -> void:
+	if tm == null:
+		return
+	var marks: Dictionary = tm.get_meta(HAND_PLACED_META, {}).duplicate()
+	for c in cells:
+		if on:
+			marks[c] = true
+		else:
+			marks.erase(c)
+	restore_hand_placed(tm, marks)
+
+
+## Sets the whole set of hand-placed cells of [param tm], as kept for undo.
+func restore_hand_placed(tm: TileMapLayer, marks: Dictionary) -> void:
+	if tm == null:
+		return
+	if marks.is_empty():
+		if tm.has_meta(HAND_PLACED_META):
+			tm.remove_meta(HAND_PLACED_META)
+	else:
+		tm.set_meta(HAND_PLACED_META, marks.duplicate())
+
+
+## Cells of [param tm] marked as seams, {cell: true}. A seam is a cut in the terrain: the
+## solver, objects, patches, cliffs and scatter leave its tile as it is (a tile placed there by
+## hand, or none), and to the cells around it the seam matches anything, so their edges run
+## straight into it and end there, open, instead of wrapping around it. Painting a terrain
+## skips seams; loose tiles and erasing still reach them.
+func seams(tm: TileMapLayer) -> Dictionary:
+	return tm.get_meta(SEAM_META, {}) if tm != null else {}
+
+
+## Whether [param cell] of [param tm] is a seam, see [method seams].
+func is_seam(tm: TileMapLayer, cell: Vector2i) -> bool:
+	return tm != null and tm.has_meta(SEAM_META) and tm.get_meta(SEAM_META).has(cell)
+
+
+## Marks [param cells] of [param tm] as seams, or clears them. Run an update on the same cells
+## afterwards so their neighbours see the change.
+func set_seams(tm: TileMapLayer, cells: Array, on: bool) -> void:
+	if tm == null:
+		return
+	var marks: Dictionary = tm.get_meta(SEAM_META, {}).duplicate()
+	for c in cells:
+		if on:
+			marks[c] = true
+		else:
+			marks.erase(c)
+	restore_seams(tm, marks)
+
+
+## Sets the whole set of seams of [param tm], as kept for undo.
+func restore_seams(tm: TileMapLayer, marks: Dictionary) -> void:
+	if tm == null:
+		return
+	if marks.is_empty():
+		if tm.has_meta(SEAM_META):
+			tm.remove_meta(SEAM_META)
+	else:
+		tm.set_meta(SEAM_META, marks.duplicate())
+
+
+func _solver_type(tm: TileMapLayer, c: Vector2i, seam_cells: Dictionary) -> int:
+	return TileCategory.SEAM if seam_cells.has(c) else get_cell(tm, c)
+
+
+func _solver_skip(tm: TileMapLayer, seam_cells: Dictionary) -> Dictionary:
+	var skip := hand_placed(tm)
+	if seam_cells.is_empty():
+		return skip
+	skip = skip.duplicate()
+	skip.merge(seam_cells)
+	return skip
 
 
 ## For a [TileMapLayer], create a changeset that will
@@ -1882,12 +2035,13 @@ func create_terrain_changeset(tm: TileMapLayer, paint: Dictionary) -> Dictionary
 	# Force cache rebuild if required
 	var _cache := _get_cache(tm.tile_set)
 	
-	var cells := paint.keys()
+	var seam_cells := seams(tm)
+	var cells := paint.keys().filter(func(c): return not seam_cells.has(c))
 	var needed_cells := _widen(tm, cells)
 	
 	var types := {}
 	for c in needed_cells:
-		types[c] = paint[c] if paint.has(c) else get_cell(tm, c)
+		types[c] = paint[c] if paint.has(c) and not seam_cells.has(c) else _solver_type(tm, c, seam_cells)
 	
 	var placements := []
 	placements.resize(cells.size())

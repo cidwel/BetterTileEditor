@@ -555,6 +555,7 @@ func _on_palette_input(event: InputEvent) -> void:
 	var part: Dictionary = _palette_view.tile_part_from_position(Vector2i(event.position))
 	if not part.get("valid", false):
 		return
+	_palette_view.ensure_tile(int(part.source_id), part.coord)
 	if not assign_tile(int(part.source_id), part.coord):
 		_status.text = "[color=#e0a34a]Pick a role on the left first.[/color]"
 

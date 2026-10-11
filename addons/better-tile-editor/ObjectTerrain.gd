@@ -252,6 +252,9 @@ static func object_of_cell(tm: TileMapLayer, cell: Vector2i, objects: Array) -> 
 	var atlas := tm.get_cell_atlas_coords(cell)
 	if atlas.x < 0:
 		return {}
+	# A piece placed by hand stays where it was put, so it is no object to rebuild; a seam too.
+	if tm.get_meta(HAND_PLACED_META, {}).has(cell) or tm.get_meta(SEAM_META, {}).has(cell):
+		return {}
 	var texture := texture_name(tm.tile_set, tm.get_cell_source_id(cell))
 	for o in objects:
 		if o["atlas"] != "" and o["atlas"] != texture:
@@ -281,18 +284,33 @@ static func _rebuild(tm: TileMapLayer, anchor: Vector2i, o: Dictionary, objects:
 	if source < 0:
 		return
 
+	# A block holding a seam joins nothing, and nothing joins it.
+	var seams: Dictionary = tm.get_meta(SEAM_META, {})
 	var steps := steps_for(o["size"])
 	var has := {}
+	var sealed := _block_has_seam(seams, anchor, block_cells)
 	for side in steps:
-		has[side] = not object_at(tm, anchor + steps[side], o, objects).is_empty()
+		has[side] = not sealed and not _block_has_seam(seams, anchor + steps[side], block_cells) \
+			and not object_at(tm, anchor + steps[side], o, objects).is_empty()
 
 	for c in block_cells:
+		if seams.has(anchor + c["off"]):
+			continue
 		var fused := true
 		for side in c["sides"]:
 			if not has[side]:
 				fused = false
 				break
 		tm.set_cell(anchor + c["off"], source, (o["fused"] if fused else o["closed"]) + c["off"], 0)
+
+
+static func _block_has_seam(seams: Dictionary, anchor: Vector2i, block_cells: Array) -> bool:
+	if seams.is_empty():
+		return false
+	for c in block_cells:
+		if seams.has(anchor + c["off"]):
+			return true
+	return false
 
 
 ## Include neighbouring objects in the undo snapshot; they may change without being painted.
@@ -414,6 +432,8 @@ static func fix_layer(tm: TileMapLayer) -> int:
 ## The whole base must fit the painted region; generated crowns may overhang it.
 const MASS_LAYER := "_Mass"
 const MASS_PLACEMENTS := &"_better_terrain_mass_placements"
+const HAND_PLACED_META := &"_better_terrain_hand_placed"
+const SEAM_META := &"_better_terrain_seams"
 const MASS_MARKER := &"_better_terrain_mass_marker"
 const MASS_MAX_LAYERS := 6
 
@@ -489,8 +509,9 @@ static func fix_mass(tm: TileMapLayer, allow_new := true, stroke: Array = [], pa
 				for dx in size.x:
 					owner[[b["source_id"], b["rect"].position + Vector2i(dx, dy)]] = true
 		var mine := {}
+		var seams: Dictionary = tm.get_meta(SEAM_META, {})
 		for c in tm.get_used_cells():
-			if owner.has([tm.get_cell_source_id(c), tm.get_cell_atlas_coords(c)]):
+			if owner.has([tm.get_cell_source_id(c), tm.get_cell_atlas_coords(c)]) and not seams.has(c):
 				mine[c] = true
 		if mine.is_empty():
 			continue

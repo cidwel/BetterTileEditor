@@ -5,6 +5,8 @@ const ObjectTerrain := preload("res://addons/better-tile-editor/ObjectTerrain.gd
 const ExemplarData := preload("res://addons/better-tile-editor/ExemplarData.gd")
 const Collisions := preload("res://addons/better-tile-editor/editor/Collisions.gd")
 const CustomData := preload("res://addons/better-tile-editor/editor/CustomData.gd")
+const QuarterPieces := preload("res://addons/better-tile-editor/editor/QuarterPieces.gd")
+const PERF := preload("res://addons/better-tile-editor/Perf.gd")
 
 signal paste_occurred
 signal change_zoom_level(value)
@@ -13,7 +15,8 @@ signal tile_picked(source_id: int, origin: Vector2i, size: Vector2i)
 ## Right click in Single tile: the tile under the mouse (source -1 when none).
 signal favorite_requested(source_id: int, coord: Vector2i, alternate: int)
 signal tile_dropped(source_id: int, coord: Vector2i)
-signal collision_marked(source_id: int, coord: Vector2i, solid: bool)
+## [param alternate] is the alternative clicked, 0 for the tile itself.
+signal collision_marked(source_id: int, coord: Vector2i, solid: bool, alternate: int)
 signal collision_stroke_ended
 signal collision_copy_requested(source_id: int, coord: Vector2i)
 signal collision_paste_requested(source_id: int, coord: Vector2i)
@@ -71,12 +74,26 @@ var _canvas_item_background : RID
 
 var tileset: TileSet
 var disabled_sources: Array[int] = []: set = set_disabled_sources
+## Leave out the atlases Complete terrain makes for missing pieces.
+var hide_generated := true:
+	set(value):
+		hide_generated = value
+		_on_zoom_value_changed(zoom_level)
 var show_grid := false:
 	set(value):
 		show_grid = value
 		queue_redraw()
 
 var dim_unassigned_tiles := true
+## Cells that have art but no tile in the atlas show dimmed and turn into a tile the
+## moment something is done to them, so the tile set needs no Atlas setup first.
+var show_untiled := true:
+	set(value):
+		show_untiled = value
+		queue_redraw()
+var _standin: TileData
+## A left or right button is down over the view.
+var _held := false
 # Off for pickers that only need the plain atlas
 var show_terrain_marks := true
 var paint := BetterTerrain.TileCategory.NON_TERRAIN
@@ -106,6 +123,8 @@ var pick_icon_terrain_cancel := false
 var single_tile_favorites := false
 var pick_tiles := false
 var marked_blocks: Array = []
+## A tile shown for a moment after a pick finds it: {source_id, region}; region is in the texture.
+var flash := {}
 var mark_colour := Color.WHITE
 var _pick_from := Vector2i(-1, -1)
 var _pick_to := Vector2i(-1, -1)
@@ -221,6 +240,12 @@ func _exit_tree() -> void:
 
 
 func refresh_tileset(ts: TileSet) -> void:
+	var t := PERF.begin()
+	_refresh_tileset_timed(ts)
+	PERF.end("tileview.refresh_tileset", t)
+
+
+func _refresh_tileset_timed(ts: TileSet) -> void:
 	tileset = ts
 	
 	tiles_size = Vector2.ZERO
@@ -260,6 +285,12 @@ func refresh_tileset(ts: TileSet) -> void:
 #region Layout
 
 func _relayout() -> void:
+	var t := PERF.begin()
+	_relayout_timed()
+	PERF.end("tileview.relayout", t)
+
+
+func _relayout_timed() -> void:
 	_bands.clear()
 	tiles_size = Vector2.ZERO
 	_content_height = 0.0
@@ -269,7 +300,7 @@ func _relayout() -> void:
 	for s in tileset.get_source_count():
 		var source_id := tileset.get_source_id(s)
 		var source := tileset.get_source(source_id) as TileSetAtlasSource
-		if source != null and source.texture != null and not source_id in disabled_sources:
+		if source != null and source.texture != null and not _source_hidden(source_id):
 			shown.append(source_id)
 	var labelled := shown.size() > 1
 	var y := 0.0
@@ -489,6 +520,137 @@ func is_tile_in_source(source: TileSetAtlasSource, coord: Vector2i) -> bool:
 	return coord.x < origin.x + span.x and coord.y < origin.y + span.y
 
 
+#region Untiled cells
+
+## True when the cell holds art in the texture but no tile.
+func _is_untiled(source: TileSetAtlasSource, coord: Vector2i) -> bool:
+	if not show_untiled or source.texture == null:
+		return false
+	var grid := source.get_atlas_grid_size()
+	if coord.x < 0 or coord.y < 0 or coord.x >= grid.x or coord.y >= grid.y:
+		return false
+	if source.get_tile_at_coords(coord) != Vector2i(-1, -1):
+		return false
+	return _art_cells(source, grid)[coord.y * grid.x + coord.x] == 1
+
+
+## The untiled cell under a _texture_at hit: {coord, region}, or {}.
+func _untiled_at(hit: Dictionary) -> Dictionary:
+	var source: TileSetAtlasSource = hit.band.source
+	var step := Vector2(source.texture_region_size + source.separation)
+	var local: Vector2 = hit.point - Vector2(source.margins)
+	if local.x < 0.0 or local.y < 0.0:
+		return {}
+	if fposmod(local.x, step.x) >= source.texture_region_size.x or fposmod(local.y, step.y) >= source.texture_region_size.y:
+		return {}
+	var coord := Vector2i((local / step).floor())
+	if not _is_untiled(source, coord):
+		return {}
+	return {coord = coord, region = Rect2(Vector2(source.margins) + Vector2(coord) * step, Vector2(source.texture_region_size))}
+
+
+## [source id, coords, alternative] of a tile part. Undo steps find the tile again by this, as
+## undoing a tile's creation frees its TileData and redoing makes a new one.
+func _ref(part: Dictionary) -> Array:
+	return [part.source_id, part.coord, part.alternate]
+
+
+## Calls a BetterTerrain method on the tile a _ref points at, if it still exists.
+func _on_tile(method: StringName, ref: Array, rest: Array = []) -> void:
+	if tileset == null or not tileset.has_source(ref[0]):
+		return
+	var source := tileset.get_source(ref[0]) as TileSetAtlasSource
+	if source == null or not source.has_tile(ref[1]) or not source.has_alternative_tile(ref[1], ref[2]):
+		return
+	BetterTerrain.callv(method, [tileset, source.get_tile_data(ref[1], ref[2])] + rest)
+
+
+## Tiles made since the last click, [source id, coords] each; one undo step takes them all.
+var _made: Array = []
+var _made_open := false
+
+
+func _make_tiles(ts: TileSet, list: Array) -> void:
+	for entry in list:
+		var source := ts.get_source(entry[0]) as TileSetAtlasSource if ts.has_source(entry[0]) else null
+		if source != null and source.get_tile_at_coords(entry[1]) == Vector2i(-1, -1):
+			source.create_tile(entry[1])
+
+
+func _drop_tiles(ts: TileSet, list: Array) -> void:
+	for entry in list:
+		var source := ts.get_source(entry[0]) as TileSetAtlasSource if ts.has_source(entry[0]) else null
+		if source != null and source.has_tile(entry[1]):
+			source.remove_tile(entry[1])
+
+
+## Makes the tile of an untiled cell, for the interactions that need one. The first one of a
+## click or drag opens an undo step that the rest of them join, so undo steps back over the
+## edit first and the tiles after it.
+func ensure_tile(source_id: int, coord: Vector2i) -> bool:
+	if tileset == null or not tileset.has_source(source_id):
+		return false
+	var source := tileset.get_source(source_id) as TileSetAtlasSource
+	if source == null:
+		return false
+	if source.get_tile_at_coords(coord) != Vector2i(-1, -1):
+		return true
+	if not _is_untiled(source, coord):
+		return false
+	source.create_tile(coord)
+	if undo_manager != null:
+		if not _made_open:
+			_made = []
+			_made_open = true
+			undo_manager.create_action("Define tiles", UndoRedo.MERGE_DISABLE, tileset, true)
+			undo_manager.add_do_method(self, &"_make_tiles", tileset, _made)
+			undo_manager.add_undo_method(self, &"_drop_tiles", tileset, _made)
+			undo_manager.commit_action(false)
+		_made.append([source_id, coord])
+	queue_redraw()
+	return true
+
+
+## Makes the tiles of every untiled cell in a box of an atlas.
+func ensure_tiles_in(source_id: int, box: Rect2i) -> void:
+	if tileset == null or not tileset.has_source(source_id):
+		return
+	for y in range(box.position.y, box.end.y):
+		for x in range(box.position.x, box.end.x):
+			ensure_tile(source_id, Vector2i(x, y))
+
+
+## A click or drag is on: the cells it touches become tiles. Picking blocks leaves them be,
+## the tool that takes the block makes what it needs.
+func _creating() -> bool:
+	return _held and not pick_tiles
+
+
+func _untiled_part(band: Dictionary, untiled: Dictionary, pos: Vector2i) -> Dictionary:
+	var target_rect := _texture_rect(band, untiled.region)
+	if not target_rect.has_area():
+		return {valid = false}
+	var source: TileSetAtlasSource = band.source
+	var result := {
+		valid = true,
+		source_id = band.source_id,
+		coord = untiled.coord,
+		alternate = 0,
+	}
+	if _creating() and ensure_tile(band.source_id, untiled.coord):
+		result.data = source.get_tile_data(untiled.coord, 0)
+	else:
+		# Hover only: a blank stand-in reads as an unassigned tile and is never written.
+		if _standin == null:
+			_standin = TileData.new()
+		result.data = _standin
+		result.untiled = true
+	_build_tile_part_from_position(result, pos, target_rect)
+	return result
+
+#endregion
+
+
 func _build_tile_part_from_position(result: Dictionary, pos: Vector2i, rect: Rect2) -> void:
 	result.rect = rect
 	var type := BetterTerrain.get_tile_terrain_type(result.data)
@@ -553,13 +715,20 @@ func _trim_to_tiles(source_id: int, box: Rect2i) -> Rect2i:
 
 
 func tile_part_from_position(pos: Vector2i) -> Dictionary:
+	var t := PERF.begin()
+	var r = _tile_part_from_position_timed(pos)
+	PERF.end("tileview.hit_test", t)
+	return r
+
+
+func _tile_part_from_position_timed(pos: Vector2i) -> Dictionary:
 	if !tileset:
 		return { valid = false }
 	
 	var alt_offset := Vector2.RIGHT * (zoom_level * tiles_size.x + ALTERNATE_TILE_MARGIN)
 	if Rect2(alt_offset, zoom_level * alternate_size).has_point(pos):
 		for a in alternate_lookup:
-			if a[1] in disabled_sources:
+			if _source_hidden(a[1]):
 				continue
 			var next_offset_y = alt_offset.y + zoom_level * a[0].y
 			if pos.y > next_offset_y:
@@ -612,6 +781,9 @@ func tile_part_from_position(pos: Vector2i) -> Dictionary:
 				}
 				_build_tile_part_from_position(result, pos, target_rect)
 				return result
+			var untiled := _untiled_at(hit)
+			if not untiled.is_empty():
+				return _untiled_part(band, untiled, pos)
 	
 	return { valid = false }
 
@@ -623,7 +795,7 @@ func tile_rect_from_position(pos: Vector2i) -> Rect2:
 	var alt_offset := Vector2.RIGHT * (zoom_level * tiles_size.x + ALTERNATE_TILE_MARGIN)
 	if Rect2(alt_offset, zoom_level * alternate_size).has_point(pos):
 		for a in alternate_lookup:
-			if a[1] in disabled_sources:
+			if _source_hidden(a[1]):
 				continue
 			var next_offset_y = alt_offset.y + zoom_level * a[0].y
 			if pos.y > next_offset_y:
@@ -652,6 +824,11 @@ func tile_rect_from_position(pos: Vector2i) -> Rect2:
 				var rect := source.get_tile_texture_region(source.get_tile_id(t), 0)
 				if Rect2(rect).has_point(hit.point):
 					return _texture_rect(hit.band, rect)
+			var untiled := _untiled_at(hit)
+			if not untiled.is_empty():
+				var shown := _texture_rect(hit.band, untiled.region)
+				if shown.has_area():
+					return shown
 	
 	return Rect2(-1,-1,0,0)
 
@@ -666,6 +843,8 @@ func tile_parts_from_rect(rect:Rect2) -> Array[Dictionary]:
 	for band in _bands:
 		var source_id: int = band.source_id
 		var source: TileSetAtlasSource = band.source
+		if _creating():
+			_make_tiles_touching(band, rect)
 		for t in source.get_tiles_count():
 			var coord := source.get_tile_id(t)
 			var tile_rect := source.get_tile_texture_region(coord, 0)
@@ -705,6 +884,22 @@ func tile_parts_from_rect(rect:Rect2) -> Array[Dictionary]:
 				alt_offset.y += zoom_level * tile_rect.size.y
 	
 	return tiles
+
+
+## Turns the untiled cells under a view rect into tiles.
+func _make_tiles_touching(band: Dictionary, rect: Rect2) -> void:
+	var source: TileSetAtlasSource = band.source
+	var grid := source.get_atlas_grid_size()
+	var step := Vector2(source.texture_region_size + source.separation)
+	for y in grid.y:
+		for x in grid.x:
+			var coord := Vector2i(x, y)
+			if not _is_untiled(source, coord):
+				continue
+			var region := Rect2(Vector2(source.margins) + Vector2(coord) * step, Vector2(source.texture_region_size))
+			var shown := _texture_rect(band, region)
+			if shown.has_area() and shown.intersects(rect):
+				ensure_tile(band.source_id, coord)
 
 
 func _get_canvas_item(td: TileData) -> RID:
@@ -875,6 +1070,12 @@ var collision_color := Collisions.DEFAULT_OVERLAY_COLOR
 
 
 func _draw() -> void:
+	var t := PERF.begin()
+	_draw_timed()
+	PERF.end("tileview.draw", t)
+
+
+func _draw_timed() -> void:
 	collision_mesh = Collisions.new_mesh()
 	_draw_terrains.clear()
 	_draw_polygons.clear()
@@ -937,7 +1138,7 @@ func _draw() -> void:
 				if cull and not window.intersects(target_rect):
 					continue
 				var td := source.get_tile_data(coord, alt_id)
-				var drawing_current = BetterTerrain.get_tile_terrain_type(td) == paint and not collision_mode
+				var drawing_current = is_painted_terrain(td) and not collision_mode
 				if paint_mode == PaintMode.PAINT_SYMMETRY and not collision_mode:
 					_draw_tile_symmetry(source.texture, target_rect, rect, td, drawing_current)
 				else:
@@ -970,13 +1171,17 @@ func _draw() -> void:
 		
 		_draw_exemplar_outline(entry)
 		_draw_marked_blocks(entry)
+		if not flash.is_empty() and flash.source_id == entry.source_id:
+			var lit := atlas_rect(flash.source_id, flash.region)
+			if lit.has_area():
+				draw_rect(lit.grow(2), Color(0.35, 0.9, 1.0), false, 3.0)
 		if band_seen:
 			_draw_blank_cells(entry, window if cull else Rect2())
 	
 	# Blank out unused alternate tile sections
 	alt_offset = Vector2.RIGHT * (zoom_level * tiles_size.x + ALTERNATE_TILE_MARGIN)
 	for a in alternate_lookup:
-		if a[1] in disabled_sources:
+		if _source_hidden(a[1]):
 			continue
 		var source := tileset.get_source(a[1]) as TileSetAtlasSource
 		if source:
@@ -1065,11 +1270,11 @@ func delete_selection():
 		for side in range(16):
 			var old_peering = BetterTerrain.tile_peering_types(t.part.data, side)
 			if old_peering.has(paint):
-				undo_manager.add_do_method(BetterTerrain, &"remove_tile_peering_type", tileset, t.part.data, side, paint)
-				undo_manager.add_undo_method(BetterTerrain, &"add_tile_peering_type", tileset, t.part.data, side, paint)
+				undo_manager.add_do_method(self, &"_on_tile", &"remove_tile_peering_type", _ref(t.part), [side, paint])
+				undo_manager.add_undo_method(self, &"_on_tile", &"add_tile_peering_type", _ref(t.part), [side, paint])
 			if BetterTerrain.tile_not_peering_types(t.part.data, side).has(paint):
-				undo_manager.add_do_method(BetterTerrain, &"remove_tile_not_peering_type", tileset, t.part.data, side, paint)
-				undo_manager.add_undo_method(BetterTerrain, &"add_tile_not_peering_type", tileset, t.part.data, side, paint)
+				undo_manager.add_do_method(self, &"_on_tile", &"remove_tile_not_peering_type", _ref(t.part), [side, paint])
+				undo_manager.add_undo_method(self, &"_on_tile", &"add_tile_not_peering_type", _ref(t.part), [side, paint])
 	
 	undo_manager.add_do_method(self, &"queue_redraw")
 	undo_manager.add_undo_method(self, &"queue_redraw")
@@ -1082,7 +1287,7 @@ func toggle_selection():
 		var type := BetterTerrain.get_tile_terrain_type(t.part.data)
 		var goal := paint if paint != type else BetterTerrain.TileCategory.NON_TERRAIN
 		
-		terrain_undo.add_do_method(undo_manager, BetterTerrain, &"set_tile_terrain_type", [tileset, t.part.data, goal])
+		terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"set_tile_terrain_type", _ref(t.part), [goal]])
 		if goal == BetterTerrain.TileCategory.NON_TERRAIN:
 			terrain_undo.create_peering_restore_point_tile(
 				undo_manager,
@@ -1092,7 +1297,7 @@ func toggle_selection():
 				t.part.alternate
 			)
 		else:
-			undo_manager.add_undo_method(BetterTerrain, &"set_tile_terrain_type", tileset, t.part.data, type)
+			undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_terrain_type", _ref(t.part), [type])
 	
 	terrain_undo.add_do_method(undo_manager, self, &"queue_redraw", [])
 	undo_manager.add_undo_method(self, &"queue_redraw")
@@ -1113,6 +1318,7 @@ func _draw_blank_cells(band: Dictionary, window: Rect2) -> void:
 	var step := Vector2(source.separation + source.texture_region_size)
 	var margins := Vector2(source.margins)
 	var cell := zoom_level * Vector2(source.texture_region_size)
+	var art := _art_cells(source, grid_size)
 	var columns := mini(grid_size.x, int(ceil((band.width - margins.x) / step.x)))
 	for segment: Array in band.segments:
 		var top: float = band.top + segment[2]
@@ -1142,6 +1348,10 @@ func _draw_blank_cells(band: Dictionary, window: Rect2) -> void:
 					draw_rect(r, Color(0.75, 0.8, 0.85, 0.28), false, 1.0)
 				if !is_tile_in_source(source, pos):
 					draw_rect(r, Color(0.0, 0.0, 0.0, 0.8), true)
+					if show_untiled and art[y * grid_size.x + x] == 1 and source.get_tile_at_coords(pos) == Vector2i(-1, -1):
+						var region := Rect2(margins + Vector2(pos) * step, Vector2(source.texture_region_size))
+						draw_texture_rect_region(source.texture, r, region, Color(1, 1, 1, 0.55))
+						draw_rect(r.grow(-0.5), Color(1, 1, 1, 0.16), false, 1.0)
 
 
 func _draw_marked_blocks(band: Dictionary) -> void:
@@ -1299,13 +1509,13 @@ func _paint_object_block(is_lone: bool) -> void:
 			var c: Vector2i = origin + Vector2i(dx, dy)
 			if src.get_tile_at_coords(c) != c:
 				return
-			data.push_back(src.get_tile_data(c, 0))
+			data.push_back([highlighted_tile_part.source_id, c, 0])
 
 	undo_manager.create_action("Mark object block", UndoRedo.MERGE_DISABLE, tileset, true)
 	for d in data:
-		var before := BetterTerrain.get_tile_terrain_type(d)
-		undo_manager.add_do_method(BetterTerrain, &"set_tile_terrain_type", tileset, d, paint)
-		undo_manager.add_undo_method(BetterTerrain, &"set_tile_terrain_type", tileset, d, before)
+		var before := BetterTerrain.get_tile_terrain_type(src.get_tile_data(d[1], 0))
+		undo_manager.add_do_method(self, &"_on_tile", &"set_tile_terrain_type", d, [paint])
+		undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_terrain_type", d, [before])
 	if is_lone:
 		var updated := cfg.duplicate()
 		updated["size"] = [object_size.x, object_size.y]
@@ -1333,16 +1543,15 @@ func _erase_object_block() -> void:
 			var c: Vector2i = origin + Vector2i(dx, dy)
 			if src.get_tile_at_coords(c) != c:
 				continue
-			var d := src.get_tile_data(c, 0)
-			if BetterTerrain.get_tile_terrain_type(d) == paint:
-				data.push_back(d)
+			if BetterTerrain.get_tile_terrain_type(src.get_tile_data(c, 0)) == paint:
+				data.push_back([highlighted_tile_part.source_id, c, 0])
 	if data.is_empty():
 		return
 
 	undo_manager.create_action("Clear object block", UndoRedo.MERGE_DISABLE, tileset, true)
 	for d in data:
-		undo_manager.add_do_method(BetterTerrain, &"set_tile_terrain_type", tileset, d, BetterTerrain.TileCategory.NON_TERRAIN)
-		undo_manager.add_undo_method(BetterTerrain, &"set_tile_terrain_type", tileset, d, paint)
+		undo_manager.add_do_method(self, &"_on_tile", &"set_tile_terrain_type", d, [BetterTerrain.TileCategory.NON_TERRAIN])
+		undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_terrain_type", d, [paint])
 	var lone: Array = cfg.get("lone", [])
 	if lone.size() == 2 and Vector2i(lone[0], lone[1]) == origin:
 		var updated := cfg.duplicate()
@@ -1372,6 +1581,19 @@ func set_disabled_sources(list):
 	_on_zoom_value_changed(zoom_level)
 
 
+## Whether [param td] belongs to the entry being painted, which the atlas outlines.
+## Nothing selected is NON_TERRAIN too, and must not outline every untyped tile.
+func is_painted_terrain(td: TileData) -> bool:
+	return paint != BetterTerrain.TileCategory.NON_TERRAIN and BetterTerrain.get_tile_terrain_type(td) == paint
+
+
+func _source_hidden(source_id: int) -> bool:
+	if source_id in disabled_sources:
+		return true
+	return hide_generated and tileset != null and tileset.has_source(source_id) \
+		and tileset.get_source(source_id).has_meta(QuarterPieces.GENERATED_META)
+
+
 func emit_terrain_updated(index):
 	terrain_updated.emit(index)
 
@@ -1381,6 +1603,14 @@ var shortcuts_blocked := false
 
 
 func _gui_input(event) -> void:
+	var t := PERF.begin()
+	_gui_input_timed(event)
+	PERF.end("tileview.gui_input", t)
+
+
+func _gui_input_timed(event) -> void:
+	if event is InputEventMouseButton and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		_held = event.pressed
 	if collision_mode and _collision_input(event):
 		return
 	if event is InputEventKey and event.is_pressed() and shortcuts_blocked:
@@ -1424,6 +1654,8 @@ func _gui_input(event) -> void:
 			accept_event()
 			if event.pressed:
 				var hovered := tile_part_from_position(event.position)
+				if hovered.valid and ensure_tile(hovered.source_id, hovered.coord):
+					hovered = tile_part_from_position(event.position)
 				if hovered.valid:
 					favorite_requested.emit(hovered.source_id, hovered.coord, hovered.alternate)
 			return
@@ -1451,12 +1683,17 @@ func _gui_input(event) -> void:
 		if tile.valid != highlighted_tile_part.valid or\
 			(tile.valid and tile.data != highlighted_tile_part.data) or\
 			(tile.valid and tile.get("peering") != highlighted_tile_part.get("peering")) or\
+			(tile.valid and tile.get("rect") != highlighted_tile_part.get("rect")) or\
 			event.button_mask & MOUSE_BUTTON_LEFT and paint_action == PaintAction.SELECT:
 			queue_redraw()
 		highlighted_tile_part = tile
 	
 	var clicked : bool = event is InputEventMouseButton and (event.pressed and (event.button_index == MOUSE_BUTTON_LEFT or event.button_index == MOUSE_BUTTON_RIGHT))
 	if clicked:
+		_made_open = false
+		# The tile under a click exists from here on, whatever the hover found.
+		if highlighted_tile_part.get("untiled", false):
+			highlighted_tile_part = tile_part_from_position(event.position)
 		initial_click = current_position
 		selection_start = Vector2i(-1,-1)
 		terrain_undo.action_index += 1
@@ -1471,6 +1708,7 @@ func _gui_input(event) -> void:
 			highlighted_tile_part = tile_part_from_position(event.position)
 		if clicked and event.button_index == MOUSE_BUTTON_RIGHT:
 			if highlighted_tile_part.valid:
+				ensure_tile(highlighted_tile_part.source_id, highlighted_tile_part.coord)
 				tile_dropped.emit(highlighted_tile_part.source_id, highlighted_tile_part.coord)
 			return
 		if clicked and event.button_index == MOUSE_BUTTON_LEFT:
@@ -1493,6 +1731,7 @@ func _gui_input(event) -> void:
 			var to := _pick_target()
 			var lo := Vector2i(mini(_pick_from.x, to.x), mini(_pick_from.y, to.y))
 			var hi := Vector2i(maxi(_pick_from.x, to.x), maxi(_pick_from.y, to.y))
+			ensure_tiles_in(_pick_source, Rect2i(lo, hi - lo + Vector2i.ONE))
 			var box := _trim_to_tiles(_pick_source, Rect2i(lo, hi - lo + Vector2i.ONE))
 			tile_picked.emit(_pick_source, box.position, box.size)
 			_pick_from = Vector2i(-1, -1)
@@ -1528,26 +1767,26 @@ func _gui_input(event) -> void:
 						var old_peering = BetterTerrain.tile_peering_types(old_tile_part.data, side)
 						var new_sides = new_tile_state.sides
 						if new_sides.has(side) and not old_peering.has(paint):
-							undo_manager.add_do_method(BetterTerrain, &"add_tile_peering_type", tileset, old_tile_part.data, side, paint)
-							undo_manager.add_undo_method(BetterTerrain, &"remove_tile_peering_type", tileset, old_tile_part.data, side, paint)
+							undo_manager.add_do_method(self, &"_on_tile", &"add_tile_peering_type", _ref(old_tile_part), [side, paint])
+							undo_manager.add_undo_method(self, &"_on_tile", &"remove_tile_peering_type", _ref(old_tile_part), [side, paint])
 						elif old_peering.has(paint) and not new_sides.has(side):
-							undo_manager.add_do_method(BetterTerrain, &"remove_tile_peering_type", tileset, old_tile_part.data, side, paint)
-							undo_manager.add_undo_method(BetterTerrain, &"add_tile_peering_type", tileset, old_tile_part.data, side, paint)
+							undo_manager.add_do_method(self, &"_on_tile", &"remove_tile_peering_type", _ref(old_tile_part), [side, paint])
+							undo_manager.add_undo_method(self, &"_on_tile", &"add_tile_peering_type", _ref(old_tile_part), [side, paint])
 						
 						var old_not = BetterTerrain.tile_not_peering_types(old_tile_part.data, side)
 						var new_not_sides = new_tile_state.get("not_sides", [])
 						if new_not_sides.has(side) and not old_not.has(paint):
-							undo_manager.add_do_method(BetterTerrain, &"add_tile_not_peering_type", tileset, old_tile_part.data, side, paint)
-							undo_manager.add_undo_method(BetterTerrain, &"remove_tile_not_peering_type", tileset, old_tile_part.data, side, paint)
+							undo_manager.add_do_method(self, &"_on_tile", &"add_tile_not_peering_type", _ref(old_tile_part), [side, paint])
+							undo_manager.add_undo_method(self, &"_on_tile", &"remove_tile_not_peering_type", _ref(old_tile_part), [side, paint])
 						elif old_not.has(paint) and not new_not_sides.has(side):
-							undo_manager.add_do_method(BetterTerrain, &"remove_tile_not_peering_type", tileset, old_tile_part.data, side, paint)
-							undo_manager.add_undo_method(BetterTerrain, &"add_tile_not_peering_type", tileset, old_tile_part.data, side, paint)
+							undo_manager.add_do_method(self, &"_on_tile", &"remove_tile_not_peering_type", _ref(old_tile_part), [side, paint])
+							undo_manager.add_undo_method(self, &"_on_tile", &"add_tile_not_peering_type", _ref(old_tile_part), [side, paint])
 					
 					var old_symmetry = BetterTerrain.get_tile_symmetry_type(old_tile_part.data)
 					var new_symmetry = new_tile_state.symmetry
 					if new_symmetry != old_symmetry:
-						undo_manager.add_do_method(BetterTerrain, &"set_tile_symmetry_type", tileset, old_tile_part.data, new_symmetry)
-						undo_manager.add_undo_method(BetterTerrain, &"set_tile_symmetry_type", tileset, old_tile_part.data, old_symmetry)
+						undo_manager.add_do_method(self, &"_on_tile", &"set_tile_symmetry_type", _ref(old_tile_part), [new_symmetry])
+						undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_symmetry_type", _ref(old_tile_part), [old_symmetry])
 					
 				undo_manager.add_do_method(self, &"queue_redraw")
 				undo_manager.add_undo_method(self, &"queue_redraw")
@@ -1654,7 +1893,7 @@ func _gui_input(event) -> void:
 					var goal := paint if paint_action == PaintAction.DRAW_TYPE else BetterTerrain.TileCategory.NON_TERRAIN
 					if type != goal:
 						undo_manager.create_action("Set tile terrain type " + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tileset, true)
-						terrain_undo.add_do_method(undo_manager, BetterTerrain, &"set_tile_terrain_type", [tileset, highlighted_tile_part.data, goal])
+						terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"set_tile_terrain_type", _ref(highlighted_tile_part), [goal]])
 						terrain_undo.add_do_method(undo_manager, self, &"queue_redraw", [])
 						if goal == BetterTerrain.TileCategory.NON_TERRAIN:
 							terrain_undo.create_peering_restore_point_tile(
@@ -1665,13 +1904,14 @@ func _gui_input(event) -> void:
 								highlighted_tile_part.alternate
 							)
 						else:
-							undo_manager.add_undo_method(BetterTerrain, &"set_tile_terrain_type", tileset, highlighted_tile_part.data, type)
+							undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_terrain_type", _ref(highlighted_tile_part), [type])
 						undo_manager.add_undo_method(self, &"queue_redraw")
 						undo_manager.commit_action()
 						terrain_undo.action_count += 1
 				elif paint_action == PaintAction.DRAW_PEERING:
 					if highlighted_tile_part.has("peering"):
 						var td = highlighted_tile_part.data
+						var tref := _ref(highlighted_tile_part)
 						var side = highlighted_tile_part.peering
 						var has_match = paint in BetterTerrain.tile_peering_types(td, side)
 						var has_not = paint in BetterTerrain.tile_not_peering_types(td, side)
@@ -1682,20 +1922,20 @@ func _gui_input(event) -> void:
 							var to_add := &"add_tile_not_peering_type" if has_match else &"add_tile_peering_type"
 							var to_remove := &"remove_tile_not_peering_type" if has_match else &"remove_tile_peering_type"
 							undo_manager.create_action("Toggle tile terrain peering type " + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tileset, true)
-							terrain_undo.add_do_method(undo_manager, BetterTerrain, from_remove, [tileset, td, side, paint])
-							terrain_undo.add_do_method(undo_manager, BetterTerrain, to_add, [tileset, td, side, paint])
+							terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [from_remove, tref, [side, paint]])
+							terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [to_add, tref, [side, paint]])
 							terrain_undo.add_do_method(undo_manager, self, &"queue_redraw", [])
 							undo_manager.add_undo_method(self, &"queue_redraw")
-							undo_manager.add_undo_method(BetterTerrain, from_add, tileset, td, side, paint)
-							undo_manager.add_undo_method(BetterTerrain, to_remove, tileset, td, side, paint)
+							undo_manager.add_undo_method(self, &"_on_tile", from_add, tref, [side, paint])
+							undo_manager.add_undo_method(self, &"_on_tile", to_remove, tref, [side, paint])
 							undo_manager.commit_action()
 							terrain_undo.action_count += 1
 							break
 						elif !has_match and !has_not:
 							undo_manager.create_action("Set tile terrain peering type " + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tileset, true)
-							terrain_undo.add_do_method(undo_manager, BetterTerrain, &"add_tile_peering_type", [tileset, td, side, paint])
+							terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"add_tile_peering_type", tref, [side, paint]])
 							terrain_undo.add_do_method(undo_manager, self, &"queue_redraw", [])
-							undo_manager.add_undo_method(BetterTerrain, &"remove_tile_peering_type", tileset, td, side, paint)
+							undo_manager.add_undo_method(self, &"_on_tile", &"remove_tile_peering_type", tref, [side, paint])
 							undo_manager.add_undo_method(self, &"queue_redraw")
 							undo_manager.commit_action()
 							terrain_undo.action_count += 1
@@ -1704,17 +1944,18 @@ func _gui_input(event) -> void:
 				elif paint_action == PaintAction.ERASE_PEERING:
 					if highlighted_tile_part.has("peering"):
 						var td = highlighted_tile_part.data
+						var tref := _ref(highlighted_tile_part)
 						var side = highlighted_tile_part.peering
 						var has_match = paint in BetterTerrain.tile_peering_types(td, side)
 						var has_not = paint in BetterTerrain.tile_not_peering_types(td, side)
 						if has_match or has_not:
 							undo_manager.create_action("Remove tile terrain peering type " + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tileset, true)
 							if has_match:
-								terrain_undo.add_do_method(undo_manager, BetterTerrain, &"remove_tile_peering_type", [tileset, td, side, paint])
-								undo_manager.add_undo_method(BetterTerrain, &"add_tile_peering_type", tileset, td, side, paint)
+								terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"remove_tile_peering_type", tref, [side, paint]])
+								undo_manager.add_undo_method(self, &"_on_tile", &"add_tile_peering_type", tref, [side, paint])
 							if has_not:
-								terrain_undo.add_do_method(undo_manager, BetterTerrain, &"remove_tile_not_peering_type", [tileset, td, side, paint])
-								undo_manager.add_undo_method(BetterTerrain, &"add_tile_not_peering_type", tileset, td, side, paint)
+								terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"remove_tile_not_peering_type", tref, [side, paint]])
+								undo_manager.add_undo_method(self, &"_on_tile", &"add_tile_not_peering_type", tref, [side, paint])
 							terrain_undo.add_do_method(undo_manager, self, &"queue_redraw", [])
 							undo_manager.add_undo_method(self, &"queue_redraw")
 							undo_manager.commit_action()
@@ -1723,9 +1964,9 @@ func _gui_input(event) -> void:
 					if paint == BetterTerrain.get_tile_terrain_type(highlighted_tile_part.data):
 						undo_manager.create_action("Set tile symmetry type " + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tileset, true)
 						var old_symmetry = BetterTerrain.get_tile_symmetry_type(highlighted_tile_part.data)
-						terrain_undo.add_do_method(undo_manager, BetterTerrain, &"set_tile_symmetry_type", [tileset, highlighted_tile_part.data, paint_symmetry])
+						terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"set_tile_symmetry_type", _ref(highlighted_tile_part), [paint_symmetry]])
 						terrain_undo.add_do_method(undo_manager, self, &"queue_redraw", [])
-						undo_manager.add_undo_method(BetterTerrain, &"set_tile_symmetry_type", tileset, highlighted_tile_part.data, old_symmetry)
+						undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_symmetry_type", _ref(highlighted_tile_part), [old_symmetry])
 						undo_manager.add_undo_method(self, &"queue_redraw")
 						undo_manager.commit_action()
 						terrain_undo.action_count += 1
@@ -1733,9 +1974,9 @@ func _gui_input(event) -> void:
 					if paint == BetterTerrain.get_tile_terrain_type(highlighted_tile_part.data):
 						undo_manager.create_action("Remove tile symmetry type " + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tileset, true)
 						var old_symmetry = BetterTerrain.get_tile_symmetry_type(highlighted_tile_part.data)
-						terrain_undo.add_do_method(undo_manager, BetterTerrain, &"set_tile_symmetry_type", [tileset, highlighted_tile_part.data, BetterTerrain.SymmetryType.NONE])
+						terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"set_tile_symmetry_type", _ref(highlighted_tile_part), [BetterTerrain.SymmetryType.NONE]])
 						terrain_undo.add_do_method(undo_manager, self, &"queue_redraw", [])
-						undo_manager.add_undo_method(BetterTerrain, &"set_tile_symmetry_type", tileset, highlighted_tile_part.data, old_symmetry)
+						undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_symmetry_type", _ref(highlighted_tile_part), [old_symmetry])
 						undo_manager.add_undo_method(self, &"queue_redraw")
 						undo_manager.commit_action()
 						terrain_undo.action_count += 1
@@ -1787,7 +2028,7 @@ func _collision_input(event: InputEvent) -> bool:
 		return true
 	if event is InputEventMouseMotion and not _panning:
 		var part := tile_part_from_position(event.position)
-		if part.valid != highlighted_tile_part.valid or (part.valid and part.data != highlighted_tile_part.data):
+		if part.valid != highlighted_tile_part.valid or (part.valid and (part.data != highlighted_tile_part.data or part.rect != highlighted_tile_part.get("rect"))):
 			queue_redraw()
 		highlighted_tile_part = part
 		if collision_stroking:
@@ -1869,11 +2110,11 @@ func _collision_touch(from: Vector2, to: Vector2) -> void:
 		var part := tile_part_from_position(from.lerp(to, float(i) / steps) if steps > 1 else to)
 		if not part.valid:
 			continue
-		var key := Vector3i(part.coord.x, part.coord.y, part.source_id)
+		var key := Vector4i(part.coord.x, part.coord.y, part.source_id, part.alternate)
 		if seen.has(key):
 			continue
 		seen[key] = true
-		collision_marked.emit(part.source_id, part.coord, _collision_solid)
+		collision_marked.emit(part.source_id, part.coord, _collision_solid, part.alternate)
 
 
 func _on_zoom_value_changed(value) -> void:

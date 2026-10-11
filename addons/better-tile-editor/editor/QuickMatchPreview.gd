@@ -1,7 +1,8 @@
 @tool
 extends ConfirmationDialog
-## Create quick terrain's preview: the joins read from the drawing (click to toggle one) and a
-## map painted with them.
+## Create quick terrain's preview: the joins read from the drawing (left button paints them, right
+## button erases, both by dragging) and a map painted with them. Cells of the block with nothing
+## drawn are left out until a join is painted on them or their middle is clicked.
 
 const Coverage := preload("res://addons/better-tile-editor/editor/TerrainCoverage.gd")
 const CoverageWindow := preload("res://addons/better-tile-editor/editor/CoverageWindow.gd")
@@ -20,12 +21,16 @@ signal chosen(bits: Dictionary, color: Color, follow: bool)
 
 var _src: TileSetAtlasSource
 var _bits := {}
+## Cells of the block with nothing drawn, or no tile yet: they join the terrain once given a join.
+var _spare := {}
 var _box := Rect2i()
 var _tiles_view: Control
 var _sample: PreviewMap
 var _summary: Label
 var _colour: ColorPickerButton
 var _follow: CheckBox
+## The button held over the tiles: MOUSE_BUTTON_LEFT paints joins, MOUSE_BUTTON_RIGHT erases them.
+var _stroke := MOUSE_BUTTON_NONE
 
 
 func _init() -> void:
@@ -46,10 +51,6 @@ func _init() -> void:
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	views.add_child(left)
-	var hint := Label.new()
-	hint.text = "Joins read from the drawing. Click a side or corner to change one."
-	hint.modulate = Color(1, 1, 1, 0.6)
-	left.add_child(hint)
 	_tiles_view = Control.new()
 	_tiles_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_tiles_view.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -102,11 +103,14 @@ func _init() -> void:
 	confirmed.connect(func(): chosen.emit(_bits.duplicate(true), _colour.color, _follow.button_pressed))
 
 
-func setup(src: TileSetAtlasSource, bits: Dictionary, color: Color) -> void:
+func setup(src: TileSetAtlasSource, bits: Dictionary, color: Color, spare: Array = []) -> void:
 	_src = src
 	_bits = bits.duplicate(true)
+	_spare = {}
+	for c: Vector2i in spare:
+		_spare[c] = true
 	_box = Rect2i()
-	for c: Vector2i in _bits:
+	for c: Vector2i in _bits.keys() + _spare.keys():
 		_box = Rect2i(c, Vector2i.ONE) if _box.size == Vector2i.ZERO else _box.merge(Rect2i(c, Vector2i.ONE))
 	_colour.color = color
 	var settings := EditorInterface.get_editor_settings()
@@ -162,14 +166,28 @@ func _tile_rect(c: Vector2i, cell: float) -> Rect2:
 	return Rect2(Vector2(c - _box.position) * cell, Vector2(cell, cell))
 
 
+## The texture region of [param c], with or without a tile there.
+func _region(c: Vector2i) -> Rect2:
+	if _src.has_tile(c):
+		return Rect2(_src.get_tile_texture_region(c))
+	var size := _src.texture_region_size
+	return Rect2(_src.margins + c * (size + _src.separation), size)
+
+
 func _draw_tiles() -> void:
 	if _src == null:
 		return
 	var cell := _tile_cell()
 	var third := cell / 3.0
+	for c: Vector2i in _spare:
+		if _bits.has(c):
+			continue
+		var r := _tile_rect(c, cell)
+		_tiles_view.draw_texture_rect_region(_src.texture, r, _region(c))
+		_tiles_view.draw_rect(r.grow(-2), Color(1, 1, 1, 0.2), false, 1.0)
 	for c: Vector2i in _bits:
 		var r := _tile_rect(c, cell)
-		_tiles_view.draw_texture_rect_region(_src.texture, r, Rect2(_src.get_tile_texture_region(c)))
+		_tiles_view.draw_texture_rect_region(_src.texture, r, _region(c))
 		_tiles_view.draw_rect(Rect2(r.position + Vector2(third, third), Vector2(third, third)).grow(-1), Color(_colour.color, 0.55))
 		for bit: int in _bits[c]:
 			if PLACES.has(bit):
@@ -178,20 +196,45 @@ func _draw_tiles() -> void:
 
 
 func _on_tiles_input(event: InputEvent) -> void:
-	if not (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT):
-		return
+	if event is InputEventMouseButton and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		if event.pressed:
+			_stroke = event.button_index
+			_paint_at(event.position)
+		elif event.button_index == _stroke:
+			_stroke = MOUSE_BUTTON_NONE
+		_tiles_view.accept_event()
+	elif event is InputEventMouseMotion and _stroke != MOUSE_BUTTON_NONE:
+		_paint_at(event.position)
+
+
+func _paint_at(pos: Vector2) -> void:
 	var cell := _tile_cell()
-	var c := _box.position + Vector2i((event.position / cell).floor())
-	if not _bits.has(c):
+	var c := _box.position + Vector2i((pos / cell).floor())
+	if not _bits.has(c) and not _spare.has(c):
 		return
-	var place := Vector2i(((event.position - _tile_rect(c, cell).position) / (cell / 3.0)).floor())
+	var place := Vector2i(((pos - _tile_rect(c, cell).position) / (cell / 3.0)).floor())
+	# The middle of an empty cell takes it in or leaves it out.
+	if place == Vector2i.ONE:
+		if _spare.has(c) and _stroke == MOUSE_BUTTON_LEFT and not _bits.has(c):
+			_bits[c] = []
+			_sync()
+		elif _spare.has(c) and _stroke == MOUSE_BUTTON_RIGHT and _bits.has(c):
+			_bits.erase(c)
+			_sync()
+		return
+	if not _bits.has(c):
+		if _stroke != MOUSE_BUTTON_LEFT:
+			return
+		_bits[c] = []
 	for bit: int in PLACES:
 		if PLACES[bit] == place:
-			if bit in _bits[c]:
-				_bits[c].erase(bit)
-			else:
+			var on: bool = bit in _bits[c]
+			if _stroke == MOUSE_BUTTON_LEFT and not on:
 				_bits[c].append(bit)
-			_sync()
+				_sync()
+			elif _stroke == MOUSE_BUTTON_RIGHT and on:
+				_bits[c].erase(bit)
+				_sync()
 			return
 
 
@@ -226,6 +269,6 @@ func _draw_sample() -> void:
 			if lookup.has(m):
 				var tiles: Array = lookup[m]
 				var c: Vector2i = tiles[absi(hash(Vector2i(x, y))) % tiles.size()]
-				_sample.draw_texture_rect_region(_src.texture, r, Rect2(_src.get_tile_texture_region(c)))
+				_sample.draw_texture_rect_region(_src.texture, r, _region(c))
 			else:
 				_sample.draw_rect(r.grow(-1), Color(0.9, 0.2, 0.2, 0.55))

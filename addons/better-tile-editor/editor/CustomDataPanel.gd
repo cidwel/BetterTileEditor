@@ -69,7 +69,7 @@ var _use_as_brush: Button
 
 func _init() -> void:
 	name = "CustomDataPanel"
-	custom_minimum_size.x = 270
+	custom_minimum_size.x = 200
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)

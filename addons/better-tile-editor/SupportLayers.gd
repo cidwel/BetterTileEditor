@@ -14,7 +14,8 @@ static func prepare(layer: TileMapLayer) -> void:
 	var label := str(layer.name).trim_prefix("_")
 	if label == "LookupEdges":
 		label = "ExemplarEdges"
-	layer.name = "_" + label
+	if str(layer.name) != "_" + label:
+		layer.name = "_" + label
 	# Lock only once, after that the lock belongs to the user.
 	if not layer.has_meta(PREPARED):
 		layer.set_meta(PREPARED, true)

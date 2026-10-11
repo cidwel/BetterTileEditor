@@ -1,6 +1,7 @@
 @tool
 extends RefCounted
 
+const PERF := preload("res://addons/better-tile-editor/Perf.gd")
 const SupportLayers := preload("res://addons/better-tile-editor/SupportLayers.gd")
 
 const ExemplarTerrain := preload("res://addons/better-tile-editor/ExemplarTerrain.gd")
@@ -53,6 +54,9 @@ static func _terrain_indices(bt, ts: TileSet, name: String) -> Array:
 static func is_level(n: Node) -> bool:
 	if n == null or not (n is TileMapLayer):
 		return false
+	# A map whose layers keep a hand-set z (the game's own layering) opts out of cliff levels.
+	if n.get_parent() != null and bool(n.get_parent().get_meta(&"_better_terrain_no_levels", false)):
+		return false
 	if SupportLayers.find_layer(n, FACES_LAYER_NAME) != null:
 		return true
 	return _paints_cliff_terrain(n)
@@ -74,6 +78,8 @@ static func _paints_cliff_terrain(tm: TileMapLayer) -> bool:
 	if wanted.is_empty():
 		return false
 	for c in tm.get_used_cells():
+		if not ts.has_source(tm.get_cell_source_id(c)):
+			continue
 		var td: TileData = tm.get_cell_tile_data(c)
 		if td == null or not td.has_meta(&"_better_terrain"):
 			continue
@@ -154,9 +160,12 @@ static func faces_layer(tm: TileMapLayer, create := false) -> TileMapLayer:
 
 
 static func _place_behind(l: TileMapLayer) -> void:
-	l.z_as_relative = true
-	l.z_index = -1
-	l.show_behind_parent = false
+	if not l.z_as_relative:
+		l.z_as_relative = true
+	if l.z_index != -1:
+		l.z_index = -1
+	if l.show_behind_parent:
+		l.show_behind_parent = false
 
 
 static func _layers_above(tm: Node, level: int) -> Array:
@@ -184,6 +193,16 @@ static func _covered_from_above(above: Array, coord: Vector2i) -> bool:
 	return false
 
 
+## Erases the face cells a rebuild did not write.
+static func _erase_stale(tm: TileMapLayer, touched: Dictionary, dry_run: bool) -> void:
+	var faces := faces_layer(tm, false)
+	if faces == null or dry_run:
+		return
+	for c in faces.get_used_cells():
+		if not touched.has(c):
+			faces.erase_cell(c)
+
+
 static func _drop_if_empty(tm: TileMapLayer, dry_run: bool) -> void:
 	if dry_run:
 		return
@@ -203,11 +222,19 @@ static func rebuild(tm: TileMapLayer, bt, dry_run := false) -> Dictionary:
 	if ts == null:
 		return report
 
+	var tp := PERF.begin()
 	var faces := faces_layer(tm, false)
+	PERF.end("cliff.faces_layer", tp)
+	tp = PERF.begin()
 	var previous: int = faces.get_used_cells().size() if faces != null else 0
+	PERF.end("cliff.used_cells_prev", tp, "%d" % previous)
 
+	tp = PERF.begin()
 	var level := level_of(tm)
+	PERF.end("cliff.level_of", tp)
+	tp = PERF.begin()
 	var covering := _covering_layers(tm, level)
+	PERF.end("cliff.covering", tp)
 	var rows := rows_for(tm)
 
 	if not dry_run and is_level(tm):
@@ -229,14 +256,18 @@ static func rebuild(tm: TileMapLayer, bt, dry_run := false) -> Dictionary:
 		_drop_if_empty(tm, dry_run)
 		return report
 
-	if faces != null and not dry_run:
-		faces.clear()
+	# Faces are overwritten in place and only the stale ones erased: clearing and rewriting
+	# them all fires the layer's changed signal on every rebuild, even when nothing moved.
+	var touched := {}
 
+	tp = PERF.begin()
 	var wanted := {}
 	for terrain_name in CliffData.all_configs(ts).keys():
 		for index in _terrain_indices(bt, ts, terrain_name):
 			wanted[index] = terrain_name
+	PERF.end("cliff.wanted", tp)
 	if wanted.is_empty():
+		_erase_stale(tm, touched, dry_run)
 		_drop_if_empty(tm, dry_run)
 		return report
 	var by_terrain := {}
@@ -245,7 +276,10 @@ static func rebuild(tm: TileMapLayer, bt, dry_run := false) -> Dictionary:
 	var edges := SupportLayers.find_layer(tm, ExemplarTerrain.EDGES_LAYER_NAME)
 	if edges != null:
 		sources.append(edges)
-	var seen := {}
+	# Seams are no plateau and take no face: the wall breaks there.
+	var seams: Dictionary = bt.seams(tm)
+	var seen := seams.duplicate()
+	tp = PERF.begin()
 	for layer in sources:
 		for c in layer.get_used_cells():
 			if seen.has(c):
@@ -257,6 +291,8 @@ static func rebuild(tm: TileMapLayer, bt, dry_run := false) -> Dictionary:
 					by_terrain[t] = []
 				by_terrain[t].append(c)
 
+	PERF.end("cliff.scan_cells", tp)
+	tp = PERF.begin()
 	for index in by_terrain:
 		var terrain_name: String = wanted[index]
 		var cfg := CliffData.config_of(ts, terrain_name)
@@ -266,8 +302,9 @@ static func rebuild(tm: TileMapLayer, bt, dry_run := false) -> Dictionary:
 		for c in cells:
 			plateau[c] = true
 		var face_map := CliffData.face_map(cells, rows)
+		_drop_seam_walls(face_map, seams)
 		if CliffPattern.is_pattern(cfg):
-			_write_pattern(tm, ts, cfg, plateau, face_map, rows, covering, report, dry_run)
+			_write_pattern(tm, ts, cfg, plateau, face_map, rows, covering, report, dry_run, touched)
 			continue
 		var runs := CliffData.slot_runs(plateau, face_map)
 
@@ -297,14 +334,34 @@ static func rebuild(tm: TileMapLayer, bt, dry_run := false) -> Dictionary:
 				if faces == null:
 					faces = faces_layer(tm, true)
 				faces.set_cell(f, int(tile.source_id), coord)
+				touched[f] = true
 			report.written += 1
 
+	PERF.end("cliff.write_faces", tp)
 	report.cleared = maxi(0, previous - report.written)
+	tp = PERF.begin()
+	_erase_stale(tm, touched, dry_run)
 	_drop_if_empty(tm, dry_run)
+	PERF.end("cliff.drop_if_empty", tp)
 	return report
 
 
-static func _write_pattern(tm: TileMapLayer, ts: TileSet, cfg: Dictionary, plateau: Dictionary, face_map: Dictionary, rows: int, covering: Array, report: Dictionary, dry_run: bool) -> void:
+## A wall that would run through a seam is left out whole, not cut short around the seam.
+static func _drop_seam_walls(face_map: Dictionary, seams: Dictionary) -> void:
+	if seams.is_empty():
+		return
+	var walls := {}
+	for f in seams:
+		if face_map.has(f):
+			walls[Vector2i(f.x, int(face_map[f].edge))] = true
+	if walls.is_empty():
+		return
+	for f in face_map.keys():
+		if walls.has(Vector2i(f.x, int(face_map[f].edge))):
+			face_map.erase(f)
+
+
+static func _write_pattern(tm: TileMapLayer, ts: TileSet, cfg: Dictionary, plateau: Dictionary, face_map: Dictionary, rows: int, covering: Array, report: Dictionary, dry_run: bool, touched: Dictionary) -> void:
 	var runs := CliffPattern.runs_of(plateau, face_map)
 	var faces := faces_layer(tm, false)
 	for f in face_map.keys():
@@ -326,4 +383,5 @@ static func _write_pattern(tm: TileMapLayer, ts: TileSet, cfg: Dictionary, plate
 			if faces == null:
 				faces = faces_layer(tm, true)
 			faces.set_cell(f, int(tile.source_id), tile.coord)
+			touched[f] = true
 		report.written += 1

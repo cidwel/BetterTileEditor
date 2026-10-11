@@ -17,7 +17,7 @@ A fork of [BetterTerrain](https://github.com/Portponky/better-terrain) by
 - Terrain groups, search and favourites
 - Terrain thumbnails and previews
 - Brush sizes from 1×1 to 8×8
-- Map selection, copy, paste and stamping
+- Map selection by rectangle or magic wand, copy, paste and stamping
 - Fill by visible area or current layer
 - Live terrain updates
 - Floating editor dock
@@ -28,6 +28,8 @@ A fork of [BetterTerrain](https://github.com/Portponky/better-terrain) by
 - Complete terrain: builds the pieces a Match terrain is missing from quarters of the ones you drew
 - A collision shape editor: detect shapes from the sprite or draw them by hand
 - A Custom data tool to paint, inspect and pick tile custom data, with presets
+- Tiles you haven't set up in the TileSet show dimmed in the Tiles view and become tiles the moment you use them, no Atlas setup needed (hide them in Options)
+- Seams: mark cells where a terrain stops joining, to break it on purpose
 
 ## Highlights
 
@@ -52,6 +54,23 @@ works in Match Tiles terrains, with the usual peering tool:
 Forbid a category to forbid every terrain in it, or Decoration to forbid an empty
 cell. Use it for tiles defined by what they lack: a notch, a tip, or the corner on
 top of a 2×1 slope.
+
+## Seams
+
+A seam is a cell where terrain stops joining. Use it to break a terrain on purpose:
+two patches of grass that touch but keep their edges, a gap in a cliff wall, a tile
+the autotiler must not touch.
+
+1. Pick **Seams** at the top of the terrain list.
+2. Left click (pencil, line or rectangle) to add seams, right click to remove them.
+   They show as red crosses on the map while the editor is open.
+3. Put any tile on a seam with the single-tile brush: it stays as it is.
+
+A new seam erases the tile under it on that layer, and to the cells around it the seam
+matches anything, so the terrain's edge runs straight into the gap and stops there, open,
+instead of wrapping around it. Put a tile on the seam by hand if you want one there. Painting a terrain and
+the bucket skip seams; objects, patches, cliff walls and scatter leave them alone.
+Seams are saved with the layer and work at runtime too (`BetterTerrain.set_seams`).
 
 ## Slopes
 
@@ -85,6 +104,18 @@ To track the latest changes instead, copy `addons/better-tile-editor` from
 
 ## Changelog
 
+### 0.3.0 (2026-10-11)
+
+- Seams: mark cells where a terrain stops joining, to break it on purpose. They also work at runtime.
+- Magic wand selection, and a menu that shows each layer's tile when a click hits several layers.
+- Ctrl+V shows the copied tiles on the cursor before placing them; Shift+click keeps placing copies.
+- The bucket can fill what you see across layers or the shape of one layer.
+- Tiles you haven't set up in the TileSet show dimmed and become tiles the moment you use them.
+- Loose tiles placed on a terrain stay as you placed them.
+- Drag terrains in the list to reorder them.
+- Scatter can grow on cliff faces, and single scatter pieces can be removed without losing the zone.
+- Now licensed under MPL-2.0 instead of GPLv3: you can use it in closed-source games.
+
 ### 0.2.0 (2026-10-02)
 
 - Complete terrain: finds the pieces a Match terrain is missing and builds them from quarters of the ones you drew, inner corners included.
@@ -101,6 +132,6 @@ To track the latest changes instead, copy `addons/better-tile-editor` from
 - [Technical notes](addons/better-tile-editor/DESIGN.md)
 - [Contributing](CONTRIBUTING.md)
 - [Report a bug](https://github.com/cidwel/BetterTileEditor/issues) — please include a small reproduction project.
-- Copyright (C) 2026 cidwel, released under the [GPL v3](LICENSE.md) or any later version.
+- Copyright (C) 2026 cidwel, released under the [Mozilla Public License 2.0](LICENSE.md).
   Based on [BetterTerrain](https://github.com/Portponky/better-terrain) by Portponky, released under The Unlicense.
 - Godot logo by Andrea Calabró, [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)

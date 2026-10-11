@@ -51,5 +51,5 @@ that can land in this repo. A few things worth knowing before you start:
 
 ## Licence
 
-GPL v3. Contributing puts your work under the same licence. Upstream BetterTerrain
+Mozilla Public License 2.0. Contributing puts your work under the same licence. Upstream BetterTerrain
 is released under The Unlicense.

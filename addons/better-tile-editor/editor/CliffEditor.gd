@@ -1792,6 +1792,7 @@ func _on_palette_input(event: InputEvent) -> void:
 	var hi := Vector2i(maxi(anchor.coord.x, part.coord.x), maxi(anchor.coord.y, part.coord.y))
 	_pick_from = Vector2(-1, -1)
 	_palette_pick.queue_redraw()
+	_palette_view.ensure_tiles_in(int(anchor.source_id), Rect2i(lo, hi - lo + Vector2i.ONE))
 	_on_palette_pressed(int(anchor.source_id), lo, hi - lo + Vector2i.ONE)
 
 

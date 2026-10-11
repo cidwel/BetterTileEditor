@@ -3627,8 +3627,8 @@ the round one reads as drawn.
 
 Create quick terrain (Match) used to make the terrain at once, and a wrong reading
 was only found by painting. It now opens a window first: the selected tiles, large,
-with the joins read from the drawing over them (a click on a side or corner turns
-it on or off), a map painted with them beside it (red where no piece fits yet), the
+with the joins read from the drawing over them (the left button paints sides and
+corners on, the right one erases them, both by dragging), a map painted with them beside it (red where no piece fits yet), the
 name and colour, and "Generate missing pieces and/or collisions". Accepting makes the
 terrain with the joins as adjusted, as one undo step as before, and the tick opens
 the next window on it. The other quick kinds are made at once, as before.
@@ -3805,3 +3805,69 @@ the one whose set values it now holds, or none, instead of the last one clicked.
 Saving a preset whose options another preset already holds (same values by field name) is
 refused before the name is asked: "There is already a preset called "X" with the same
 options." Update on the loaded preset is unaffected.
+
+Dropping a terrain on another one in the terrain list puts it before or after that one
+(left or right half in the grid, top or bottom half in the list), with a bar on that edge
+while dragging, and into that one's group if it was in another. It used to only change the
+group, so the order could only be changed with the move up and down buttons. One undo step.
+
+Loose tiles of a terrain stay as placed. A tile picked as the loose-tile brush (from the atlas,
+a group or the picker) that belongs to a terrain used to be redone by the terrain: the solver
+swapped a Match piece for the one its neighbours asked for, and an Object's pieces were rebuilt
+into whole objects on the object's grid, so a tree set down off the grid smeared into trees.
+Painting such tiles now marks their cells on the layer (`_better_terrain_hand_placed`, a
+{cell: true} meta saved with the scene). The solver, Object rebuilds and Patch rebuilds skip
+marked cells, now and in later strokes; their terrain still shapes the cells around them.
+Painting a terrain over a marked cell or erasing it clears the mark. Plain tiles get no mark.
+
+### AT. Seams: cells where terrain stops joining
+
+`BetterTerrain.gd` → `seams()`, `set_seams()`, `restore_seams()`; `Dock.gd` → `#region Seams tool`
+
+A way to break a terrain on purpose: two patches that touch but keep their edges, a gap in a
+cliff wall, a cell whose tile the autotiler must leave alone. A seam is a mark on a layer's
+cell (`_better_terrain_seams`, a {cell: true} meta saved with the scene, like hand-placed
+cells), not a tile, so the cell can hold any tile or none and the mark outlives both.
+
+**Neighbours see a seam as a wildcard.** The solver reads a seam as `TileCategory.SEAM` when it
+scores the cells around it and never rewrites the seam itself. In Match tiles a seam satisfies
+every match rule on the side facing it and breaks no must-not rule; in Match vertices it takes
+no part in a vertex's vote (a vertex with only seams around it takes the cell's own type). So
+a terrain's edge runs straight into a seam and stops there, open, as if the terrain went on:
+erasing the seam's tile leaves a gap with cut ends. The first version read seams as
+`EMPTY`, and the edge wrapped around the seam like around a hole, which is the opposite of a
+cut. The dock's tool also erases the tile under each new seam (one undo step with the marks), so
+marking a cell cuts the terrain there at once; the API's `set_seams` only sets the marks. A seam
+differs from a hand-placed cell in that: a hand-placed tile keeps its tile *and*
+still shapes its neighbours with its terrain.
+
+**What else respects it**, each where it means something:
+
+- `set_cell(s)` and `replace_cell(s)` skip seams for terrain types, so no brush, line,
+  rectangle, bucket or slope paints over one. Loose tiles (`SINGLE`) and erasing still reach
+  seams: that is how a tile is put on a seam or taken off it. The bucket's flood also stops
+  at seams, so it does not leak through a gap the terrain itself respects.
+- Changesets drop seam cells from the paint and read them as seams.
+- Patch (`ExemplarTerrain.rebuild`): a seam touching a region counts as part of it when its
+  neighbours are looked up, but is never written and gets no rim piece; the rim cells right
+  beside a seam (up, down, left, right) get none either, so the outline stops at the seam
+  instead of rounding it.
+- Objects: a seam is no object piece. A block holding a seam is rebuilt closed, joins no
+  neighbour and no neighbour joins it; the seam cell itself is not written. The dock rebuilds
+  the blocks around a changed seam (`expand_cells`), because `fix_cells` on an empty cell only
+  rebuilds that cell's own block. A forest leaves seam cells out of its painted region.
+- Cliffs: seams are no plateau, and a wall whose column would run through a seam is dropped
+  whole, so the neighbours end with their caps instead of a wall cut short around the seam.
+- Scatter: no piece's footprint lands on a seam (a big piece may still overhang one).
+
+**The tool** is an entry in the terrain list next to Collisions and Custom data. Pencil
+(with the brush size), line and rectangle; left adds, right removes; Shift and Ctrl+Shift
+turn the pencil into a line or a rectangle as when painting. One stroke is one undo step:
+it sets the marks, solves the changed cells and their neighbours, and reruns patches,
+objects and scatter; cliffs follow through the usual dirty timer. Undo restores the tiles,
+then the marks, then reruns the same rebuilds (they are added to the undo list first because
+undo runs its steps in reverse). The seams of the edited layer are drawn as red crosses
+whenever the dock is editing it, in every mode, so a break never looks like a solver bug.
+
+Not carried over: copying and pasting a map selection does not move seams with the tiles,
+and the C# wrapper has no seam calls yet (call the GDScript singleton directly).

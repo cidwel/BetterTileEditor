@@ -13,7 +13,8 @@ var clipboard: Array = []
 func clear_selection() -> void:
 	selection.clear()
 
-func capture(active: TileMapLayer, root: Node, area: Rect2i, mode: int) -> void:
+## With [param only] filled, just the cells projected onto one of its keys count.
+func capture(active: TileMapLayer, root: Node, area: Rect2i, mode: int, only := {}) -> void:
 	if reference != active or scene != root:
 		selection.clear()
 	reference = active
@@ -35,7 +36,7 @@ func capture(active: TileMapLayer, root: Node, area: Rect2i, mode: int) -> void:
 				candidates[Vector2i(c)] = true
 		for c in candidates:
 			var projected := reference.local_to_map(reference.to_local(layer.to_global(layer.map_to_local(c))))
-			if area.has_point(projected):
+			if area.has_point(projected) and (only.is_empty() or only.has(projected)):
 				if mode < 0:
 					cells.erase(c)
 				else:
@@ -44,6 +45,25 @@ func capture(active: TileMapLayer, root: Node, area: Rect2i, mode: int) -> void:
 			selection.erase(layer)
 		else:
 			selection[layer] = cells
+
+## Selects [param cells] of [param layer] alone.
+func capture_layer(active: TileMapLayer, root: Node, layer: TileMapLayer, cells: Array, mode: int) -> void:
+	if reference != active or scene != root:
+		selection.clear()
+	reference = active
+	scene = root
+	if mode == 0:
+		selection.clear()
+	var current: Dictionary = selection.get(layer, {}).duplicate()
+	for c in cells:
+		if mode < 0:
+			current.erase(c)
+		else:
+			current[c] = true
+	if current.is_empty():
+		selection.erase(layer)
+	else:
+		selection[layer] = current
 
 func projected_cells() -> Array:
 	var cells := {}
@@ -67,6 +87,20 @@ func copy(origin: Vector2i) -> void:
 			data.append({coord = c, offset = layer.to_global(layer.map_to_local(c)) - anchor,
 				tile = _read(layer, c)})
 		clipboard.append({layer = layer, data = data, meta = _metadata(layer)})
+
+## The copied cells as a paste at origin would land them: [{layer, cell, tile}], for the preview.
+func blueprint(origin: Vector2i) -> Array:
+	var out := []
+	if clipboard.is_empty() or not is_instance_valid(reference):
+		return out
+	var anchor := reference.to_global(reference.map_to_local(origin))
+	for packet in clipboard:
+		var layer = packet.layer
+		if not _available(layer):
+			continue
+		for cell in packet.data:
+			out.append({layer = layer, cell = layer.local_to_map(layer.to_local(anchor + cell.offset)), tile = cell.tile})
+	return out
 
 func paste(undo: EditorUndoRedoManager, origin: Vector2i, moving: bool, label: String) -> void:
 	if clipboard.is_empty() or not is_instance_valid(reference):
@@ -229,3 +263,5 @@ func _apply(changes: Array, restoring: bool) -> void:
 				layer.set_meta(key, meta[key].duplicate(true))
 			else:
 				layer.remove_meta(key)
+		# Scripts drawing over the tiles (lava, water) rebuild on this signal.
+		layer.changed.emit.call_deferred()

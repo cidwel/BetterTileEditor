@@ -57,6 +57,16 @@ static func exemplar_terrains(ts: TileSet) -> Dictionary:
 	return out
 
 
+# The edge just past a seam is cut away, so the outline stops at the seam.
+static func _beside_seam(seams: Dictionary, cell: Vector2i) -> bool:
+	if seams.is_empty():
+		return false
+	for step in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+		if seams.has(cell + step):
+			return true
+	return false
+
+
 static func rebuild(tm: TileMapLayer, bt, changed_cells: Variant = null) -> Dictionary:
 	var report := {"region": 0, "edges": 0, "blank": 0}
 	var ts := tm.tile_set if tm else null
@@ -73,7 +83,11 @@ static func rebuild(tm: TileMapLayer, bt, changed_cells: Variant = null) -> Dict
 		var d := ExemplarData.drawing_of(ts, index)
 		if not d.is_empty():
 			pinned[index] = d
+	var by_hand: Dictionary = bt.hand_placed(tm)
+	var seams: Dictionary = bt.seams(tm)
 	for c in tm.get_used_cells():
+		if by_hand.has(c) or seams.has(c):
+			continue
 		var t: int = -1
 		var sid := tm.get_cell_source_id(c)
 		var at := tm.get_cell_atlas_coords(c)
@@ -133,8 +147,20 @@ static func rebuild(tm: TileMapLayer, bt, changed_cells: Variant = null) -> Dict
 			for cell in region:
 				for offset in ExemplarData.OFFSETS:
 					candidates[cell + offset] = true
+		# A seam touching the region counts as part of it for its neighbours, so the edge runs
+		# into it and ends there, open; the seam itself is never written.
+		var shape := region
+		for seam in seams:
+			for offset in ExemplarData.OFFSETS:
+				if region.has(seam + offset):
+					if shape == region:
+						shape = region.duplicate()
+					shape[seam] = true
+					break
 		for cell in candidates:
-			var tile := ExemplarData.tile_for(table, region, cell)
+			if seams.has(cell):
+				continue
+			var tile := ExemplarData.tile_for(table, shape, cell)
 			if tile.is_empty():
 				if region.has(cell):
 					report.blank += 1
@@ -142,7 +168,7 @@ static func rebuild(tm: TileMapLayer, bt, changed_cells: Variant = null) -> Dict
 			if region.has(cell):
 				_set_if_changed(tm, cell, tile)
 				report.region += 1
-			else:
+			elif not _beside_seam(seams, cell):
 				desired_edges[cell] = tile
 				report.edges += 1
 

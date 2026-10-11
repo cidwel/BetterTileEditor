@@ -617,6 +617,7 @@ func _atlas_input(event: InputEvent) -> void:
 		if _picking:
 			# Deferred: rebuilding mid-click left the editor ignoring the mouse
 			_pick.accept_event()
+			_palette.ensure_tile(int(part.source_id), part.coord)
 			_assign.call_deferred(int(part.source_id), part.coord)
 			return
 		for slot in _all_slots():

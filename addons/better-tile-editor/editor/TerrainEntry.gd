@@ -8,7 +8,7 @@ const DRAG_VISUALS := preload("res://addons/better-tile-editor/editor/DragVisual
 signal select(index)
 signal edit_requested(index)
 signal context_requested(index)
-signal dropped_on(source_id: int, target_id: int)
+signal dropped_on(source_id: int, target_id: int, after: bool)
 
 @onready var color_panel := %Color
 @onready var terrain_icon_slot := %TerrainIcon
@@ -33,7 +33,8 @@ var _terrain_texture:Texture2D
 var _lone_source:Texture2D
 var _terrain_texture_rect:Rect2i
 var _icon_draw_connected := false
-var _drop_hint := false
+## Where a dragged terrain would land: 0 nowhere, -1 before this one, 1 after it.
+var _drop_side := 0
 
 const CliffData := preload("res://addons/better-tile-editor/CliffData.gd")
 
@@ -352,33 +353,40 @@ func _get_drag_data(_at: Vector2) -> Variant:
 
 func _can_drop_data(_at: Vector2, data: Variant) -> bool:
 	if data is Dictionary and (data.has("better_terrain_group_drag") or data.has("better_terrain_scene")):
-		_set_drop_hint(false)
+		_set_drop_side(0)
 		return get_parent()._can_drop_data(position + _at, data)
 	var ok: bool = data is Dictionary and data.has("better_terrain_entry") \
 		and terrain_id() >= 0 \
 		and int(data["better_terrain_entry"]) != terrain_id()
-	_set_drop_hint(ok)
+	_set_drop_side(_side_at(_at) if ok else 0)
 	return ok
 
 
 func _drop_data(_at: Vector2, data: Variant) -> void:
-	_set_drop_hint(false)
+	_set_drop_side(0)
 	if data.has("better_terrain_group_drag") or data.has("better_terrain_scene"):
 		get_parent()._drop_data(position + _at, data)
 		return
-	dropped_on.emit(int(data["better_terrain_entry"]), terrain_id())
+	dropped_on.emit(int(data["better_terrain_entry"]), terrain_id(), _side_at(_at) > 0)
 
 
 ## _can_drop_data stops firing on exit; clear highlights through notifications.
 func _notification(what: int) -> void:
 	if what in [NOTIFICATION_DRAG_END, NOTIFICATION_MOUSE_EXIT]:
-		_set_drop_hint(false)
+		_set_drop_side(0)
 
 
-func _set_drop_hint(on: bool) -> void:
-	if _drop_hint == on:
+## Grid cells flow left to right, list rows top to bottom.
+func _side_at(at: Vector2) -> int:
+	if grid_mode:
+		return -1 if at.x < size.x / 2.0 else 1
+	return -1 if at.y < size.y / 2.0 else 1
+
+
+func _set_drop_side(side: int) -> void:
+	if _drop_side == side:
 		return
-	_drop_hint = on
+	_drop_side = side
 	queue_redraw()
 
 
@@ -389,8 +397,8 @@ func _drag_preview() -> Control:
 func _draw():
 	if selected:
 		draw_rect(Rect2(Vector2.ZERO, get_rect().size), Color(0.15, 0.70, 1, 0.3))
-	if _drop_hint:
-		DRAG_VISUALS.highlight(self)
+	if _drop_side != 0:
+		DRAG_VISUALS.insertion_bar(self, _drop_side > 0, grid_mode)
 
 
 func _on_focus_entered():

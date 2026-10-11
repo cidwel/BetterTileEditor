@@ -13,6 +13,7 @@ const MAX_CANVAS_RENDER_TILES = 1500
 const TERRAIN_PROPERTIES_SCENE := preload("res://addons/better-tile-editor/editor/TerrainProperties.tscn")
 const TERRAIN_ENTRY_SCENE := preload("res://addons/better-tile-editor/editor/TerrainEntry.tscn")
 const TERRAIN_ENTRY_SCRIPT := preload("res://addons/better-tile-editor/editor/TerrainEntry.gd")
+const PERF := preload("res://addons/better-tile-editor/Perf.gd")
 const CLIFF_EDITOR_SCRIPT := preload("res://addons/better-tile-editor/editor/CliffEditor.gd")
 const CLIFF_TERRAIN := preload("res://addons/better-tile-editor/CliffTerrain.gd")
 const SUPPORT_LAYERS := preload("res://addons/better-tile-editor/SupportLayers.gd")
@@ -85,6 +86,8 @@ const SHOW_HIDDEN_SETTING := "editors/better_terrain/show_hidden_terrains"
 const HIDE_SCENES_SETTING := "editors/better_terrain/hide_scene_tiles"
 const PICKER_MODIFIER_SETTING := "editors/better_terrain/picker_modifier"
 const PICKER_SELECT_LAYER_SETTING := "editors/better_terrain/picker_select_layer"
+const HIDE_GENERATED_SETTING := "editors/better_terrain/hide_generated_atlases"
+const HIDE_UNTILED_SETTING := "editors/better_terrain/hide_untiled_cells"
 
 enum PickerModifier { ALT, SHIFT }
 const PICKER_MODIFIER_NAMES := ["Alt", "Shift"]
@@ -622,6 +625,44 @@ func _drop_terrain_into_group(id: int, group: String) -> void:
 	undo_manager.commit_action()
 
 
+## Moves a terrain next to another one, into that one's group if it is in another.
+func _drop_terrain_beside(id: int, target_id: int, after: bool) -> void:
+	if tileset == null or id == target_id:
+		return
+	var t := BetterTerrain.get_terrain(tileset, id)
+	var target := BetterTerrain.get_terrain(tileset, target_id)
+	if not t.valid or not target.valid:
+		return
+	var to := target_id + (1 if after else 0)
+	if id < to:
+		to -= 1
+	var group := _display_group_of(target)
+	if to == id and _display_group_of(t) == group:
+		return
+	undo_manager.create_action("Reorder terrains", UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(self, &"perform_move_terrain", id, to, group)
+	undo_manager.add_undo_method(self, &"perform_move_terrain", to, id, String(t.group))
+	undo_manager.commit_action()
+
+
+## Moves the terrain at [param from] to [param to], shifting the ones between, and sets its group.
+func perform_move_terrain(from: int, to: int, group: String) -> void:
+	var count := BetterTerrain.terrain_count(tileset)
+	if from < 0 or to < 0 or from >= count or to >= count:
+		return
+	var step := 1 if to > from else -1
+	var i := from
+	while i != to:
+		BetterTerrain.swap_terrains(tileset, i, i + step)
+		i += step
+	var t := BetterTerrain.get_terrain(tileset, to)
+	if String(t.group) != group:
+		BetterTerrain.set_terrain(tileset, to, t.name, t.color, t.type, t.categories, t.icon, group, t.get("object", {}))
+	selected_entry = to
+	rebuild_terrain_list()
+	update_tile_view_paint()
+
+
 func _available_list_width() -> float:
 	if !is_instance_valid(scroll_container):
 		return 0.0
@@ -716,10 +757,12 @@ func _get_fill_cells(target: Vector2i) -> Array:
 	var checked := {}
 	var pending := [target]
 	var goal := []
+	# The fill stops at seams, as the terrain does.
+	var seam_cells := BetterTerrain.seams(tilemap)
 	
 	while !pending.is_empty():
 		var p = pending.pop_front()
-		if checked.has(p):
+		if checked.has(p) or seam_cells.has(p):
 			continue
 		checked[p] = true
 		var alike: bool = BetterTerrain.same_visible_region(tilemap, target, p) if by_sight \
@@ -743,6 +786,12 @@ func tiles_about_to_change() -> void:
 
 
 func tiles_changed() -> void:
+	var t := PERF.begin()
+	_tiles_changed_timed()
+	PERF.end("dock.tiles_changed", t)
+
+
+func _tiles_changed_timed() -> void:
 	_atlas_refresh_timer.stop()
 	# Direct calls load a fresh layer; tileset.changed marks it dbrty before deferring.
 	if !tileset_dirty:
@@ -838,6 +887,7 @@ func queue_tiles_changed() -> void:
 	# Bring terrain data up to date with complex tileset changes
 	if !tileset:
 		return
+	PERF.count("dock.queue_tiles_changed")
 
 	if tilemap and live_test_button.button_pressed:
 		layer_stale = true
@@ -857,6 +907,12 @@ func queue_tiles_changed() -> void:
 
 
 func _auto_resolve_layer() -> void:
+	var t := PERF.begin()
+	_auto_resolve_layer_timed()
+	PERF.end("dock.auto_resolve", t)
+
+
+func _auto_resolve_layer_timed() -> void:
 	if tile_view.editing_rules():
 		auto_resolve_timer.start()
 		return
@@ -1067,6 +1123,12 @@ func _apply_entry_filters() -> void:
 
 
 func update_tile_view_paint() -> void:
+	var t := PERF.begin()
+	_update_tile_view_paint_timed()
+	PERF.end("dock.update_tile_view_paint", t)
+
+
+func _update_tile_view_paint_timed() -> void:
 	tile_view.paint = selected_entry
 	_update_picker_tooltip()
 	tile_view.dim_unassigned_tiles = not _is_single(selected_entry)
@@ -1123,6 +1185,7 @@ func update_tile_view_paint() -> void:
 	_sync_scatter_bag()
 	_sync_oven_button()
 	_sync_collision_mode()
+	_sync_seam_mode()
 
 
 func _tool_button(mode_name: String) -> Button:
@@ -1457,6 +1520,12 @@ func _after_set_removed() -> void:
 
 
 func rebuild_terrain_list() -> void:
+	var t := PERF.begin()
+	_rebuild_terrain_list_timed()
+	PERF.end("dock.rebuild_terrain_list", t)
+
+
+func _rebuild_terrain_list_timed() -> void:
 	_sync_cliff_rows()
 	for c in terrain_list.get_children():
 		terrain_list.remove_child(c)
@@ -1480,6 +1549,7 @@ func rebuild_terrain_list() -> void:
 		add_terrain_entry(single)
 	add_terrain_entry(_collision_entry_terrain())
 	add_terrain_entry(_data_entry_terrain())
+	add_terrain_entry(_seam_entry_terrain())
 
 	var grouped := {"": []}
 	for group in groups_by_name:
@@ -1523,7 +1593,7 @@ func rebuild_terrain_list() -> void:
 		var entry = _entry_for_id(selected_entry)
 		if entry:
 			entry.set_selected(true)
-	elif selected_entry in [COLLISION_ENTRY, DATA_ENTRY]:
+	elif selected_entry in [COLLISION_ENTRY, DATA_ENTRY, SEAM_ENTRY]:
 		var entry = _entry_for_id(selected_entry)
 		if entry:
 			entry.selected = true
@@ -1541,8 +1611,7 @@ func add_terrain_entry(terrain:Dictionary):
 	entry.select.connect(_on_entry_select)
 	entry.edit_requested.connect(_on_entry_edit_requested)
 	entry.context_requested.connect(func(id): _open_terrain_context(_display_group_of(terrain), id))
-	entry.dropped_on.connect(func(source_id: int, target_id: int) -> void:
-		_drop_terrain_into_group(source_id, _display_group_of(BetterTerrain.get_terrain(tileset, target_id))))
+	entry.dropped_on.connect(_drop_terrain_beside)
 	entry.set_meta(GROUP_META, _display_group_of(terrain))
 
 	terrain_list.add_child(entry)
@@ -1923,6 +1992,12 @@ func canvas_tilemap_transform() -> Transform2D:
 
 
 func canvas_draw(overlay: Control) -> void:
+	var t := PERF.begin()
+	_canvas_draw_timed(overlay)
+	PERF.end("dock.canvas_draw", t)
+
+
+func _canvas_draw_timed(overlay: Control) -> void:
 	if not tilemap or not tilemap.is_inside_tree():
 		return
 
@@ -1960,6 +2035,8 @@ func canvas_draw(overlay: Control) -> void:
 				])
 				overlay.draw_colored_polygon(transform * cell, zone_tint)
 
+	_draw_seams(overlay, transform)
+
 	var status_font := get_theme_font("font", "Label")
 	if status_font != null:
 		var fsize := get_theme_font_size("font_size", "Label")
@@ -1977,11 +2054,25 @@ func canvas_draw(overlay: Control) -> void:
 	if _data_mode():
 		_draw_map_data(overlay, transform)
 		return
+	if _seam_mode():
+		_draw_seam_brush(overlay, transform)
+		return
 
 	if _map_select_active() and not _map_sel.is_empty():
 		var mesh := _map_selection_mesh(Rect2(Vector2.ZERO, overlay.size), transform)
 		if not mesh.indices.is_empty():
 			RenderingServer.canvas_item_add_triangle_array(overlay.get_canvas_item(), mesh.indices, mesh.points, mesh.colors)
+
+	if _paste_staging and _map_select_active():
+		_draw_paste_blueprint(overlay, transform)
+
+	if _map_select_active() and _map_wand_active() and not _map_drag \
+			and (draw_overlay or _layer_menu_open()):
+		_draw_wand_preview(overlay, transform)
+	# The bucket's or the picker's menu is open: show the region hovered in it.
+	if _layer_menu_open() and _layer_menu_state.get("purpose") in [&"bucket", &"pick"]:
+		_draw_block_preview(overlay, transform, _wand_preview, _menu_tint(), "")
+		return
 
 	if _map_selecting and tilemap.tile_set != null:
 		var sel := Rect2i(_map_select_from, current_position - _map_select_from).abs()
@@ -1999,6 +2090,12 @@ func canvas_draw(overlay: Control) -> void:
 
 	# Picking doesn't paint, so no brush preview.
 	if not draw_overlay or _map_select_active() or picker_armed():
+		if draw_overlay and not _map_select_active() and picker_armed() and _pick_is_tile() \
+				and not _data_mode() and not _collision_mode():
+			_draw_pick_preview(overlay, transform)
+		else:
+			_same_tile_cache = {}
+			_pick_preview_cache = {}
 		return
 
 	if selected_entry < 0 and selected_entry != BetterTerrain.TileCategory.SINGLE \
@@ -2046,9 +2143,8 @@ func canvas_draw(overlay: Control) -> void:
 			overlay.draw_colored_polygon(transform * tile_transform * line_shape, Color(tint, 0.5))
 			_draw_outline(overlay, transform * tile_transform * line_shape, tint)
 	elif fill_button.button_pressed:
-		tiles = _get_fill_cells(current_position)
-		if tiles.size() > MAX_CANVAS_RENDER_TILES:
-			tiles.resize(MAX_CANVAS_RENDER_TILES)
+		_draw_bucket_preview(overlay, transform, erasing)
+		return
 	else:
 		if draw_button != null and draw_button.button_pressed:
 			tiles.append_array(_brush_cells([current_position]))
@@ -2125,6 +2221,35 @@ func _draw_outline(overlay: Control, poly: PackedVector2Array, color: Color) -> 
 
 
 func canvas_input(event: InputEvent) -> bool:
+	var t := PERF.begin()
+	var r = _canvas_input_timed(event)
+	PERF.end("dock.canvas_input", t)
+	return r
+
+
+func _canvas_input_timed(event: InputEvent) -> bool:
+	var used := _canvas_input(event)
+	# Godot pans with its Pan tool even after a plugin takes the click, so a stroke would drag
+	# the view too; the click is meant for this tool, so leave Pan for Select.
+	if used and event is InputEventMouseButton and event.pressed \
+			and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+		_leave_canvas_pan()
+	return used
+
+
+func _leave_canvas_pan() -> void:
+	var buttons := {}
+	for editor in EditorInterface.get_base_control().find_children("*", "CanvasItemEditor", true, false):
+		for button: Button in editor.find_children("*", "Button", true, false):
+			if button.shortcut != null and button.shortcut.resource_name in ["Pan Mode", "Select Mode"]:
+				buttons[button.shortcut.resource_name] = button
+		break
+	if buttons.has("Pan Mode") and buttons.has("Select Mode") and buttons["Pan Mode"].button_pressed:
+		buttons["Select Mode"].button_pressed = true
+		buttons["Select Mode"].pressed.emit()
+
+
+func _canvas_input(event: InputEvent) -> bool:
 	if not tilemap:
 		return false
 	if _collision_mode() or _data_mode():
@@ -2141,6 +2266,8 @@ func canvas_input(event: InputEvent) -> bool:
 		if event.pressed:
 			_ask_unlock(tilemap)
 		return true
+	if _seam_mode():
+		return _seam_canvas_input(event)
 
 	if event is InputEventMouseMotion and paint_mode != PaintMode.NO_PAINT:
 		var mask := MOUSE_BUTTON_MASK_RIGHT if paint_mode == PaintMode.ERASE else MOUSE_BUTTON_MASK_LEFT
@@ -2163,13 +2290,50 @@ func canvas_input(event: InputEvent) -> bool:
 			_free_trail = SLOPE_TERRAIN.free_trail(_free_start, _free_trail, _free_target(), event.shift_pressed,
 				_free_smooth())
 		prev_position = current_position
-		if event is InputEventMouseMotion and event_position == current_position:
+		if event is InputEventMouseMotion and event_position == current_position \
+				and not (_map_select_active() and _map_wand_active() and _wand_preview.is_empty()):
 			if paint_action == PaintAction.SLOPE and paint_mode != PaintMode.NO_PAINT:
 				update_overlay.emit()
 			return false
 		current_position = event_position
 		update_overlay.emit()
 	
+	# A click may have changed the tiles, so the cached blocks are stale.
+	if event is InputEventMouseButton:
+		_fill_cache = {}
+		_same_tile_cache = {}
+		_pick_preview_cache = {}
+	if _map_select_active() and _map_wand_active() and event is InputEventMouse \
+			and not _map_drag and not _map_selecting:
+		if event is InputEventMouseButton:
+			_wand_cache = {}
+		_update_wand_preview(current_position,
+			1 if event.shift_pressed else (-1 if event.is_command_or_control_pressed() else 0))
+		update_overlay.emit()
+
+	if _paste_staging:
+		if not _map_select_active() or not _has_map_clip():
+			_paste_staging = false
+			update_overlay.emit()
+		elif event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			_paste_staging = false
+			update_overlay.emit()
+			return true
+		elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
+			_paste_staging = false
+			update_overlay.emit()
+			return true
+		elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+			_map_paste_at(_paste_origin(), [], "Paste tiles")
+			# Shift keeps the blueprint up to stamp more copies.
+			_paste_staging = event.shift_pressed
+			update_overlay.emit()
+			return true
+		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+			return true
+		elif event is InputEventMouseMotion:
+			update_overlay.emit()
+
 	if _map_select_active():
 		# Handle map shortcuts only in the viewport; Ctrl+X elsewhere may cut scene nodes.
 		if event is InputEventKey and event.pressed and not event.echo:
@@ -2182,7 +2346,7 @@ func canvas_input(event: InputEvent) -> bool:
 					_on_map_sel_action(MapSelAction.COPY)
 					return true
 				KEY_V when ctrl:
-					_on_map_sel_action(MapSelAction.PASTE)
+					_begin_paste_preview()
 					return true
 				KEY_D when ctrl:
 					_on_map_sel_action(MapSelAction.DUPLICATE)
@@ -2207,6 +2371,8 @@ func canvas_input(event: InputEvent) -> bool:
 					_map_drag = true
 					_map_drag_from = current_position
 					_map_drag_delta = Vector2i.ZERO
+				elif _map_wand_active():
+					_wand_map_selection(current_position, _map_sel_mode)
 				else:
 					_map_select_from = current_position
 					_map_selecting = true
@@ -2215,6 +2381,9 @@ func canvas_input(event: InputEvent) -> bool:
 				if _map_drag_delta != Vector2i.ZERO:
 					_copy_map_selection()
 					_map_paste_at(_map_sel_rect.position + _map_drag_delta, _map_sel.duplicate(), "Move tiles")
+				elif _map_wand_active():
+					# A click without a drag inside the marks picks again.
+					_wand_map_selection(_map_drag_from, 0)
 				_map_drag_delta = Vector2i.ZERO
 			elif _map_selecting:
 				_map_selecting = false
@@ -2242,13 +2411,15 @@ func canvas_input(event: InputEvent) -> bool:
 	if released:
 		terrain_undo.finish_action()
 		var type = selected_entry
-		if _is_scatter(type) and paint_mode == PaintMode.PAINT \
+		# Right-dragging a rectangle or line takes the cells out of the zone, leaving the ground.
+		if _is_scatter(type) and paint_mode != PaintMode.NO_PAINT \
 				and paint_action in [PaintAction.RECT, PaintAction.LINE]:
 			var scatter_cells: Array = _cells_in_area(Rect2i(initial_click, current_position - initial_click).abs()) \
 				if paint_action == PaintAction.RECT \
 				else _get_tileset_line(initial_click, current_position, tileset)
-			undo_manager.create_action(tr("Paint scatter region"), UndoRedo.MERGE_DISABLE, tilemap)
-			_scatter_paint(scatter_cells, false, false)
+			var erasing := paint_mode == PaintMode.ERASE
+			undo_manager.create_action(tr("Erase scatter region") if erasing else tr("Paint scatter region"), UndoRedo.MERGE_DISABLE, tilemap)
+			_scatter_paint(scatter_cells, erasing, false)
 			undo_manager.commit_action()
 			paint_mode = PaintMode.NO_PAINT
 			update_overlay.emit()
@@ -2258,6 +2429,8 @@ func canvas_input(event: InputEvent) -> bool:
 			# Fill from initial_target to target
 			undo_manager.create_action(tr("Draw terrain rectangle"), UndoRedo.MERGE_DISABLE, tilemap)
 			var rectangle_cells := _object_brush_cells(type, _cells_in_area(area))
+			_mark_hand_placed(type, _single_cells(type, _cells_in_area(area), initial_click) if _is_single(type) else rectangle_cells,
+				paint_mode == PaintMode.ERASE, false)
 			if ObjectTerrain.is_mass(tileset, type):
 				if paint_mode == PaintMode.ERASE:
 					for c in rectangle_cells:
@@ -2294,6 +2467,7 @@ func canvas_input(event: InputEvent) -> bool:
 		elif paint_action == PaintAction.LINE and paint_mode != PaintMode.NO_PAINT:
 			undo_manager.create_action(tr("Draw terrain line"), UndoRedo.MERGE_DISABLE, tilemap)
 			var cells := _single_cells(type, _object_brush_cells(type, _get_tileset_line(initial_click, current_position, tileset)), initial_click)
+			_mark_hand_placed(type, cells, paint_mode == PaintMode.ERASE, false)
 			if paint_mode == PaintMode.PAINT:
 				if replace_mode:
 					undo_manager.add_do_method(BetterTerrain, &"replace_cells", tilemap, cells, type, initial_click)
@@ -2338,6 +2512,7 @@ func canvas_input(event: InputEvent) -> bool:
 			paint_mode = PaintMode.PAINT
 		elif event.button_index == MOUSE_BUTTON_RIGHT:
 			paint_mode = PaintMode.ERASE
+			_scatter_fine_erase = event.is_command_or_control_pressed()
 			# Freehand erases like the pencil, cell by cell under the mouse
 			if paint_action == PaintAction.SLOPE and _freehand():
 				paint_action = PaintAction.NO_ACTION
@@ -2352,6 +2527,8 @@ func canvas_input(event: InputEvent) -> bool:
 			_free_trail = [_free_target()]
 			terrain_undo.action_index += 1
 			terrain_undo.action_count = 0
+			_hand_placed_before = BetterTerrain.hand_placed(tilemap).duplicate()
+			_hand_placed_stroke = _hand_placed_before.duplicate()
 		# Shift mid-stroke turns the rest into a line from where it was pressed, drawn on release.
 		if event is InputEventMouseMotion and draw_button.button_pressed \
 				and paint_action == PaintAction.NO_ACTION and event.shift_pressed \
@@ -2363,20 +2540,46 @@ func canvas_input(event: InputEvent) -> bool:
 			return true
 		var type = selected_entry
 
-		if _is_scatter(type) and paint_mode == PaintMode.PAINT \
-				and paint_action == PaintAction.NO_ACTION \
-				and (draw_button.button_pressed or fill_button.button_pressed):
-			var brushing := draw_button.button_pressed
-			var scatter_cells: Array = _brush_cells(_get_tileset_line(prev_position, current_position, tileset)) \
-				if brushing else _get_fill_cells(current_position)
-			if brushing:
-				undo_manager.create_action(tr("Paint scatter region") + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tilemap, true)
+		if fill_button.button_pressed and paint_action == PaintAction.NO_ACTION:
+			var erasing := paint_mode == PaintMode.ERASE
+			if clicked and _fill_by_sight():
+				var choices := _bucket_entries(current_position)
+				if choices.size() > 2:
+					paint_mode = PaintMode.NO_PAINT
+					_popup_layer_menu(choices, 0, &"bucket", erasing)
+					return true
+			_bucket_fill(_get_fill_cells(current_position), erasing, current_position)
+			update_overlay.emit()
+			return true
+
+		# Right-click with the pencil erases the zone; with Ctrl it removes the generated pieces
+		# under it instead, to fine-tune a roll. The ground stays.
+		if _is_scatter(type) and paint_mode == PaintMode.ERASE \
+				and paint_action == PaintAction.NO_ACTION and draw_button.button_pressed:
+			var stroke := _brush_cells(_get_tileset_line(prev_position, current_position, tileset))
+			if _scatter_fine_erase:
+				var hit: Array = SCATTER_TERRAIN.pieces_at(tilemap, stroke)
+				if hit.is_empty():
+					return true
+				undo_manager.create_action(tr("Remove scatter tiles") + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tilemap, true)
+				terrain_undo.add_do_method(undo_manager, SCATTER_TERRAIN, &"add_cells", [tilemap, SCATTER_TERRAIN.REMOVED, hit])
+				undo_manager.add_undo_method(SCATTER_TERRAIN, &"remove_cells", tilemap, SCATTER_TERRAIN.REMOVED, hit)
 			else:
-				undo_manager.create_action(tr("Fill scatter region"), UndoRedo.MERGE_DISABLE, tilemap)
-			_scatter_paint(scatter_cells, false, brushing)
+				if SCATTER_TERRAIN.cells_in_any(tilemap, stroke).is_empty():
+					return true
+				undo_manager.create_action(tr("Erase scatter region") + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tilemap, true)
+				_scatter_paint(stroke, true, true)
 			undo_manager.commit_action()
-			if brushing:
-				terrain_undo.action_count += 1
+			terrain_undo.action_count += 1
+			update_overlay.emit()
+			return true
+
+		if _is_scatter(type) and paint_mode == PaintMode.PAINT \
+				and paint_action == PaintAction.NO_ACTION and draw_button.button_pressed:
+			undo_manager.create_action(tr("Paint scatter region") + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tilemap, true)
+			_scatter_paint(_brush_cells(_get_tileset_line(prev_position, current_position, tileset)), false, true)
+			undo_manager.commit_action()
+			terrain_undo.action_count += 1
 			update_overlay.emit()
 			return true
 
@@ -2389,6 +2592,7 @@ func canvas_input(event: InputEvent) -> bool:
 			undo_manager.create_action(tr("Draw terrain") + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tilemap, true)
 			var stroke := _object_brush_cells(type, _brush_cells(_get_tileset_line(prev_position, current_position, tileset)))
 			var cells := _single_cells(type, stroke, initial_click)
+			_mark_hand_placed(type, cells, paint_mode == PaintMode.ERASE, true)
 			if paint_mode == PaintMode.PAINT:
 				if replace_mode:
 					terrain_undo.add_do_method(undo_manager, BetterTerrain, &"replace_cells", [tilemap, cells, type, initial_click])
@@ -2402,21 +2606,6 @@ func canvas_input(event: InputEvent) -> bool:
 			terrain_undo.create_tile_restore_point(undo_manager, tilemap, _restore_cells(cells))
 			undo_manager.commit_action()
 			terrain_undo.action_count += 1
-		elif fill_button.button_pressed:
-			var cells := _single_cells(type, _object_brush_cells(type, _get_fill_cells(current_position)), current_position)
-			undo_manager.create_action(tr("Fill terrain"), UndoRedo.MERGE_DISABLE, tilemap)
-			if paint_mode == PaintMode.PAINT:
-				if replace_mode:
-					undo_manager.add_do_method(BetterTerrain, &"replace_cells", tilemap, cells, type, current_position)
-				else:
-					undo_manager.add_do_method(BetterTerrain, &"set_cells", tilemap, cells, type, current_position)
-			elif paint_mode == PaintMode.ERASE:
-				for c in cells:
-					undo_manager.add_do_method(tilemap, &"erase_cell", c)
-			undo_manager.add_do_method(BetterTerrain, &"update_terrain_cells", tilemap, cells)
-			_add_post_process(cells, paint_mode == PaintMode.ERASE, false)
-			terrain_undo.create_tile_restore_point(undo_manager, tilemap, _restore_cells(cells))
-			undo_manager.commit_action()
 		
 		update_overlay.emit()
 		return true
@@ -2425,6 +2614,12 @@ func canvas_input(event: InputEvent) -> bool:
 
 
 func _add_post_process(cells: Array, erasing: bool, merged: bool) -> void:
+	var t := PERF.begin()
+	_add_post_process_timed(cells, erasing, merged)
+	PERF.end("dock.post_process", t)
+
+
+func _add_post_process_timed(cells: Array, erasing: bool, merged: bool) -> void:
 	if erasing:
 		_scatter_paint(cells, true, merged)
 		if cells.all(func(c): return tilemap.get_cell_source_id(c) == -1):
@@ -2783,21 +2978,48 @@ func _add_map_select_button() -> void:
 	_map_select.button_group = draw_button.button_group
 	_icon_or_text(_map_select, ICON_DIR + "MapSelect.svg", ["ListSelect"], "Sel")
 	_map_select.toggled.connect(func(on: bool) -> void:
+		_map_select_shapes.visible = on
 		_map_all_layers.visible = on
+		_sync_map_target_layer()
 		if tile_view != null:
 			tile_view.shortcuts_blocked = on
 		if not on:
 			_clear_map_selection())
 	_map_select.tooltip_text = \
-		"Select an area of the MAP.\n\n" + \
-		"Drag a rectangle and the cells inside it become the cliff window's\n" + \
-		"preview, so you check your slots against the shape that actually looks\n" + \
-		"wrong instead of an invented one.\n\n" + \
-		"Shift-drag adds to the selection, Ctrl-drag takes away, so it can be\n" + \
-		"built in several passes. Drag from inside the marks to move them, and\n" + \
-		"right-click for cut, copy, paste, duplicate and delete."
+		"Select\n" + \
+		"Mark tiles on the map to move, copy or delete them, or to preview them in the cliff window.\n" + \
+		"Shift adds, Ctrl takes away, drag the marks to move them, right-click for more."
 	toolbar.add_child(_map_select)
 	toolbar.move_child(_map_select, draw_button.get_index())
+	_map_select_shapes = HBoxContainer.new()
+	_map_select_shapes.name = "SelectShapes"
+	_map_select_shapes.add_theme_constant_override("separation", 0)
+	var group := ButtonGroup.new()
+	for shape in [["Rectangle", "SelectRect", "Rectangle\nDrag a box over the tiles to select."],
+			["Magic Wand", "SelectWand", "Magic Wand\nClick a tile to select the whole touching block of its terrain, or of the same tile if it has none."]]:
+		var b := Button.new()
+		b.name = shape[1]
+		b.set_meta(&"tool_name", shape[0])
+		b.flat = true
+		b.toggle_mode = true
+		b.button_group = group
+		b.focus_mode = Control.FOCUS_NONE
+		b.button_pressed = shape[0] == "Rectangle"
+		_icon_or_text(b, ICON_DIR + shape[1] + ".svg", [], shape[0])
+		b.tooltip_text = shape[2]
+		_map_select_shapes.add_child(b)
+		if shape[0] == "Magic Wand":
+			_map_wand = b
+	_map_select_shapes.hide()
+	_map_target_layer = CheckBox.new()
+	_map_target_layer.name = "TargetLayer"
+	_map_target_layer.text = "Target layer"
+	_map_target_layer.tooltip_text = "Read the block on the topmost visible layer under the cursor and make\nthat TileMapLayer the edited one, so the wand works on the tile you clicked."
+	_map_target_layer.focus_mode = Control.FOCUS_NONE
+	_map_target_layer.hide()
+	_map_wand.toggled.connect(func(_on: bool) -> void: _sync_map_target_layer())
+	toolbar.add_child(_map_select_shapes)
+	toolbar.move_child(_map_select_shapes, _map_select.get_index() + 1)
 	_map_all_layers = CheckBox.new()
 	_map_all_layers.name = "AllLayers"
 	_map_all_layers.text = "All layers"
@@ -2806,7 +3028,13 @@ func _add_map_select_button() -> void:
 	_map_all_layers.hide()
 	_map_all_layers.toggled.connect(func(_on): _clear_map_selection())
 	toolbar.add_child(_map_all_layers)
-	toolbar.move_child(_map_all_layers, _map_select.get_index() + 1)
+	toolbar.move_child(_map_all_layers, _map_select_shapes.get_index() + 1)
+	toolbar.add_child(_map_target_layer)
+	toolbar.move_child(_map_target_layer, _map_all_layers.get_index() + 1)
+
+
+func _sync_map_target_layer() -> void:
+	_map_target_layer.visible = _map_select_active() and _map_wand_active()
 
 
 var _picker: Button
@@ -2887,6 +3115,22 @@ func _pick_is_tile() -> bool:
 
 
 func _pick_at(cell: Vector2i) -> void:
+	var t := PERF.begin()
+	_pick_at_timed(cell)
+	PERF.end("dock.pick_at", t)
+
+
+func _pick_at_timed(cell: Vector2i) -> void:
+	var entries := _pick_entries(cell)
+	if entries.is_empty() and _offer_instanced_scene(cell):
+		if _picker_active() and _tool_before_pick != null:
+			_tool_before_pick.button_pressed = true
+		return
+	if entries.size() > 1:
+		if _picker_active() and _tool_before_pick != null:
+			_tool_before_pick.button_pressed = true
+		_popup_layer_menu(entries, 0, &"pick", false)
+		return
 	var layer := tilemap
 	var at := cell
 	var jump := _picker_select_layer != null and _picker_select_layer.button_pressed \
@@ -2913,15 +3157,174 @@ func _pick_at(cell: Vector2i) -> void:
 	_pick_from(layer, at)
 
 
+var _instanced_dialog: ConfirmationDialog
+
+
+## Nothing pickable under [param cell], but a layer inside an instanced scene draws a tile there:
+## says which scene it comes from and offers to open it, instead of a click that does nothing.
+func _offer_instanced_scene(cell: Vector2i) -> bool:
+	if tilemap == null or not tilemap.is_inside_tree() or tilemap.get_cell_source_id(cell) != -1:
+		return false
+	var root := EditorInterface.get_edited_scene_root()
+	for hit in _layers_at(tilemap.to_global(tilemap.map_to_local(cell)), true):
+		var instance := _instance_owning(hit[0], root)
+		if instance != null:
+			_ask_open_instanced(instance, hit[0], hit[1])
+			return true
+	return false
+
+
+## The node of the edited scene that instances the scene [param node] belongs to, or null.
+func _instance_owning(node: Node, root: Node) -> Node:
+	var owner_node := node.owner
+	while owner_node != null and owner_node != root:
+		if owner_node.owner == root and not owner_node.scene_file_path.is_empty():
+			return owner_node
+		owner_node = owner_node.owner
+	return null
+
+
+func _ask_open_instanced(instance: Node, layer: TileMapLayer, cell: Vector2i) -> void:
+	if _instanced_dialog == null:
+		_instanced_dialog = ConfirmationDialog.new()
+		_instanced_dialog.title = "Tile from an instanced scene"
+		_instanced_dialog.ok_button_text = "Open scene"
+		_instanced_dialog.dialog_autowrap = true
+		_instanced_dialog.min_size = Vector2i(480, 0)
+		add_child(_instanced_dialog)
+	var scene_path := instance.scene_file_path
+	var layer_path := str(instance.get_path_to(layer))
+	_instanced_dialog.dialog_text = ("This tile belongs to %s, an instance of %s: layer %s, cell %s there.\n\n"
+		+ "Tiles of an instanced scene are edited in that scene. Open it?") \
+		% [instance.name, scene_path.get_file(), layer_path, cell]
+	for connection in _instanced_dialog.confirmed.get_connections():
+		_instanced_dialog.confirmed.disconnect(connection.callable)
+	_instanced_dialog.confirmed.connect(_open_instanced.bind(scene_path, layer_path))
+	_instanced_dialog.popup_centered()
+
+
+func _open_instanced(scene_path: String, layer_path: String) -> void:
+	EditorInterface.open_scene_from_path(scene_path)
+	# The opened scene becomes the edited one on the next frame.
+	_select_in_edited_scene.call_deferred(layer_path)
+
+
+func _select_in_edited_scene(path: String) -> void:
+	var root := EditorInterface.get_edited_scene_root()
+	var node: Node = root.get_node_or_null(path) if root != null else null
+	if node == null:
+		return
+	var selection := EditorInterface.get_selection()
+	selection.clear()
+	selection.add_node(node)
+	EditorInterface.edit_node(node)
+
+
+## Every layer with a tile under [param cell], topmost first, as layer menu entries.
+func _pick_entries(cell: Vector2i) -> Array:
+	if tilemap == null or not tilemap.is_inside_tree():
+		return []
+	var root := EditorInterface.get_edited_scene_root()
+	var entries := []
+	for hit in _layers_at(tilemap.to_global(tilemap.map_to_local(cell))):
+		var layer: TileMapLayer = hit[0]
+		var label := str(layer.name) if layer == root else str(root.get_path_to(layer))
+		entries.append({kind = &"layer", layer = layer, cell = hit[1], label = label})
+		# The tile's terrain, under it, picks the terrain instead of the tile.
+		var id := BetterTerrain.get_cell(layer, hit[1])
+		if id >= 0:
+			var terrain := BetterTerrain.get_terrain(layer.tile_set, id)
+			entries.append({kind = &"terrain", layer = layer, cell = hit[1], terrain = id,
+				label = str(terrain.name), color = terrain.color})
+	return entries
+
+
+## Picks from the layer chosen in the menu, making it the edited one when it is another. A
+## tile row takes the tile as a loose tile; a terrain row takes its terrain.
+func _pick_from_entry(entry: Dictionary) -> void:
+	var layer: TileMapLayer = entry.layer
+	if not is_instance_valid(layer):
+		return
+	var as_tile: bool = entry.kind == &"layer"
+	if layer != tilemap:
+		var selection := EditorInterface.get_selection()
+		selection.clear()
+		selection.add_node(layer)
+		EditorInterface.edit_node(layer)
+		# The dock may switch tileset first, so pick deferred.
+		_pick_from.call_deferred(layer, entry.cell, as_tile)
+		return
+	_pick_from(layer, entry.cell, as_tile)
+
+
+## The cells of [param layer] holding the same tile as [param cell].
+func _same_tile_cells(layer: TileMapLayer, cell: Vector2i) -> Dictionary:
+	var source := layer.get_cell_source_id(cell)
+	if source == -1:
+		return {}
+	var key := [layer, source, layer.get_cell_atlas_coords(cell), layer.get_cell_alternative_tile(cell)]
+	if _same_tile_cache.get("key") == key:
+		return _same_tile_cache.cells
+	var cells := {}
+	for c: Vector2i in layer.get_used_cells_by_id(source, key[2], key[3]):
+		cells[c] = true
+	_same_tile_cache = {key = key, cells = cells}
+	return cells
+
+
+## Last [method _same_tile_cells] result, so hovering one tile scans the layer once.
+var _same_tile_cache := {}
+
+
+## While picking a loose tile: the cells holding the same tile as the one under the cursor.
+func _draw_pick_preview(overlay: Control, transform: Transform2D) -> void:
+	var t := PERF.begin()
+	# Redrawn on every overlay update; the layers and the outline only change with the cell.
+	if _pick_preview_cache.get("cell") != current_position:
+		var entries := _pick_entries(current_position)
+		var preview := {}
+		var hint := ""
+		if not entries.is_empty():
+			var top: Dictionary = entries[0]
+			var layers := entries.filter(func(e): return e.kind == &"layer").size()
+			if layers > 1:
+				hint = _choice_hint(top.label, layers - 1)
+			elif entries.size() > 1:
+				hint = "%s   (click to choose tile or terrain)" % top.label
+			preview = _block_preview(top.layer, _same_tile_cells(top.layer, top.cell))
+		_pick_preview_cache = {cell = current_position, preview = preview, hint = hint}
+	_draw_block_preview(overlay, transform, _pick_preview_cache.preview, Color(0.4, 0.8, 1.0), _pick_preview_cache.hint)
+	PERF.end("dock.pick_preview", t)
+
+
+## What [method _draw_pick_preview] drew for the cell under the cursor.
+var _pick_preview_cache := {}
+
+
 # Terrain cells select their terrain, plain tiles go to the single-tile brush.
-func _pick_from(layer: TileMapLayer, cell: Vector2i) -> void:
+## [param as_tile] takes a terrain's tile as a loose tile instead of selecting the terrain.
+func _pick_from(layer: TileMapLayer, cell: Vector2i, as_tile := false) -> void:
+	var t := PERF.begin()
+	_pick_from_timed(layer, cell, as_tile)
+	PERF.end("dock.pick_from", t)
+
+
+func _pick_from_timed(layer: TileMapLayer, cell: Vector2i, as_tile: bool) -> void:
 	if not is_instance_valid(layer) or layer.tile_set != tileset:
 		return
 	var id := BetterTerrain.get_cell(layer, cell)
 	var source_id := layer.get_cell_source_id(cell)
-	if id >= 0 or (id == BetterTerrain.TileCategory.EMPTY and source_id != -1):
+	if not as_tile and (id >= 0 or (id == BetterTerrain.TileCategory.EMPTY and source_id != -1)):
 		# Terrain or decoration tile.
 		_select_entry(id)
+		if tileset.has_source(source_id) and tileset.get_source(source_id) is TileSetAtlasSource:
+			_center_atlas_on.call_deferred(source_id, layer.get_cell_atlas_coords(cell), Vector2i.ONE)
+	elif source_id != -1 and tileset.has_source(source_id) \
+			and tileset.get_source(source_id) is TileSetScenesCollectionSource:
+		# Scene tile: the same brush its entry in the list gives.
+		_select_entry(BetterTerrain.TileCategory.SINGLE)
+		_set_single_tile(source_id, Vector2i.ZERO, Vector2i.ONE, layer.get_cell_alternative_tile(cell))
+		_sync_scene_selection()
 	elif source_id != -1 and tileset.has_source(source_id) \
 			and tileset.get_source(source_id) is TileSetAtlasSource:
 		# Plain tile, or the whole block if it was painted with one.
@@ -2930,23 +3333,73 @@ func _pick_from(layer: TileMapLayer, cell: Vector2i) -> void:
 		var found := _painted_block_at(layer, cell, _multi_tile_blocks())
 		if not found.is_empty():
 			_set_single_tile(source_id, found.block.origin, found.block.size, found.block.alt)
+			_center_atlas_on.call_deferred(source_id, found.block.origin, found.block.size)
 		else:
 			_set_single_tile(source_id, layer.get_cell_atlas_coords(cell), Vector2i.ONE,
 				layer.get_cell_alternative_tile(cell))
+			_center_atlas_on.call_deferred(source_id, layer.get_cell_atlas_coords(cell), Vector2i.ONE)
 	update_overlay.emit()
 
 
+## Centres the atlas on the tile at [param coords] and outlines it for a moment.
+func _show_in_atlas(source_id: int, coords: Vector2i) -> void:
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	if src == null or not src.has_tile(coords):
+		return
+	var cells := src.get_tile_size_in_atlas(coords)
+	_center_atlas_on(source_id, coords, cells)
+	var region := Rect2(src.get_tile_texture_region(coords))
+	tile_view.flash = {source_id = source_id, region = region}
+	tile_view.queue_redraw()
+	var shown: Dictionary = tile_view.flash
+	get_tree().create_timer(1.5).timeout.connect(func():
+		if is_instance_valid(tile_view) and tile_view.flash == shown:
+			tile_view.flash = {}
+			tile_view.queue_redraw())
+
+
+## Scrolls the atlas view so the block at [param origin] sits in its middle. Deferred from a
+## pick and a frame late, as picking may switch the tile set and lay the view out again first.
+func _center_atlas_on(source_id: int, origin: Vector2i, block_size: Vector2i) -> void:
+	await get_tree().process_frame
+	PERF.count("dock.center_atlas")
+	if tileset == null or not tileset.has_source(source_id) or not tile_view.is_visible_in_tree():
+		return
+	var source := tileset.get_source(source_id) as TileSetAtlasSource
+	if source == null or not source.has_tile(origin):
+		return
+	var last := origin + block_size - Vector2i.ONE
+	var region := Rect2(source.get_tile_texture_region(origin))
+	if source.has_tile(last):
+		region = region.merge(Rect2(source.get_tile_texture_region(last)))
+	var rect: Rect2 = tile_view.atlas_rect(source_id, region)
+	var area := tile_view.get_parent() as ScrollContainer
+	if not rect.has_area() or area == null:
+		return
+	var middle := rect.get_center() - area.size * 0.5
+	area.scroll_horizontal = int(middle.x)
+	area.scroll_vertical = int(middle.y)
+
+
 ## [layer, cell] of the topmost visible, selectable layer with a tile here, or [].
-func _visible_layer_at(point: Vector2) -> Array:
+## [param instanced] also counts layers inside instanced scenes, which can't be selected.
+func _visible_layer_at(point: Vector2, instanced := false) -> Array:
+	var found := _layers_at(point, instanced)
+	return [] if found.is_empty() else found[0]
+
+
+## Every [layer, cell, on_face] with a tile here, topmost first. on_face: the hit is the layer's
+## cliff face, and cell the plateau cell it hangs from.
+func _layers_at(point: Vector2, instanced := false) -> Array:
 	var root := EditorInterface.get_edited_scene_root()
 	if root == null:
 		return []
 	var layers: Array = root.find_children("*", "TileMapLayer", true, false)
 	if root is TileMapLayer:
 		layers.push_front(root)
-	var best: Array = []
-	var best_z := 0
-	for found: TileMapLayer in layers:
+	var hits := {}
+	for i in layers.size():
+		var found: TileMapLayer = layers[i]
 		var layer := found
 		# Support layers count as the layer that own them.
 		if SUPPORT_LAYERS.is_support(layer):
@@ -2955,17 +3408,22 @@ func _visible_layer_at(point: Vector2) -> Array:
 			layer = layer.get_parent()
 		# Can't select nodes inside instanced scenes.
 		if layer.tile_set == null or not layer.is_visible_in_tree() \
-				or (layer != root and layer.owner != root):
+				or (not instanced and layer != root and layer.owner != root):
 			continue
 		var c := layer.local_to_map(layer.to_local(point))
+		# A cliff face stands for the plateau it hangs from.
+		var on_face := found != layer and found == CLIFF_TERRAIN.find_faces(layer)
+		if on_face:
+			c = _cliff_plateau_cell(layer, c)
 		if layer.get_cell_source_id(c) == -1:
 			continue
 		# Same z: later in the tree draws on top.
-		var z := _effective_z(found)
-		if best.is_empty() or z >= best_z:
-			best_z = z
-			best = [layer, c]
-	return best
+		var rank := [_effective_z(found), i]
+		if not hits.has(layer) or rank > hits[layer][3]:
+			hits[layer] = [layer, c, on_face, rank]
+	var sorted: Array = hits.values()
+	sorted.sort_custom(func(a, b): return a[3] > b[3])
+	return sorted.map(func(h): return [h[0], h[1], h[2]])
 
 
 func _effective_z(item: CanvasItem) -> int:
@@ -3025,8 +3483,9 @@ func _raw_modifier_down() -> bool:
 
 ## True when a left click would pick instead of paint.
 func picker_armed() -> bool:
-	# Collisions pick only in Stamp (a tile's shape); Custom data's picker click takes a tile's fields.
-	if tilemap == null or _map_select_active() or (_collision_mode() and not _collision_stamp_mode):
+	# In Collisions the picker takes a tile's shape in Stamp and finds the tile in the atlas in the
+	# other modes; Custom data's picker click takes a tile's fields.
+	if tilemap == null or _map_select_active():
 		return false
 	# In Inspect the key adds to the selection instead.
 	if _data_mode():
@@ -3081,6 +3540,9 @@ const ALL_LAYERS_SELECTION := preload("res://addons/better-tile-editor/editor/Al
 var _all_selection := ALL_LAYERS_SELECTION.new()
 var _map_all_layers: CheckBox
 var _map_select: Button
+var _map_select_shapes: HBoxContainer
+var _map_wand: Button
+var _map_target_layer: CheckBox
 var _map_select_from := Vector2i.ZERO
 var _map_selecting := false
 
@@ -3089,6 +3551,8 @@ var _map_sel_rect := Rect2i()
 var _map_sel_mode := 0
 ## Clipboard format: [offset, source, atlas coordinate, alternative].
 var _map_clip: Array = []
+## Ctrl+V lifted the copied tiles onto the cursor as a blueprint; a click lays them down.
+var _paste_staging := false
 var _map_drag := false
 var _map_drag_from := Vector2i.ZERO
 var _map_drag_delta := Vector2i.ZERO
@@ -3348,6 +3812,7 @@ func _open_slope_roles() -> void:
 
 
 func _clear_map_selection() -> void:
+	_paste_staging = false
 	_all_selection.clear_selection()
 	if _map_sel.is_empty() and not CLIFF_DATA.has_captured():
 		return
@@ -3429,6 +3894,10 @@ func _map_status_line() -> String:
 			_map_sel.size(), _map_sel_rect.size.x, _map_sel_rect.size.y]
 	if not _map_clip.is_empty():
 		out += "   %d copied" % _map_clip.size()
+	if _seam_mode():
+		var count := BetterTerrain.seams(tilemap).size()
+		out += "   seam" if BetterTerrain.is_seam(tilemap, current_position) else ""
+		out += "   %d seam%s on this layer" % [count, "" if count == 1 else "s"]
 	return out
 
 
@@ -3462,10 +3931,93 @@ func _box_of(coords: Array) -> Rect2i:
 	return Rect2i(lo, hi - lo + Vector2i.ONE)
 
 
+func _has_map_clip() -> bool:
+	return not _all_selection.clipboard.is_empty() if _all_layers_active() else not _map_clip.is_empty()
+
+
+func _begin_paste_preview() -> void:
+	if tilemap == null or not _has_map_clip():
+		return
+	_paste_staging = true
+	update_overlay.emit()
+
+
+## The copied cells as a paste at origin would land them: [{layer, cell, tile: [source, atlas, alt]}].
+func _blueprint(origin: Vector2i) -> Array:
+	if _all_layers_active():
+		return _all_selection.blueprint(origin)
+	var out := []
+	for d in _map_clip:
+		out.append({layer = tilemap, cell = origin + d[0], tile = [d[1], d[2], d[3]]})
+	return out
+
+
+## Where a paste lands with the copied block centred on the cursor.
+func _paste_origin() -> Vector2i:
+	var cells := _blueprint(Vector2i.ZERO).map(func(e: Dictionary) -> Vector2i: return e.cell)
+	var box := _box_of(cells)
+	return current_position - (box.position + box.size / 2)
+
+
+func _draw_paste_blueprint(overlay: Control, transform: Transform2D) -> void:
+	var entries := _blueprint(_paste_origin())
+	var view := Rect2(Vector2.ZERO, overlay.size).grow(64)
+	var drawn := 0
+	var tint := Color(0.4, 0.8, 1.0)
+	var bounds := Rect2()
+	var first := true
+	for e: Dictionary in entries:
+		var layer: TileMapLayer = e.layer
+		if not is_instance_valid(layer) or layer.tile_set == null or not layer.is_inside_tree():
+			continue
+		var to_overlay: Transform2D = transform * tilemap.global_transform.affine_inverse() * layer.global_transform
+		var center := layer.map_to_local(e.cell)
+		var at := to_overlay * center
+		if first:
+			bounds = Rect2(at, Vector2.ZERO)
+			first = false
+		bounds = bounds.expand(at)
+		if not view.has_point(at):
+			continue
+		drawn += 1
+		if drawn > MAX_CANVAS_RENDER_TILES:
+			continue
+		var size := Vector2(layer.tile_set.tile_size)
+		var shape: PackedVector2Array = BetterTerrain.data.cell_polygon(layer.tile_set)
+		overlay.draw_colored_polygon(to_overlay * (Transform2D(0.0, size, 0.0, center) * shape), Color(tint, 0.16))
+		var tile: Array = e.tile
+		if int(tile[0]) < 0 or not layer.tile_set.has_source(tile[0]):
+			continue
+		var source := layer.tile_set.get_source(tile[0]) as TileSetAtlasSource
+		if source == null or source.texture == null or not source.has_tile(tile[1]) or not source.has_alternative_tile(tile[1], tile[2]):
+			continue
+		var td := source.get_tile_data(tile[1], tile[2])
+		var region := Rect2(source.get_tile_texture_region(tile[1], 0))
+		var rect := Rect2(center - region.size * 0.5 - Vector2(td.texture_origin), region.size)
+		if td.flip_h:
+			rect.position.x += rect.size.x
+			rect.size.x = -rect.size.x
+		if td.flip_v:
+			rect.position.y += rect.size.y
+			rect.size.y = -rect.size.y
+		overlay.draw_set_transform_matrix(to_overlay)
+		overlay.draw_texture_rect_region(source.texture, rect, region, Color(td.modulate, 0.7), td.transpose)
+		overlay.draw_set_transform_matrix(Transform2D.IDENTITY)
+	var font := get_theme_font("font", "Label")
+	if font != null and not first:
+		var hint := "Click to place · Shift+click to keep pasting · Esc or right click to cancel"
+		var fsize := get_theme_font_size("font_size", "Label")
+		var spot := overlay.get_local_mouse_position() + Vector2(18, 28)
+		var w := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
+		overlay.draw_rect(Rect2(spot.x - 6, spot.y - fsize - 2, w + 12, fsize + 10), Color(0, 0, 0, 0.65))
+		overlay.draw_string(font, spot, hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, tint.lightened(0.4))
+
+
 func _map_paste_at(origin: Vector2i, source_cells: Array, label: String) -> void:
 	if _all_layers_active():
 		_all_selection.paste(undo_manager, origin, not source_cells.is_empty(), label)
 		_sync_all_selection()
+		_announce_layers_changed(_all_selection.selection.keys())
 		return
 	if _map_clip.is_empty() or tilemap == null:
 		return
@@ -3490,7 +4042,16 @@ func _map_paste_at(origin: Vector2i, source_cells: Array, label: String) -> void
 	_map_sel = target
 	_map_sel_rect = _box_of(target)
 	_update_map_info()
+	_announce_layers_changed([tilemap])
 	update_overlay.emit()
+
+
+## Scripts that draw over the tiles (lava, water) rebuild on a layer's changed signal; a
+## move rewrites cells through the undo steps, so tell them once it is done.
+func _announce_layers_changed(layers: Array) -> void:
+	for layer in layers:
+		if is_instance_valid(layer):
+			layer.changed.emit.call_deferred()
 
 
 func _on_map_sel_action(id: int) -> void:
@@ -3585,7 +4146,837 @@ func _capture_map_selection(a: Vector2i, b: Vector2i, mode: int) -> void:
 	for c: Vector2i in tilemap.get_used_cells():
 		if c.x >= lo.x and c.x <= hi.x and c.y >= lo.y and c.y <= hi.y:
 			inside.append(c)
+	_apply_map_selection(inside, mode)
 
+
+func _map_wand_active() -> bool:
+	return _map_wand != null and _map_wand.button_pressed
+
+
+## Selects the block under [param start]: the touching cells of its terrain, whatever piece
+## each holds, or of the same tile when it has none. With Target layer or All layers the block
+## is read on the layer whose tile was clicked; Target layer also makes that layer the edited one,
+## and All layers takes every layer's tiles inside the block. When All layers finds several layers
+## (or a cliff and its faces) under the click, a menu asks which one is meant.
+func _wand_map_selection(start: Vector2i, mode: int) -> void:
+	if tilemap == null:
+		return
+	_wand_cache = {}
+	if _wand_choosing():
+		var entries := _wand_entries(start)
+		if entries.size() > 1:
+			_popup_layer_menu(_with_all_entry(entries), mode, &"wand", false)
+			return
+	var found := _wand_source(start)
+	var source: TileMapLayer = found[0]
+	if _wand_targeting() and source != tilemap:
+		var selection := EditorInterface.get_selection()
+		selection.clear()
+		selection.add_node(source)
+		EditorInterface.edit_node(source)
+		# The new layer starts with an empty selection, so there is nothing to add to.
+		_wand_select_on.call_deferred(source, found[1], 0)
+		return
+	_wand_select_on(source, found[1], mode)
+
+
+## [param entries] led by the choice that takes every layer inside the top layer's block.
+func _with_all_entry(entries: Array) -> Array:
+	var top: Dictionary = entries.filter(func(e): return e.kind == &"layer")[0]
+	return [{kind = &"all", layer = top.layer, cell = top.cell, label = tr("All layers in the block"),
+		tip = tr("Every layer's tiles inside the block of the top one")}] + entries
+
+
+func _wand_targeting() -> bool:
+	return _map_target_layer != null and _map_target_layer.button_pressed and tilemap.is_inside_tree()
+
+
+## All layers without Target layer: a click can mean any of the layers under it.
+func _wand_choosing() -> bool:
+	return _all_layers_active() and not _wand_targeting() and tilemap.is_inside_tree()
+
+
+## [layer, cell] the wand reads the block from when clicking [param start].
+func _wand_source(start: Vector2i) -> Array:
+	if (_wand_targeting() or _all_layers_active()) and tilemap.is_inside_tree():
+		var found := _visible_layer_at(tilemap.to_global(tilemap.map_to_local(start)), not _wand_targeting())
+		if not found.is_empty():
+			return found
+	return [tilemap, _cliff_plateau_cell(tilemap, start)]
+
+
+## What a click at [param start] can pick with All layers, topmost first: each layer's block, and
+## a cliff's faces on their own when the click is on them.
+func _wand_entries(start: Vector2i) -> Array:
+	var entries := []
+	var root := EditorInterface.get_edited_scene_root()
+	for hit in _layers_at(tilemap.to_global(tilemap.map_to_local(start)), true):
+		var label := str(hit[0].name) if hit[0] == root else str(root.get_path_to(hit[0]))
+		if hit[2]:
+			entries.append({kind = &"faces", layer = hit[0], cell = hit[1], label = label + " › cliff faces"})
+		entries.append({kind = &"layer", layer = hit[0], cell = hit[1], label = label})
+	return entries
+
+
+## [layer, cells] an entry would select, in the layer's coordinates.
+func _wand_entry_block(entry: Dictionary) -> Array:
+	var block := _cached_flood(entry.layer, entry.cell)
+	if entry.kind == &"faces":
+		var faces := {}
+		for c in _cliff_faces_of(entry.layer, block):
+			faces[c] = true
+		return [entry.layer, faces]
+	return [entry.layer, block]
+
+
+func _wand_select_on(source: TileMapLayer, start: Vector2i, mode: int) -> void:
+	if tilemap == null or not is_instance_valid(source):
+		return
+	var block := _wand_flood(source, start)
+	if _all_layers_active():
+		var area := {}
+		for c in block:
+			area[_on_layer(source, tilemap, c)] = true
+		_all_selection.capture(tilemap, EditorInterface.get_edited_scene_root(), _box_of(area.keys()), mode, area)
+		_sync_all_selection()
+		return
+	if source != tilemap:
+		block = {}
+	_apply_map_selection(block.keys(), mode)
+
+
+## The plateau cell the cliff face at [param cell] hangs from, or [param cell] when no face is
+## there. Faces live on their own support layer, below the plateau's south edge.
+func _cliff_plateau_cell(layer: TileMapLayer, cell: Vector2i) -> Vector2i:
+	var faces := CLIFF_TERRAIN.find_faces(layer)
+	if faces == null:
+		return cell
+	var at := cell
+	for _i in 64:
+		if faces.get_cell_source_id(_on_layer(layer, faces, at)) == -1:
+			break
+		at.y -= 1
+	return cell if at == cell or layer.get_cell_source_id(at) == -1 else at
+
+
+## [param cell] of [param from] in [param to]'s coordinates.
+func _on_layer(from: TileMapLayer, to: TileMapLayer, cell: Vector2i) -> Vector2i:
+	if from == to:
+		return cell
+	return to.local_to_map(to.to_local(from.to_global(from.map_to_local(cell))))
+
+
+## Cliff faces hanging from [param block], in [param layer]'s coordinates.
+func _cliff_faces_of(layer: TileMapLayer, block: Dictionary) -> Array:
+	var faces := CLIFF_TERRAIN.find_faces(layer)
+	var out := []
+	if faces == null:
+		return out
+	for c: Vector2i in block:
+		var below := c + Vector2i.DOWN
+		while not block.has(below) and faces.get_cell_source_id(_on_layer(layer, faces, below)) != -1:
+			out.append(below)
+			below += Vector2i.DOWN
+	return out
+
+
+func _with_cliff_faces(layer: TileMapLayer, block: Dictionary) -> Dictionary:
+	var faces := _cliff_faces_of(layer, block)
+	if faces.is_empty():
+		return block
+	var whole := block.duplicate()
+	for c in faces:
+		whole[c] = true
+	return whole
+
+
+# --- Block preview: what a wand or bucket click would take, drawn under the cursor ---
+
+## {layer, cells, outline} drawn as the wand's preview; outline is in the layer's local space.
+var _wand_preview := {}
+## Mode a click would use, to tint the preview: 1 adds, -1 takes away.
+var _wand_preview_mode := 0
+## Under the cursor with several layers: what a click picks first, and how many choices there are.
+var _wand_hint := ""
+## Last block flooded, so moving inside it costs nothing.
+var _wand_cache := {}
+
+
+func _cached_flood(layer: TileMapLayer, cell: Vector2i) -> Dictionary:
+	if _wand_cache.get("layer") == layer and _wand_cache.cells.has(cell):
+		return _wand_cache.cells
+	var block := _wand_flood(layer, cell)
+	_wand_cache = {layer = layer, cells = block}
+	return block
+
+
+func _update_wand_preview(start: Vector2i, mode: int) -> void:
+	_wand_preview_mode = mode
+	if _layer_menu_open():
+		return
+	_wand_hint = ""
+	if _wand_choosing():
+		var entries := _wand_entries(start)
+		if entries.is_empty():
+			_set_wand_preview(null, {})
+			return
+		var picked := _wand_entry_block(entries[0])
+		_set_wand_preview(picked[0], picked[1])
+		if entries.size() > 1:
+			_wand_hint = _choice_hint(entries[0].label, entries.size() - 1)
+		return
+	var found := _wand_source(start)
+	_set_wand_preview(found[0], _with_cliff_faces(found[0], _cached_flood(found[0], found[1])))
+
+
+func _choice_hint(top: String, below: int) -> String:
+	return "%s   (+%d below, click to choose)" % [top, below]
+
+
+func _set_wand_preview(layer: Variant, cells: Dictionary) -> void:
+	if layer == null or cells.is_empty():
+		_wand_preview = {}
+		return
+	if _wand_preview.get("layer") == layer and _wand_preview.cells == cells:
+		return
+	_wand_preview = _block_preview(layer, cells)
+
+
+func _block_preview(layer: TileMapLayer, cells: Dictionary) -> Dictionary:
+	return {layer = layer, cells = cells, outline = _block_outline(layer, cells)}
+
+
+## Edges of [param cells] not shared with another of them, as line pairs in local space.
+func _block_outline(layer: TileMapLayer, cells: Dictionary) -> PackedVector2Array:
+	var shape: PackedVector2Array = BetterTerrain.data.cell_polygon(layer.tile_set)
+	var size := Vector2(layer.tile_set.tile_size)
+	var edges := {}
+	for c: Vector2i in cells:
+		var local: PackedVector2Array = Transform2D(0.0, size, 0.0, layer.map_to_local(c)) * shape
+		for i in local.size():
+			var j := (i + 1) % local.size()
+			var a := Vector2i((local[i] * 4.0).round())
+			var b := Vector2i((local[j] * 4.0).round())
+			var key := [a, b] if a.x < b.x or (a.x == b.x and a.y < b.y) else [b, a]
+			if edges.has(key):
+				edges.erase(key)
+			else:
+				edges[key] = [local[i], local[j]]
+	var lines := PackedVector2Array()
+	for e in edges.values():
+		lines.append(e[0])
+		lines.append(e[1])
+	return lines
+
+
+func _wand_tint() -> Color:
+	return Color(0.95, 0.35, 0.3) if _wand_preview_mode < 0 else Color(0.4, 0.8, 1.0)
+
+
+func _draw_wand_preview(overlay: Control, transform: Transform2D) -> void:
+	_draw_block_preview(overlay, transform, _wand_preview, _wand_tint(), _wand_hint)
+
+
+func _draw_block_preview(overlay: Control, transform: Transform2D, preview: Dictionary, tint: Color, hint: String) -> void:
+	if preview.is_empty():
+		return
+	var layer = preview.layer
+	if not is_instance_valid(layer) or layer.tile_set == null or not layer.is_inside_tree():
+		return
+	var to_overlay: Transform2D = transform * tilemap.global_transform.affine_inverse() * layer.global_transform
+	var shape: PackedVector2Array = BetterTerrain.data.cell_polygon(layer.tile_set)
+	var size := Vector2(layer.tile_set.tile_size)
+	var view := Rect2(Vector2.ZERO, overlay.size).grow(64)
+	var filled := 0
+	for c: Vector2i in preview.cells:
+		if not view.has_point(to_overlay * layer.map_to_local(c)):
+			continue
+		overlay.draw_colored_polygon(to_overlay * (Transform2D(0.0, size, 0.0, layer.map_to_local(c)) * shape), Color(tint, 0.28))
+		filled += 1
+		if filled > MAX_CANVAS_RENDER_TILES:
+			break
+	if not preview.outline.is_empty():
+		overlay.draw_multiline(to_overlay * preview.outline, tint, 2.0)
+	var font := get_theme_font("font", "Label")
+	if not hint.is_empty() and font != null:
+		var fsize := get_theme_font_size("font_size", "Label")
+		var at := overlay.get_local_mouse_position() + Vector2(18, 28)
+		var w := font.get_string_size(hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize).x
+		overlay.draw_rect(Rect2(at.x - 6, at.y - fsize - 2, w + 12, fsize + 10), Color(0, 0, 0, 0.65))
+		overlay.draw_string(font, at, hint, HORIZONTAL_ALIGNMENT_LEFT, -1, fsize, tint.lightened(0.4))
+
+
+# --- The bucket: same preview and the same layer menu ---
+
+## The region under the cursor: {key, preview, hint}.
+var _fill_cache := {}
+
+
+## Every tool that fills goes through here: terrains, singles, objects and scatter zones.
+## [param on_faces]: the region is a cliff's faces, so a scatter bag must be allowed to grow there.
+func _bucket_fill(region: Array, erasing: bool, anchor: Vector2i, on_faces := false) -> void:
+	_fill_cache = {}
+	_wand_cache = {}
+	if region.is_empty():
+		return
+	var type = selected_entry
+	if _is_scatter(type):
+		undo_manager.create_action(tr("Erase scatter region") if erasing else tr("Fill scatter region"), UndoRedo.MERGE_DISABLE, tilemap)
+		var before := SCATTER_TERRAIN.config_of(tileset, type)
+		if on_faces and not erasing and not before.on_faces:
+			var after := before.duplicate(true)
+			after.on_faces = true
+			undo_manager.add_do_method(SCATTER_TERRAIN, &"set_config", tileset, type, after, false)
+			undo_manager.add_undo_method(SCATTER_TERRAIN, &"set_config", tileset, type, before, false)
+			undo_manager.add_do_method(self, &"_sync_scatter_bag")
+			undo_manager.add_undo_method(self, &"_sync_scatter_bag")
+		_scatter_paint(region, erasing, false)
+		undo_manager.commit_action()
+		return
+	var cells := _single_cells(type, _object_brush_cells(type, region), anchor)
+	undo_manager.create_action(tr("Fill terrain"), UndoRedo.MERGE_DISABLE, tilemap)
+	_mark_hand_placed(type, cells, erasing, false)
+	if not erasing:
+		if replace_button.button_pressed:
+			undo_manager.add_do_method(BetterTerrain, &"replace_cells", tilemap, cells, type, anchor)
+		else:
+			undo_manager.add_do_method(BetterTerrain, &"set_cells", tilemap, cells, type, anchor)
+	else:
+		for c in cells:
+			undo_manager.add_do_method(tilemap, &"erase_cell", c)
+	undo_manager.add_do_method(BetterTerrain, &"update_terrain_cells", tilemap, cells)
+	_add_post_process(cells, erasing, false)
+	terrain_undo.create_tile_restore_point(undo_manager, tilemap, _restore_cells(cells))
+	undo_manager.commit_action()
+
+
+## What a bucket click at [param target] can fill: what you see, then the shape of each layer
+## there, topmost first, a cliff's faces on their own when the click is on them.
+func _bucket_entries(target: Vector2i) -> Array:
+	var entries := [{kind = &"seen", label = tr("What you see"), cell = target,
+		tip = tr("The region that looks the same, across the layers")}]
+	if not tilemap.is_inside_tree():
+		return entries
+	var root := EditorInterface.get_edited_scene_root()
+	for hit in _layers_at(tilemap.to_global(tilemap.map_to_local(target)), true):
+		var label := str(hit[0].name) if hit[0] == root else str(root.get_path_to(hit[0]))
+		if hit[2]:
+			entries.append({kind = &"faces_shape", layer = hit[0], cell = hit[1], label = label + " › cliff faces"})
+		entries.append({kind = &"shape", layer = hit[0], cell = hit[1], label = label})
+	return entries
+
+
+## The region on [param layer] around [param cell].
+func _fill_cells_shaped(layer: TileMapLayer, cell: Vector2i) -> Array:
+	var bounds := layer.get_used_rect()
+	var neighbors = BetterTerrain.data.cells_adjacent_for_fill(layer.tile_set)
+	var checked := {}
+	var pending := [cell]
+	var goal := []
+	while not pending.is_empty():
+		var p = pending.pop_front()
+		if checked.has(p):
+			continue
+		checked[p] = true
+		if not bounds.has_point(p) or not BetterTerrain.same_fill_region(layer, cell, p):
+			continue
+		goal.append(p)
+		if goal.size() >= MAX_FILL_CELLS:
+			break
+		pending.append_array(BetterTerrain.data.neighboring_coords(layer, p, neighbors))
+	return goal
+
+
+## The layer a bucket menu entry paints: the layer whose shape it is, so the fill shows on
+## it rather than under it. Faces and what you see paint the edited layer: painting a terrain
+## on the cliff's layer at its faces would grow the plateau. A layer with another tile set
+## can't take the picked terrain either.
+func _bucket_target(entry: Dictionary) -> TileMapLayer:
+	if entry.kind == &"shape" and is_instance_valid(entry.layer) and entry.layer.tile_set == tilemap.tile_set:
+		return entry.layer
+	return tilemap
+
+
+## Fills each [target, cells, anchor, on_faces] in turn, making its layer the edited one first.
+func _bucket_fill_layers(jobs: Array, erasing: bool, tries := 0) -> void:
+	while not jobs.is_empty():
+		var job: Array = jobs[0]
+		var target = job[0]
+		if not is_instance_valid(target):
+			jobs.pop_front()
+			continue
+		if target != tilemap:
+			# The dock follows the edited node a frame later.
+			if tries > 4:
+				push_warning("Better Tile Editor: couldn't switch to %s to fill it" % target.name)
+				jobs.pop_front()
+				continue
+			var selection := EditorInterface.get_selection()
+			selection.clear()
+			selection.add_node(target)
+			EditorInterface.edit_node(target)
+			_bucket_fill_layers.call_deferred(jobs, erasing, tries + 1)
+			return
+		jobs.pop_front()
+		tries = 0
+		_bucket_fill(job[1], erasing, job[2], job[3])
+	update_overlay.emit()
+
+
+func _bucket_tint(erasing: bool) -> Color:
+	if erasing:
+		return Color(0.95, 0.35, 0.3)
+	var terrain := BetterTerrain.get_terrain(tileset, selected_entry) if tileset != null else {}
+	return terrain.color if terrain.get("valid", false) else Color(0.4, 0.8, 1.0)
+
+
+func _draw_bucket_preview(overlay: Control, transform: Transform2D, erasing: bool) -> void:
+	var by_sight := _fill_by_sight()
+	var hint := ""
+	# With several layers here a click asks, so the top one is what the cursor points at.
+	var entry := {kind = &"seen", cell = current_position}
+	if by_sight:
+		var entries := _bucket_entries(current_position)
+		if entries.size() > 2:
+			entry = entries[1]
+			hint = _choice_hint(entry.label, entries.size() - 2)
+	var key := [tilemap, by_sight, entry.kind, entry.get("layer")]
+	if _fill_cache.is_empty() or _fill_cache.key != key \
+			or not _fill_cache.preview.cells.has(_on_layer(tilemap, _fill_cache.preview.layer, current_position)):
+		var picked := _layer_menu_region(entry)
+		if picked[1].is_empty():
+			_fill_cache = {}
+			return
+		_fill_cache = {key = key, preview = _block_preview(picked[0], picked[1])}
+	_draw_block_preview(overlay, transform, _fill_cache.preview, _bucket_tint(erasing), hint)
+
+
+# --- Layer chooser: the wand with All layers, or the bucket, with several layers under the click ---
+
+var _layer_menu: PopupPanel
+## What the open menu offers and has picked; see [method _popup_layer_menu].
+var _layer_menu_state := {}
+## The layers the menu faded on the rendering server.
+var _wand_faded := {}
+
+
+func _layer_menu_open() -> bool:
+	return _layer_menu != null and _layer_menu.visible
+
+
+## [param purpose] is &"wand" (entries select), &"bucket" (entries are regions to fill) or
+## &"pick" (the picker takes the tile from one layer).
+func _popup_layer_menu(entries: Array, mode: int, purpose: StringName, erasing: bool) -> void:
+	var t := PERF.begin()
+	_popup_layer_menu_timed(entries, mode, purpose, erasing)
+	PERF.end("dock.layer_menu_popup", t)
+
+
+func _popup_layer_menu_timed(entries: Array, mode: int, purpose: StringName, erasing: bool) -> void:
+	if _layer_menu == null:
+		_layer_menu = LAYER_MENU.new()
+		_layer_menu.id_pressed.connect(_on_layer_menu_pressed)
+		_layer_menu.popup_hide.connect(_on_layer_menu_closed)
+		add_child(_layer_menu)
+	_layer_menu.clear()
+	var names := _layer_menu_names(entries)
+	if purpose == &"pick":
+		_fill_pick_menu(entries, names)
+	# The wand's and the bucket's rows; the picker's are filled above.
+	for id in (0 if purpose == &"pick" else entries.size()):
+		var entry: Dictionary = entries[id]
+		if entry.kind in [&"all", &"seen"]:
+			_layer_menu.add_check_item(entry.label, id, entry.tip)
+			_layer_menu.add_separator()
+			continue
+		if entry.kind == &"terrain":
+			_layer_menu.add_sub_item(entry.color, names[id], id)
+			continue
+		var tile := _cell_tile_label(entry.layer, entry.cell) if entry.kind in [&"layer", &"shape"] else [null, ""]
+		_layer_menu.add_layer_item(names[id], tile[0], tile[1], id)
+	if purpose != &"pick":
+		_layer_menu.add_separator()
+		_layer_menu.add_hint(tr("Shift-click to pick several"))
+	_layer_menu_state = {
+		entries = entries,
+		mode = mode,
+		purpose = purpose,
+		erasing = erasing,
+		anchor = current_position,
+		chosen = [],
+		saved = _all_selection.selection.duplicate(true),
+		focused = -2,
+	}
+	_wand_hint = ""
+	_set_wand_preview(null, {})
+	_layer_menu.position = Vector2i(get_viewport().get_mouse_position()) if get_viewport() else Vector2i.ZERO
+	_layer_menu.reset_size()
+	_layer_menu.popup()
+	if not get_tree().process_frame.is_connected(_track_layer_menu):
+		get_tree().process_frame.connect(_track_layer_menu)
+
+
+const LAYER_MENU := preload("res://addons/better-tile-editor/editor/LayerMenu.gd")
+
+
+## What each entry is called in the layer menu: the layer's name, or its path when another
+## layer offered has the same name.
+func _layer_menu_names(entries: Array) -> Array:
+	var root := EditorInterface.get_edited_scene_root()
+	var count := {}
+	for entry: Dictionary in entries:
+		if entry.has("layer") and entry.kind in [&"layer", &"shape"]:
+			count[entry.layer.name] = count.get(entry.layer.name, 0) + 1
+	var out := []
+	for entry: Dictionary in entries:
+		var label: String = entry.label
+		if entry.has("layer") and root != null:
+			var path := str(entry.layer.name) if entry.layer == root else str(root.get_path_to(entry.layer))
+			if count.get(entry.layer.name, 0) <= 1 and label.begins_with(path):
+				label = str(entry.layer.name) + label.substr(path.length())
+		out.append(label)
+	return out
+
+
+## [icon, name] of the tile at [param cell] of [param layer]: a picture of it, and the name of
+## the favorite holding it, else of its terrain, else of its texture file; a scene tile's scene
+## name. Either may be empty.
+## The picker's menu: a row per layer, with a card for its tile and one for the tile's terrain.
+func _fill_pick_menu(entries: Array, names: Array) -> void:
+	var headings := [tr("Tile")]
+	if entries.any(func(e): return e.kind == &"terrain"):
+		headings.append(tr("Terrain"))
+	_layer_menu.add_pick_header(headings)
+	for id in entries.size():
+		var entry: Dictionary = entries[id]
+		if entry.kind != &"layer":
+			continue
+		var tile := _cell_tile_label(entry.layer, entry.cell, false)
+		var shown: String = tile[1].get_basename() if tile[1].get_extension() in ["png", "webp", "jpg", "svg"] else tile[1]
+		var choices := [{id = id, icon = tile[0], name = shown}]
+		if id + 1 < entries.size() and entries[id + 1].kind == &"terrain" and entries[id + 1].layer == entry.layer:
+			var terrain: Dictionary = entries[id + 1]
+			choices.append({id = id + 1, icon = _terrain_thumbnail(entry.layer.tile_set, terrain.terrain),
+				name = terrain.label, color = terrain.color})
+		_layer_menu.add_pick_row(names[id], choices)
+
+
+## The picture the terrain list shows for terrain [param id], or null.
+func _terrain_thumbnail(ts: TileSet, id: int) -> Texture2D:
+	if ts != tileset:
+		return null
+	var entry = _entry_for_id(id)
+	if entry == null:
+		return null
+	if entry._terrain_texture != null and entry._terrain_texture_rect.has_area():
+		var icon := AtlasTexture.new()
+		icon.atlas = entry._terrain_texture
+		icon.region = Rect2(entry._terrain_texture_rect)
+		return icon
+	return entry.terrain_icon_slot.texture
+
+
+## [param with_terrain] falls back to the terrain's name before the texture's.
+func _cell_tile_label(layer: TileMapLayer, cell: Vector2i, with_terrain := true) -> Array:
+	var ts := layer.tile_set
+	var source_id := layer.get_cell_source_id(cell)
+	if ts == null or not ts.has_source(source_id):
+		return [null, ""]
+	var alt := layer.get_cell_alternative_tile(cell)
+	var scenes := ts.get_source(source_id) as TileSetScenesCollectionSource
+	if scenes != null:
+		if not scenes.has_scene_tile_id(alt) or scenes.get_scene_tile_scene(alt) == null:
+			return [null, ""]
+		var scene := scenes.get_scene_tile_scene(alt)
+		var icon = _scene_thumbnails.get(_scene_key(source_id, alt)) if ts == tileset else null
+		if icon == null:
+			icon = _scene_sprite(scene)
+		if icon == null:
+			icon = EditorInterface.get_editor_theme().get_icon(&"PackedScene", &"EditorIcons")
+		return [icon, scene.resource_path.get_file().get_basename()]
+	var src := ts.get_source(source_id) as TileSetAtlasSource
+	if src == null or src.texture == null:
+		return [null, ""]
+	var atlas := layer.get_cell_atlas_coords(cell)
+	var label := ""
+	# The picture shows the whole favorite or object the tile is part of.
+	var block := Rect2i(atlas, Vector2i.ONE)
+	for fav in ts.get_meta(SINGLE_BAG_SCRIPT.META, []):
+		if int(fav.get("source", -1)) == source_id and int(fav.get("alt", 0)) == alt \
+				and Rect2i(fav.origin, fav.size).has_point(atlas):
+			block = Rect2i(fav.origin, fav.size)
+			label = str(fav.get("name", ""))
+			break
+	var id := BetterTerrain.get_cell(layer, cell)
+	if block.size == Vector2i.ONE and id >= 0:
+		block = _object_block_of(ts, src, atlas, block)
+	if label.is_empty() and id >= 0 and with_terrain:
+		label = str(BetterTerrain.get_terrain(ts, id).get("name", ""))
+	if label.is_empty():
+		label = src.texture.resource_path.get_file()
+	if label.is_empty() or label.contains("::"):
+		label = "Atlas %d" % source_id
+	return [_menu_tile_icon(src, block, alt), label]
+
+
+## The drawing of the object [param atlas] belongs to, or [param fallback].
+func _object_block_of(ts: TileSet, src: TileSetAtlasSource, atlas: Vector2i, fallback: Rect2i) -> Rect2i:
+	var texture := src.texture.resource_path.get_file()
+	for o in ObjectTerrain.get_objects(ts):
+		if o["atlas"] != "" and o["atlas"] != texture:
+			continue
+		for origin: Vector2i in [o["fused"], o["closed"]]:
+			if Rect2i(origin, o["size"]).has_point(atlas):
+				return Rect2i(origin, o["size"])
+	return fallback
+
+
+func _menu_tile_icon(src: TileSetAtlasSource, block: Rect2i, alt: int) -> Texture2D:
+	if not src.has_tile(block.position) or not src.has_alternative_tile(block.position, alt):
+		return null
+	var region := Rect2(src.get_tile_texture_region(block.position))
+	var last := block.end - Vector2i.ONE
+	if src.has_tile(last):
+		region = region.merge(Rect2(src.get_tile_texture_region(last)))
+	var icon := AtlasTexture.new()
+	icon.atlas = src.texture
+	icon.region = region
+	return icon
+
+
+## [layer, cells] an entry stands for, in that layer's coordinates.
+func _layer_menu_region(entry: Dictionary) -> Array:
+	if entry.kind == &"terrain":
+		return [entry.layer, _cached_flood(entry.layer, entry.cell)]
+	if _layer_menu_state.get("purpose") == &"pick":
+		return [entry.layer, _same_tile_cells(entry.layer, entry.cell)]
+	match entry.kind:
+		&"all":
+			return [entry.layer, _cached_flood(entry.layer, entry.cell)]
+		&"seen", &"shape", &"faces_shape":
+			var region := {}
+			match entry.kind:
+				&"seen":
+					for c in _get_fill_cells(entry.cell):
+						region[c] = true
+				&"shape":
+					var target := _bucket_target(entry)
+					for c in _fill_cells_shaped(entry.layer, entry.cell):
+						region[_on_layer(entry.layer, target, c)] = true
+					return [target, region]
+				_:
+					for c in _cliff_faces_of(entry.layer, _cached_flood(entry.layer, entry.cell)):
+						region[_on_layer(entry.layer, tilemap, c)] = true
+			return [tilemap, region]
+	return _wand_entry_block(entry)
+
+
+func _menu_tint() -> Color:
+	if _layer_menu_state.get("purpose") == &"bucket":
+		return _bucket_tint(_layer_menu_state.erasing)
+	if _layer_menu_state.get("purpose") == &"pick":
+		return Color(0.4, 0.8, 1.0)
+	return _wand_tint()
+
+
+## The hovered row is polled, so the preview follows it once per frame.
+func _track_layer_menu() -> void:
+	if not _layer_menu_open() or _layer_menu_state.is_empty():
+		return
+	var id: int = _layer_menu.focused_id()
+	if id == _layer_menu_state.focused:
+		return
+	var t := PERF.begin()
+	_track_layer_menu_changed(id)
+	PERF.end("dock.layer_menu_hover", t)
+
+
+func _track_layer_menu_changed(id: int) -> void:
+	_layer_menu_state.focused = id
+	var entries: Array = _layer_menu_state.entries
+	if id < 0 or id >= entries.size():
+		_fade_layers(null)
+		_show_chosen_regions()
+	else:
+		var entry: Dictionary = entries[id]
+		match entry.kind:
+			&"all", &"seen":
+				_fade_layers(null)
+			&"faces", &"faces_shape":
+				_fade_layers(CLIFF_TERRAIN.find_faces(entry.layer))
+			_:
+				_fade_layers(entry.layer)
+		var picked := _layer_menu_region(entry)
+		_set_wand_preview(picked[0], picked[1])
+	update_overlay.emit()
+
+
+## With nothing hovered, the bucket's menu shows what the picked entries fill together.
+func _show_chosen_regions() -> void:
+	if _layer_menu_state.purpose != &"bucket":
+		_set_wand_preview(null, {})
+		return
+	var union := _bucket_union()
+	_set_wand_preview(union[0], union[1])
+
+
+## [target, cells] of every picked entry together, for the preview; one target per preview,
+## so it shows the edited layer's share when the picks paint several layers.
+func _bucket_union() -> Array:
+	var jobs := _bucket_jobs()
+	if jobs.is_empty():
+		return [tilemap, {}]
+	var cells := {}
+	for c in jobs[0][1]:
+		cells[c] = true
+	return [jobs[0][0], cells]
+
+
+## [target, cells, anchor, on_faces] for each layer the picked entries paint; the edited layer goes first,
+## as it needs no switch.
+func _bucket_jobs() -> Array:
+	var by_target := {}
+	var faces_on := {}
+	for id in _layer_menu_state.chosen:
+		var entry: Dictionary = _layer_menu_state.entries[id]
+		var picked := _layer_menu_region(entry)
+		if not by_target.has(picked[0]):
+			by_target[picked[0]] = {}
+		by_target[picked[0]].merge(picked[1])
+		if entry.kind == &"faces_shape":
+			faces_on[picked[0]] = true
+	var jobs := []
+	for target in by_target:
+		var anchor := _on_layer(tilemap, target, _layer_menu_state.anchor)
+		jobs.append([target, by_target[target].keys(), anchor, faces_on.has(target)])
+	jobs.sort_custom(func(a, b): return a[0] == tilemap and b[0] != tilemap)
+	return jobs
+
+
+func _on_layer_menu_pressed(id: int) -> void:
+	var t := PERF.begin()
+	_on_layer_menu_pressed_timed(id)
+	PERF.end("dock.layer_menu_pressed", t)
+
+
+func _on_layer_menu_pressed_timed(id: int) -> void:
+	var state := _layer_menu_state
+	if state.is_empty() or id >= state.entries.size():
+		return
+	if state.purpose == &"pick":
+		var entry: Dictionary = state.entries[id]
+		_layer_menu.hide()
+		_pick_from_entry(entry)
+		return
+	var several := Input.is_key_pressed(KEY_SHIFT)
+	if several and id in state.chosen:
+		state.chosen.erase(id)
+	elif not id in state.chosen:
+		state.chosen.append(id)
+	_layer_menu.set_checked(id, id in state.chosen)
+	if state.purpose == &"wand":
+		_apply_wand_choice()
+	elif not several:
+		var jobs := _bucket_jobs()
+		var erasing: bool = state.erasing
+		_layer_menu.hide()
+		_bucket_fill_layers(jobs, erasing)
+		return
+	if not several:
+		_layer_menu.hide()
+
+
+## Rebuilds the selection from what it was before the menu plus every picked entry.
+func _apply_wand_choice() -> void:
+	var state := _layer_menu_state
+	_all_selection.selection = state.saved.duplicate(true)
+	var root := EditorInterface.get_edited_scene_root()
+	var mode: int = state.mode
+	for id in state.chosen:
+		var entry: Dictionary = state.entries[id]
+		if entry.kind == &"all":
+			_wand_select_on(entry.layer, entry.cell, mode)
+		else:
+			var picked := _wand_entry_block(entry)
+			var layer: TileMapLayer = picked[0]
+			var cells: Array = picked[1].keys()
+			if entry.kind == &"faces":
+				layer = CLIFF_TERRAIN.find_faces(entry.layer)
+				cells = cells.map(func(c): return _on_layer(entry.layer, layer, c))
+			_all_selection.capture_layer(tilemap, root, layer, cells, mode)
+		# The first pick replaces the selection; the next ones add to it.
+		if mode == 0:
+			mode = 1
+	_sync_all_selection()
+
+
+func _on_layer_menu_closed() -> void:
+	_fade_layers(null)
+	_layer_menu_state = {}
+	_set_wand_preview(null, {})
+	if get_tree().process_frame.is_connected(_track_layer_menu):
+		get_tree().process_frame.disconnect(_track_layer_menu)
+	update_overlay.emit()
+
+
+## Turns every layer but [param keep] (and its support layers) almost see-through, or with
+## null brings them all back. Faded on the rendering server, not through the layer's
+## properties: a property change makes the layer emit changed, and whatever listens to that
+## (a game's tile effects) rebuilds on every hover.
+func _fade_layers(keep: Variant) -> void:
+	for layer in _wand_faded:
+		if is_instance_valid(layer):
+			RenderingServer.canvas_item_set_modulate(layer.get_canvas_item(), layer.modulate)
+	_wand_faded.clear()
+	var root := EditorInterface.get_edited_scene_root()
+	if keep == null or root == null:
+		return
+	var layers: Array = root.find_children("*", "TileMapLayer", true, false)
+	if root is TileMapLayer:
+		layers.push_front(root)
+	var fade := {}
+	for layer: TileMapLayer in layers:
+		if layer == keep or layer.is_ancestor_of(keep) or (SUPPORT_LAYERS.is_support(layer) \
+				and layer.get_parent() == keep and layer != CLIFF_TERRAIN.find_faces(keep)):
+			continue
+		fade[layer] = true
+	for layer: TileMapLayer in fade:
+		# A child takes its parent's fade already.
+		if fade.has(layer.get_parent()):
+			continue
+		_wand_faded[layer] = true
+		RenderingServer.canvas_item_set_modulate(layer.get_canvas_item(), Color(layer.modulate, layer.modulate.a * 0.12))
+
+
+func _wand_flood(layer: TileMapLayer, start: Vector2i) -> Dictionary:
+	var found := {}
+	var key = _wand_key(layer, start)
+	if key == null:
+		return found
+	found[start] = true
+	var queue: Array[Vector2i] = [start]
+	while not queue.is_empty():
+		for n in layer.get_surrounding_cells(queue.pop_back()):
+			if found.has(n):
+				continue
+			var other = _wand_key(layer, n)
+			if other != null and other == key:
+				found[n] = true
+				queue.append(n)
+	return found
+
+
+func _wand_key(layer: TileMapLayer, cell: Vector2i) -> Variant:
+	var source := layer.get_cell_source_id(cell)
+	if source == -1:
+		return null
+	var terrain := BetterTerrain.get_cell(layer, cell)
+	if terrain >= 0:
+		return [terrain]
+	return [source, layer.get_cell_atlas_coords(cell), layer.get_cell_alternative_tile(cell)]
+
+
+func _apply_map_selection(inside: Array, mode: int) -> void:
 	var cells: Array = []
 	match mode:
 		1:
@@ -4104,7 +5495,11 @@ const OPTION_LABELS := {
 	HIDE_TYPE_ICONS_SETTING: "Hide terrain type icons in the list",
 	SHOW_HIDDEN_SETTING: "Show the _hidden group (terrains the slope set-up makes)",
 	HIDE_SCENES_SETTING: "Hide the Scenes group (the tile set's scene tiles)",
+	HIDE_GENERATED_SETTING: "Hide the atlases Complete terrain generates",
+	HIDE_UNTILED_SETTING: "Hide the cells that have art but no tile yet (they become tiles when you use them)",
 }
+## Options that start on; the rest start off.
+const OPTIONS_ON_BY_DEFAULT := [HIDE_GENERATED_SETTING]
 
 var _options_window: AcceptDialog
 var _option_checks := {}
@@ -4121,14 +5516,17 @@ func _add_options_button() -> void:
 		return
 	var settings := EditorInterface.get_editor_settings()
 	for setting in OPTION_LABELS:
+		var default: bool = setting in OPTIONS_ON_BY_DEFAULT
 		if not settings.has_setting(setting):
-			settings.set_setting(setting, false)
-		settings.set_initial_value(setting, false, false)
+			settings.set_setting(setting, default)
+		settings.set_initial_value(setting, default, false)
 	if not settings.has_setting(PICKER_MODIFIER_SETTING):
 		settings.set_setting(PICKER_MODIFIER_SETTING, PickerModifier.ALT)
 	settings.set_initial_value(PICKER_MODIFIER_SETTING, PickerModifier.ALT, false)
 	tile_view.show_grid = bool(settings.get_setting(SHOW_TILE_GRID_SETTING))
 	tile_view.trim_empty = not bool(settings.get_setting(SHOW_EMPTY_ATLAS_SETTING))
+	tile_view.hide_generated = bool(settings.get_setting(HIDE_GENERATED_SETTING))
+	tile_view.show_untiled = not bool(settings.get_setting(HIDE_UNTILED_SETTING))
 	zoom_slider_container.visible = bool(settings.get_setting(SHOW_ZOOM_SETTING))
 	var options := Button.new()
 	options.name = "Options"
@@ -4270,6 +5668,11 @@ func _set_option(enabled: bool, setting: String) -> void:
 	if setting == SHOW_EMPTY_ATLAS_SETTING:
 		tile_view.trim_empty = not enabled
 		tile_view.queue_redraw()
+	if setting == HIDE_GENERATED_SETTING:
+		tile_view.hide_generated = enabled
+		tile_view.queue_redraw()
+	if setting == HIDE_UNTILED_SETTING:
+		tile_view.show_untiled = not enabled
 	zoom_slider_container.visible = bool(settings.get_setting(SHOW_ZOOM_SETTING))
 	_reload_button.visible = bool(settings.get_setting(SHOW_REFRESH_SETTING))
 	if setting == SHOW_TOOL_NAMES_SETTING:
@@ -4356,6 +5759,12 @@ func _on_layer_order_changed() -> void:
 
 
 func _rebuild_cliffs_now() -> void:
+	var t := PERF.begin()
+	_rebuild_cliffs_now_timed()
+	PERF.end("dock.rebuild_cliffs", t)
+
+
+func _rebuild_cliffs_now_timed() -> void:
 	if tile_view.editing_rules():
 		_mark_cliffs_dirty()
 		return
@@ -4370,11 +5779,15 @@ func _rebuild_cliffs_now() -> void:
 	var changed := false
 	for c in targets:
 		if c is TileMapLayer:
+			var t := PERF.begin()
 			var rep: Dictionary = CLIFF_TERRAIN.rebuild(c, BetterTerrain, false)
+			PERF.end("cliffs.rebuild", t, "%s cells=%d written=%d" % [c.name, c.get_used_cells().size(), rep.written])
 			changed = changed or rep.written > 0 or rep.cleared > 0
 	for c in targets:
 		if c is TileMapLayer:
+			var t := PERF.begin()
 			var lk: Dictionary = EXEMPLAR_TERRAIN.rebuild(c, BetterTerrain)
+			PERF.end("exemplar.rebuild", t, "%s cells=%d" % [c.name, c.get_used_cells().size()])
 			changed = changed or lk.region > 0 or lk.edges > 0
 
 	if changed:
@@ -4617,6 +6030,52 @@ func _single_cells(type: int, cells: Array, anchor: Vector2i) -> Array:
 	return BetterTerrain.single_block_cells(tileset, type, cells, anchor)
 
 
+## The hand-placed cells as they were when the stroke began, for its undo, and as the stroke
+## leaves them so far.
+var _hand_placed_before := {}
+var _hand_placed_stroke := {}
+
+
+## Loose tiles of a terrain are marked as placed by hand, so the solver, objects and patches
+## leave them as they are; painting anything else or erasing over them clears the mark. Goes
+## before the paint in the action, so the solving after it already sees the marks. Each step
+## sets the whole set, as a merged stroke replays only its last step.
+func _mark_hand_placed(type: int, cells: Array, erasing: bool, merged: bool) -> void:
+	var on := not erasing and _is_single(type) and _brush_has_terrain(type)
+	var before := _hand_placed_before if merged else BetterTerrain.hand_placed(tilemap).duplicate()
+	var after := _hand_placed_stroke if merged else before.duplicate()
+	if not on and not cells.any(func(c): return after.has(c)):
+		return
+	for c in cells:
+		if on:
+			after[c] = true
+		else:
+			after.erase(c)
+	if merged:
+		terrain_undo.add_do_method(undo_manager, BetterTerrain, &"restore_hand_placed", [tilemap, after.duplicate()])
+	else:
+		undo_manager.add_do_method(BetterTerrain, &"restore_hand_placed", tilemap, after)
+	undo_manager.add_undo_method(BetterTerrain, &"restore_hand_placed", tilemap, before)
+
+
+## Whether the loose-tile brush holds a tile of some terrain; plain tiles need no mark.
+func _brush_has_terrain(type: int) -> bool:
+	var block := BetterTerrain.single_block_of(tileset, type)
+	if block.is_empty():
+		return false
+	var src := tileset.get_source(block.source) as TileSetAtlasSource
+	if src == null:
+		return false
+	for y in block.size.y:
+		for x in block.size.x:
+			var at: Vector2i = block.origin + Vector2i(x, y)
+			if src.has_tile(at) and src.has_alternative_tile(at, block.alt):
+				var td := src.get_tile_data(at, block.alt)
+				if int(td.get_meta(BetterTerrain.TERRAIN_META, {}).get("type", -1)) >= 0:
+					return true
+	return false
+
+
 func _is_single(type: int) -> bool:
 	if tileset == null:
 		return false
@@ -4709,6 +6168,16 @@ func _on_scatter_reroll() -> void:
 	after["seed"] = randi()
 	var id := selected_entry
 	undo_manager.create_action(tr("Reroll scatter"), UndoRedo.MERGE_DISABLE, tileset)
+	# Pieces removed by hand belonged to the old roll.
+	if tilemap != null:
+		var removed := SCATTER_TERRAIN.zone_cells(tilemap, SCATTER_TERRAIN.REMOVED)
+		var zone := {}
+		for c in SCATTER_TERRAIN.zone_cells(tilemap, id):
+			zone[c] = true
+		var cleared := removed.filter(func(c): return zone.has(c))
+		if not cleared.is_empty():
+			undo_manager.add_do_method(SCATTER_TERRAIN, &"remove_cells", tilemap, SCATTER_TERRAIN.REMOVED, cleared)
+			undo_manager.add_undo_method(SCATTER_TERRAIN, &"add_cells", tilemap, SCATTER_TERRAIN.REMOVED, cleared)
 	undo_manager.add_do_method(SCATTER_TERRAIN, &"set_config", tileset, id, after)
 	undo_manager.add_undo_method(SCATTER_TERRAIN, &"set_config", tileset, id, before)
 	if tilemap != null:
@@ -4724,6 +6193,10 @@ func _on_scatter_apply() -> void:
 	var report: Dictionary = SCATTER_TERRAIN.rebuild(tilemap)
 	_say("Scatter: %d cells painted on %s." % [report.written, tilemap.name])
 	update_overlay.emit()
+
+
+## Ctrl held when the right button went down: the stroke removes scatter tiles, not the zone.
+var _scatter_fine_erase := false
 
 
 func _scatter_paint(cells: Array, erasing: bool, merged: bool) -> void:
@@ -4877,7 +6350,9 @@ func _arrange_toolbar() -> void:
 	var context := HBoxContainer.new()
 	context.name = "ToolOptions"
 	toolbar.add_child(context)
+	_map_select_shapes.reparent(context)
 	_map_all_layers.reparent(context)
+	_map_target_layer.reparent(context)
 	var terrain_options := HBoxContainer.new()
 	terrain_options.name = "TerrainOptions"
 	context.add_child(terrain_options)
@@ -5184,11 +6659,18 @@ func _on_quick_pressed(kind: int) -> void:
 		return
 	var src := tileset.get_source(block.source) as TileSetAtlasSource
 	var tiles := []
+	# Empty cells are offered too: the inside of a ring is often left blank.
+	var spare := []
 	for y in range(block.origin.y, block.origin.y + block.size.y):
 		for x in range(block.origin.x, block.origin.x + block.size.x):
 			var c := Vector2i(x, y)
-			if src.has_tile(c) and src.has_alternative_tile(c, block.alt) and not QUICK_MATCH.blank(src, c):
-				tiles.append(c)
+			if src.has_tile(c) and src.has_alternative_tile(c, block.alt):
+				if QUICK_MATCH.blank(src, c):
+					spare.append(c)
+				else:
+					tiles.append(c)
+			elif block.alt == 0 and _can_create_tile(src, c):
+				spare.append(c)
 	if tiles.is_empty():
 		return
 	var owners := _terrain_owners(src, tiles, block.alt)
@@ -5207,7 +6689,7 @@ func _on_quick_pressed(kind: int) -> void:
 	dialog.confirmed.connect(dialog.queue_free, CONNECT_DEFERRED)
 	dialog.canceled.connect(dialog.queue_free)
 	dialog.popup_centered(Vector2i(900, 560) * EditorInterface.get_editor_scale())
-	dialog.setup(src, QUICK_MATCH.read(src, tiles), QUICK_MATCH.contrast_color(src, tiles))
+	dialog.setup(src, QUICK_MATCH.read(src, tiles), QUICK_MATCH.contrast_color(src, tiles), spare)
 
 
 ## options: bits (Match joins as adjusted, {coords: [bits]}), name, color; otherwise read and
@@ -5224,11 +6706,15 @@ func _create_quick_terrain(kind: int, options := {}) -> void:
 			var c := Vector2i(x, y)
 			if src.has_tile(c) and src.has_alternative_tile(c, block.alt):
 				tiles.append(c)
-	# Tiles with nothing drawn are gaps between shapes, not pieces of the terrain.
+	# Tiles with nothing drawn are gaps between shapes, not pieces of the terrain, unless the
+	# preview took them in.
+	var chosen: Dictionary = options.get("bits", {})
 	if kind == QuickKind.MATCH:
-		tiles = tiles.filter(func(c: Vector2i): return not QUICK_MATCH.blank(src, c))
+		tiles = tiles.filter(func(c: Vector2i): return chosen.has(c) or not QUICK_MATCH.blank(src, c))
 	# Patch and Object read the whole rectangle, so empty cells become tiles.
 	var new_tiles: Array = _atlas_gaps(src, rect) if kind in [QuickKind.PATCH, QuickKind.OBJECT] else []
+	if kind == QuickKind.MATCH:
+		new_tiles = _atlas_gaps(src, rect).filter(func(c: Vector2i): return chosen.has(c) and _can_create_tile(src, c))
 	if tiles.is_empty() and new_tiles.is_empty():
 		return
 	# One terrain per tile. Scatter only lists tiles, so it takes any.
@@ -5734,20 +7220,43 @@ func _data_mode() -> bool:
 	return selected_entry == DATA_ENTRY and tileset != null
 
 
+const SIDE_PANEL_OFFSET_SETTING := "editors/better_terrain/side_panel_offset"
+## Divider position from the right edge, in pixels: negative widens the panels.
+const SIDE_PANEL_OFFSET_DEFAULT := -318
+## Holds the collision and custom data panels, right of the atlas.
+var _side_panels: HBoxContainer
+
+
 func _build_collision_panel() -> void:
 	var editors := $VBox/HSplit/Editors
 	var atlas: Control = $VBox/HSplit/Editors/Panel
-	var row := HBoxContainer.new()
+	# The collision and custom data panels sit right of the atlas; the divider sets their width.
+	var row := HSplitContainer.new()
 	row.name = "AtlasRow"
-	row.add_theme_constant_override("separation", 0)
 	editors.add_child(row)
 	editors.move_child(row, atlas.get_index())
 	atlas.reparent(row)
 	atlas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_side_panels = HBoxContainer.new()
+	_side_panels.name = "SidePanels"
+	_side_panels.add_theme_constant_override("separation", 0)
+	_side_panels.hide()
+	row.add_child(_side_panels)
+	var settings := EditorInterface.get_editor_settings() if Engine.is_editor_hint() else null
+	row.split_offset = SIDE_PANEL_OFFSET_DEFAULT
+	if settings != null:
+		if not settings.has_setting(SIDE_PANEL_OFFSET_SETTING):
+			settings.set_setting(SIDE_PANEL_OFFSET_SETTING, SIDE_PANEL_OFFSET_DEFAULT)
+		settings.set_initial_value(SIDE_PANEL_OFFSET_SETTING, SIDE_PANEL_OFFSET_DEFAULT, false)
+		row.split_offset = int(settings.get_setting(SIDE_PANEL_OFFSET_SETTING))
+	row.dragged.connect(func(offset: int) -> void:
+		if settings != null:
+			settings.set_setting(SIDE_PANEL_OFFSET_SETTING, offset))
 	_collision_panel = COLLISION_PANEL_SCRIPT.new()
-	row.add_child(_collision_panel)
+	_collision_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_side_panels.add_child(_collision_panel)
 	_collision_panel.hide()
-	_build_data_panel(row)
+	_build_data_panel(_side_panels)
 	_collision_panel.physics_layer_picked.connect(func(index: int) -> void:
 		_collision_layer_index = index
 		_sync_collision_mode()
@@ -5765,10 +7274,10 @@ func _build_collision_panel() -> void:
 		update_overlay.emit())
 	add_child(_collision_tip_timer)
 	_build_collision_mode_buttons()
-	tile_view.collision_marked.connect(func(source_id: int, coord: Vector2i, solid: bool) -> void:
+	tile_view.collision_marked.connect(func(source_id: int, coord: Vector2i, solid: bool, alternate: int) -> void:
 		if not _collision_stroking:
 			_collision_begin()
-		_collision_mark(source_id, coord, solid))
+		_collision_mark(source_id, coord, solid, alternate))
 	tile_view.collision_stroke_ended.connect(_collision_end)
 	tile_view.collision_pick_check = func(event: InputEventWithModifiers) -> bool: return _collision_takes_shape(event)
 	tile_view.collision_copy_requested.connect(_copy_collision)
@@ -5810,6 +7319,7 @@ func _sync_collision_mode() -> void:
 	if data:
 		tile_view.pick_tiles = _data_inspecting()
 	_data_panel.visible = data
+	_side_panels.visible = collisions or data
 	if data:
 		_data_panel.setup(tileset)
 		_sync_data_marks()
@@ -5870,6 +7380,14 @@ func _collision_canvas_input(event: InputEvent) -> bool:
 			return true
 		if event.pressed and _data_inspecting():
 			return true
+		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _collision_mode() \
+				and not _collision_stamp_mode and (_picker_modifier_held(event) or _picker_active()):
+			var hit := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))
+			if not hit.is_empty():
+				_show_in_atlas(hit[0], hit[1])
+			if _picker_active() and _tool_before_pick != null:
+				_tool_before_pick.button_pressed = true
+			return true
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _collision_takes_shape(event):
 			var source := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))
 			if not source.is_empty():
@@ -5914,11 +7432,11 @@ func _collision_mark_cells(cells: Array) -> void:
 		var found := _collision_tile_at(layers, tilemap.to_global(tilemap.map_to_local(c)))
 		if found.is_empty():
 			continue
-		var key := Vector3i(found[1].x, found[1].y, found[0])
+		var key := Vector4i(found[1].x, found[1].y, found[0], found[2])
 		if seen.has(key):
 			continue
 		seen[key] = true
-		_collision_mark(found[0], found[1], _collision_solid)
+		_collision_mark(found[0], found[1], _collision_solid, found[2])
 
 
 ## Visible layers of the edited scene drawn with this tile set, selected layer included.
@@ -5952,7 +7470,10 @@ func _collision_tile_at(layers: Array, point: Vector2) -> Array:
 		var z := _effective_z(layer)
 		if best.is_empty() or z >= best_z:
 			best_z = z
-			best = [source_id, layer.get_cell_atlas_coords(c)]
+			# The flip bits Godot keeps in the alternative id are not an alternative of their own.
+			var alt := layer.get_cell_alternative_tile(c) & ~(TileSetAtlasSource.TRANSFORM_FLIP_H \
+				| TileSetAtlasSource.TRANSFORM_FLIP_V | TileSetAtlasSource.TRANSFORM_TRANSPOSE)
+			best = [source_id, layer.get_cell_atlas_coords(c), alt]
 	return best
 
 
@@ -5964,7 +7485,9 @@ func _collision_begin() -> void:
 	tile_view.collision_stroking = true
 
 
-func _collision_mark(source_id: int, coords: Vector2i, solid: bool) -> void:
+## [param alternate] other than 0 marks that alternative alone; 0 marks the tile and the
+## alternatives the scope takes in.
+func _collision_mark(source_id: int, coords: Vector2i, solid: bool, alternate := 0) -> void:
 	var src := tileset.get_source(source_id) as TileSetAtlasSource
 	if src == null or not src.has_tile(coords):
 		return
@@ -5982,7 +7505,8 @@ func _collision_mark(source_id: int, coords: Vector2i, solid: bool) -> void:
 		_collision_stamp(source_id, coords)
 		return
 	_collision_action = tr("Mark collisions") if solid else tr("Clear collisions")
-	_collision_write(source_id, coords, [[COLLISIONS.full_polygon(tileset, src, coords), false, 1.0]] if solid else [])
+	_collision_write(source_id, coords, [[COLLISIONS.full_polygon(tileset, src, coords), false, 1.0]] if solid else [],
+		alternate)
 
 
 ## Writes the copied shape with this tile as the top-left of the copied block.
@@ -6003,14 +7527,19 @@ func _collision_stamp(source_id: int, coords: Vector2i) -> void:
 
 ## Sets a tile's polygons ([[points, one_way, margin], ...]) on the tile and the alternatives
 ## the scope takes in, remembering how it was for the stroke's undo step.
-func _collision_write(source_id: int, coords: Vector2i, polygons: Array) -> void:
+func _collision_write(source_id: int, coords: Vector2i, polygons: Array, alternate := 0) -> void:
 	var src := tileset.get_source(source_id) as TileSetAtlasSource
 	if src == null or not src.has_tile(coords):
 		return
+	if alternate != 0 and not src.has_alternative_tile(coords, alternate):
+		return
 	var layer := _collision_physics_layer()
-	var alts := COLLISIONS.target_alts(src, coords, COLLISIONS.alt_scope())
+	var alts := [alternate] if alternate != 0 else COLLISIONS.target_alts(src, coords, COLLISIONS.alt_scope())
 	var want := COLLISIONS.shape_state(polygons, alts)
-	var key := Vector3i(coords.x, coords.y, source_id)
+	var key: Variant = Vector3i(coords.x, coords.y, source_id)
+	# An alternative the tile's own entry already holds is recorded there for undo.
+	if alternate != 0 and not (_collision_stroke.has(key) and alternate in _collision_stroke[key][3]):
+		key = Vector4i(coords.x, coords.y, source_id, alternate)
 	if not _collision_stroke.has(key):
 		var before := COLLISIONS.tile_state(src, coords, layer, alts)
 		if before == want:
@@ -6229,6 +7758,7 @@ func _data_inspecting() -> bool:
 
 func _build_data_panel(row: Control) -> void:
 	_data_panel = DATA_PANEL_SCRIPT.new()
+	_data_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(_data_panel)
 	_data_panel.hide()
 	$VBox/Toolbar.add_child(_data_panel.mode_bar)
@@ -6591,7 +8121,7 @@ func _apply_tool_names() -> void:
 		names[_map_select] = "Select"
 	if _slope_button != null:
 		names[_slope_button] = "Slope"
-	for box: Node in [_collision_mode_box, _data_panel.mode_bar if _data_panel != null else null]:
+	for box: Node in [_map_select_shapes, _collision_mode_box, _data_panel.mode_bar if _data_panel != null else null]:
 		if box != null:
 			for child in box.get_children():
 				if child is Button and child.has_meta(&"tool_name"):
@@ -6715,5 +8245,227 @@ func _add_quarter_source(src: TileSetAtlasSource, source_id: int, terrain_id: in
 		shapes: Dictionary = {}, other: int = -1, with_corners: bool = true) -> void:
 	tileset.add_source(src, source_id)
 	QUARTER_PIECES.fill_source(tileset, src, terrain_id, pieces, shapes, other, with_corners)
+
+#endregion
+
+
+#region Seams tool
+
+## List id of the Seams entry; below every TileCategory so it never names a terrain.
+const SEAM_ENTRY := -12
+const SEAM_COLOR := Color(0.95, 0.3, 0.3)
+
+var _seam_stroking := false
+var _seam_adding := true
+var _seam_action := PaintAction.NO_ACTION
+var _seam_from := Vector2i.ZERO
+## Cells the pencil stroke in progress has passed over, {cell: true}.
+var _seam_stroke := {}
+var _tools_off_for_seams: Array[Button] = []
+
+
+func _seam_entry_terrain() -> Dictionary:
+	return {id = SEAM_ENTRY, name = "Seams", color = SEAM_COLOR, type = -1,
+		categories = [], icon = {}, group = "", object = {}, valid = true,
+		tool_icon = ICON_DIR + "Seam.svg",
+		tool_hint = "Seams: cut the terrain at these cells.\nA new seam erases its cell's tile on this layer, and the terrain around it stops there, open.\nPut a tile on a seam by hand and it stays. Left click adds seams, right click removes them."}
+
+
+func _seam_mode() -> bool:
+	return selected_entry == SEAM_ENTRY and tileset != null
+
+
+func _sync_seam_mode() -> void:
+	var on := _seam_mode()
+	for button in _tools_off_for_seams:
+		button.disabled = false
+	_tools_off_for_seams.clear()
+	if not on:
+		_seam_stroking = false
+		_seam_stroke = {}
+		return
+	if _picker != null:
+		_picker.visible = false
+	select_tiles.visible = false
+	# A seam is a mark on a cell: the pencil, the line and the rectangle are the tools for it.
+	for button: Button in [_map_select, fill_button, _slope_button, replace_button]:
+		if button == null:
+			continue
+		button.disabled = true
+		_tools_off_for_seams.append(button)
+	if not (draw_button.button_pressed or line_button.button_pressed or rectangle_button.button_pressed):
+		draw_button.button_pressed = true
+	update_overlay.emit()
+
+
+func _seam_canvas_input(event: InputEvent) -> bool:
+	if not (event is InputEventMouseButton or event is InputEventMouseMotion):
+		return false
+	var cell := tilemap.local_to_map(canvas_tilemap_transform().affine_inverse() * Vector2(event.position))
+	var last := current_position
+	draw_overlay = true
+	if cell != current_position:
+		current_position = cell
+		update_overlay.emit()
+	if event is InputEventMouseButton:
+		if event.button_index not in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+			return false
+		if event.pressed:
+			if _seam_stroking:
+				return true
+			_seam_stroking = true
+			_seam_adding = event.button_index == MOUSE_BUTTON_LEFT
+			_seam_from = cell
+			_seam_stroke = {}
+			_seam_action = PaintAction.NO_ACTION
+			if rectangle_button.button_pressed:
+				_seam_action = PaintAction.RECT
+			elif line_button.button_pressed:
+				_seam_action = PaintAction.LINE
+			elif event.shift_pressed:
+				_seam_action = PaintAction.RECT if event.is_command_or_control_pressed() else PaintAction.LINE
+			if _seam_action == PaintAction.NO_ACTION:
+				for c in _brush_cells([cell]):
+					_seam_stroke[c] = true
+		elif _seam_stroking:
+			_end_seam_stroke(cell)
+		update_overlay.emit()
+		return true
+	if _seam_stroking:
+		var mask := MOUSE_BUTTON_MASK_LEFT if _seam_adding else MOUSE_BUTTON_MASK_RIGHT
+		if event.button_mask & mask == 0:
+			_end_seam_stroke(cell)
+		elif _seam_action == PaintAction.NO_ACTION and cell != last:
+			for c in _brush_cells(_get_tileset_line(last, cell, tileset)):
+				_seam_stroke[c] = true
+		update_overlay.emit()
+		return true
+	return false
+
+
+func _seam_stroke_cells(to: Vector2i) -> Array:
+	match _seam_action:
+		PaintAction.RECT:
+			return _cells_in_area(Rect2i(_seam_from, to - _seam_from).abs())
+		PaintAction.LINE:
+			return _get_tileset_line(_seam_from, to, tileset)
+	return _seam_stroke.keys()
+
+
+func _end_seam_stroke(to: Vector2i) -> void:
+	var cells := _seam_stroke_cells(to)
+	_seam_stroking = false
+	_seam_stroke = {}
+	set_seams(cells, _seam_adding)
+
+
+## Adds or removes seams on the edited layer as one undo step, and solves the cells around them
+## again. A new seam erases the tile under it, so the terrain is cut there; removing one leaves
+## the cell empty to paint again.
+func set_seams(cells: Array, adding: bool) -> void:
+	if tilemap == null:
+		return
+	var before: Dictionary = BetterTerrain.seams(tilemap).duplicate()
+	var after := before.duplicate()
+	var changed := []
+	for c: Vector2i in cells:
+		if adding == after.has(c):
+			continue
+		changed.append(c)
+		if adding:
+			after[c] = true
+		else:
+			after.erase(c)
+	if changed.is_empty():
+		return
+	var restore := changed
+	if ObjectTerrain.has_objects(tileset):
+		restore = ObjectTerrain.expand_cells(tilemap, changed)
+	if ObjectTerrain.has_mass(tileset):
+		restore = restore + tilemap.get_used_cells()
+	undo_manager.create_action(tr("Add seams") if adding else tr("Remove seams"), UndoRedo.MERGE_DISABLE, tilemap)
+	undo_manager.add_do_method(BetterTerrain, &"restore_seams", tilemap, after)
+	if adding:
+		undo_manager.add_do_method(BetterTerrain, &"set_cells", tilemap, changed, BetterTerrain.TileCategory.EMPTY)
+	undo_manager.add_do_method(BetterTerrain, &"update_terrain_cells", tilemap, changed)
+	_add_seam_rebuilds(changed, true)
+	# Undo runs its steps last added first: the rebuilds go in first so they see the restored marks.
+	_add_seam_rebuilds(changed, false)
+	undo_manager.add_undo_method(BetterTerrain, &"restore_seams", tilemap, before)
+	terrain_undo.create_tile_restore_point(undo_manager, tilemap, restore)
+	undo_manager.commit_action()
+	_mark_cliffs_dirty()
+	update_overlay.emit()
+
+
+func _add_seam_rebuilds(cells: Array, on_do: bool) -> void:
+	var steps := []
+	if EXEMPLAR_TERRAIN.has_exemplar(tileset):
+		steps.append([EXEMPLAR_TERRAIN, &"rebuild", tilemap, BetterTerrain, cells])
+	if ObjectTerrain.has_objects(tileset):
+		# The blocks around a seam stop or start joining it, so they are rebuilt too.
+		if on_do:
+			steps.append([ObjectTerrain, &"fix_cells", tilemap, ObjectTerrain.expand_cells(tilemap, cells), false, -1])
+		elif ObjectTerrain.has_mass(tileset):
+			steps.append([ObjectTerrain, &"fix_mass_deferred", tilemap])
+	if SCATTER_TERRAIN.has_zone(tilemap):
+		steps.append([SCATTER_TERRAIN, &"rebuild", tilemap])
+	for step: Array in steps:
+		if on_do:
+			undo_manager.callv(&"add_do_method", step)
+		else:
+			undo_manager.callv(&"add_undo_method", step)
+
+
+## Outlines every seam in view with a cross, whatever tool is in use, so a break in the terrain
+## never looks like a solver mistake.
+func _draw_seams(overlay: Control, transform: Transform2D) -> void:
+	var marks := BetterTerrain.seams(tilemap)
+	if marks.is_empty() or tilemap.tile_set == null:
+		return
+	var shape: PackedVector2Array = BetterTerrain.data.cell_polygon(tileset)
+	var tile_size := Vector2(tilemap.tile_set.tile_size)
+	var drawn := 0
+	for c: Vector2i in marks:
+		if not _view_cells.has_point(c):
+			continue
+		drawn += 1
+		if drawn > MAX_CANVAS_RENDER_TILES:
+			break
+		_draw_seam_cell(overlay, transform, shape, tile_size, c, SEAM_COLOR, _seam_mode())
+
+
+func _draw_seam_cell(overlay: Control, transform: Transform2D, shape: PackedVector2Array,
+		tile_size: Vector2, c: Vector2i, color: Color, strong: bool) -> void:
+	var center := tilemap.map_to_local(c)
+	var tile_transform := Transform2D(0.0, tile_size, 0.0, center)
+	var poly := transform * tile_transform * shape
+	if strong:
+		overlay.draw_colored_polygon(poly, Color(color, 0.18))
+	_draw_outline(overlay, poly, Color(color, 0.9 if strong else 0.6))
+	var arm := tile_size * 0.22
+	var width := 2.0 if strong else 1.5
+	overlay.draw_line(transform * (center - arm), transform * (center + arm), color, width)
+	overlay.draw_line(transform * (center + Vector2(arm.x, -arm.y)), transform * (center + Vector2(-arm.x, arm.y)), color, width)
+
+
+func _draw_seam_brush(overlay: Control, transform: Transform2D) -> void:
+	if tilemap.tile_set == null:
+		return
+	var cells: Array
+	var adding := _seam_adding if _seam_stroking else true
+	if _seam_stroking:
+		cells = _seam_stroke_cells(current_position)
+	elif draw_overlay:
+		cells = _brush_cells([current_position]) if draw_button.button_pressed else [current_position]
+	if cells.size() > MAX_CANVAS_RENDER_TILES:
+		cells = cells.slice(0, MAX_CANVAS_RENDER_TILES)
+	var shape: PackedVector2Array = BetterTerrain.data.cell_polygon(tileset)
+	var tile_size := Vector2(tilemap.tile_set.tile_size)
+	var tint := SEAM_COLOR if adding else Color(0.85, 0.9, 1.0)
+	for c: Vector2i in cells:
+		var poly := transform * Transform2D(0.0, tile_size, 0.0, tilemap.map_to_local(c)) * shape
+		overlay.draw_colored_polygon(poly, Color(tint, 0.35))
+		_draw_outline(overlay, poly, tint)
 
 #endregion

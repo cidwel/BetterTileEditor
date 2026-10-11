@@ -9,8 +9,13 @@ const ObjectTerrain := preload("res://addons/better-tile-editor/ObjectTerrain.gd
 
 const TERRAIN_META = &"_better_terrain"
 const ZONES_META = &"_better_terrain_scatter"
+## The layer's seams (BetterTerrain.SEAM_META): no piece is thrown on them.
+const SEAM_META = &"_better_terrain_seams"
 
 const TYPE_SCATTER := 6  # BetterTerrain.TerrainType.SCATTER
+## Zone key of the cells whose generated piece was removed by hand: no piece covers them.
+## Kept with the zones so it moves, saves and undoes with them.
+const REMOVED := -1
 
 const LAYER_NAME := "_ScatterDecor"
 const LAYER_SCRIPT := "res://addons/better-tile-editor/ScatterLayer.gd"
@@ -32,6 +37,7 @@ static func config_of(ts: TileSet, id: int) -> Dictionary:
 		seed = int(cfg.get("seed", 0)),
 		live = bool(cfg.get("live", false)),
 		edge = maxi(0, int(cfg.get("edge", 0))),
+		on_faces = bool(cfg.get("on_faces", false)),
 	}
 	return out
 
@@ -156,7 +162,7 @@ static func zone_cells(tm: TileMapLayer, id: int) -> Array:
 
 static func has_zone(tm: TileMapLayer) -> bool:
 	for id in zones_of(tm):
-		if not zones_of(tm)[id].is_empty():
+		if int(id) != REMOVED and not zones_of(tm)[id].is_empty():
 			return true
 	return false
 
@@ -179,6 +185,8 @@ static func set_zones(tm: TileMapLayer, zones: Dictionary) -> void:
 	for id in zones:
 		if not zones[id].is_empty():
 			keep[int(id)] = zones[id]
+	if keep.keys() == [REMOVED]:
+		keep.clear()
 	if keep.is_empty():
 		if tm.has_meta(ZONES_META):
 			tm.remove_meta(ZONES_META)
@@ -197,6 +205,14 @@ static func remove_cells(tm: TileMapLayer, id: int, cells: Array) -> void:
 
 static func remove_everywhere(tm: TileMapLayer, cells: Array) -> void:
 	set_zones(tm, erased_everywhere(tm, cells))
+
+
+## The cells among [param cells] that show a generated piece.
+static func pieces_at(tm: TileMapLayer, cells: Array) -> Array:
+	var layer := find_layer(tm)
+	if layer == null:
+		return []
+	return cells.filter(func(c): return layer.get_cell_source_id(c) != -1)
 
 
 ## Only return newly painted cylls; undo must preserve cells from earlier strokes.
@@ -379,16 +395,25 @@ static func rebuild(tm: TileMapLayer) -> Dictionary:
 	# Stable terrain order determines which overlapping zone wins.
 	var ids := []
 	for id in zones:
-		ids.push_back(int(id))
+		if int(id) != REMOVED:
+			ids.push_back(int(id))
 	ids.sort()
 
-	var taken := face_cells(tm)
+	# Cliff walls in front stay bare, unless the bag grows on them (crystals on a cave wall).
+	var faces := face_cells(tm)
+	var taken := {}
+	var removed := {}
+	for c in zone_cells(tm, REMOVED):
+		removed[c] = true
+	var seams: Dictionary = tm.get_meta(SEAM_META, {})
+	var faces_and_seams := faces.merged(seams)
 	for id in ids:
-		report.written += _scatter_one(tm, layer, id, zone_cells(tm, id), taken)
+		var blocked: Dictionary = seams if config_of(tm.tile_set, id).on_faces else faces_and_seams
+		report.written += _scatter_one(tm, layer, id, zone_cells(tm, id), taken, removed, blocked)
 	return report
 
 
-static func _scatter_one(tm: TileMapLayer, layer: TileMapLayer, id: int, cells: Array, taken: Dictionary) -> int:
+static func _scatter_one(tm: TileMapLayer, layer: TileMapLayer, id: int, cells: Array, taken: Dictionary, removed := {}, blocked := {}) -> int:
 	var cfg := config_of(tm.tile_set, id)
 	var bag: Array = cfg.get("bag", [])
 	if bag.is_empty():
@@ -425,7 +450,7 @@ static func _scatter_one(tm: TileMapLayer, layer: TileMapLayer, id: int, cells: 
 	for key in keys:
 		var row := key >> 32
 		var coord := Vector2i(key - (row << 32) - 0x7fffffff, row)
-		if taken.has(coord):
+		if taken.has(coord) or blocked.has(coord):
 			continue
 		rng.seed = hash(Vector3i(coord.x, coord.y, seed_of))
 		# Roll density first, then entry weight, to keep the two independent.
@@ -448,17 +473,20 @@ static func _scatter_one(tm: TileMapLayer, layer: TileMapLayer, id: int, cells: 
 		# One-tile pieces skip the block bookkeeping.
 		if chosen.size == Vector2i.ONE and base.size == Vector2i.ONE and base.position == Vector2i.ZERO:
 			taken[coord] = true
-			if src.get_tile_at_coords(chosen.origin) == chosen.origin:
+			if not removed.has(coord) and src.get_tile_at_coords(chosen.origin) == chosen.origin:
 				layer.set_cell(coord, chosen.source, chosen.origin, 0)
 				written += 1
 			continue
 		var origin: Vector2i = coord - base.position
 		var footprint := _block_cells(coord, base.size)
-		if not _fits(footprint, allowed, taken):
+		if not _fits(footprint, allowed, taken, blocked):
 			continue
 		var block := _block_cells(origin, chosen.size)
 		for c in footprint:
 			taken[c] = true
+		# A removed piece leaves its space empty rather than letting another roll take it.
+		if footprint.any(func(c): return removed.has(c)) or block.any(func(c): return removed.has(c)):
+			continue
 		for i in block.size():
 			var offset: Vector2i = block[i] - origin
 			var atlas: Vector2i = chosen.origin + offset
@@ -498,9 +526,9 @@ static func inside_of(cells: Array, rim: int) -> Array:
 	return out
 
 
-static func _fits(block: Array, allowed: Dictionary, taken: Dictionary) -> bool:
+static func _fits(block: Array, allowed: Dictionary, taken: Dictionary, blocked := {}) -> bool:
 	for c in block:
-		if not allowed.has(c) or taken.has(c):
+		if not allowed.has(c) or taken.has(c) or blocked.has(c):
 			return false
 	return true
 
