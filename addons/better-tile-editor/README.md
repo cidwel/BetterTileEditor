@@ -68,7 +68,7 @@ A new seam erases the tile under it on that layer, and to the cells around it th
 matches anything, so the terrain's edge runs straight into the gap and stops there, open,
 instead of wrapping around it. Put a tile on the seam by hand if you want one there. Painting a terrain and
 the bucket skip seams; objects, patches, cliff walls and scatter leave them alone.
-Seams are saved with the layer and work at runtime too (`BetterTerrain.set_seams`).
+Seams are saved with the layer and work at runtime too (`BetterTileEditor.set_seams`).
 
 ## Slopes
 
