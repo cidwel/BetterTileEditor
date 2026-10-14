@@ -52,17 +52,30 @@ func collision_hidden_at(coords: Vector2i) -> bool:
 	return false
 
 
-# No lower level (a layer before the ground holding faces of its own) has anything painted under the face.
+# No lower level (a layer before the ground holding faces of its own) has anything painted under the face,
+# nor under the rest of its column: the upper rows of a wall standing on a lower floor have no floor of
+# their own beneath them, yet they are that wall, not an edge to fall off (Cave1 13,16).
 func _over_void(coords: Vector2i) -> bool:
 	var ground := get_parent() as TileMapLayer
 	if ground == null or ground.get_parent() == null:
 		return false
+	var cell := coords
+	for i in 64:
+		if _lower_ground_at(ground, cell):
+			return false
+		cell += Vector2i.DOWN
+		if get_cell_source_id(cell) == -1 or ground.get_cell_source_id(cell) != -1:
+			return true
+	return true
+
+
+func _lower_ground_at(ground: TileMapLayer, coords: Vector2i) -> bool:
 	for child in ground.get_parent().get_children():
 		if child == ground:
-			return true
-		if child is TileMapLayer and _is_level(child) and child.get_cell_source_id(coords) != -1:
 			return false
-	return true
+		if child is TileMapLayer and _is_level(child) and child.get_cell_source_id(coords) != -1:
+			return true
+	return false
 
 
 func _is_level(layer: TileMapLayer) -> bool:
