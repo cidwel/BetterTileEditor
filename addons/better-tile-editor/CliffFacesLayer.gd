@@ -34,10 +34,8 @@ func _exit_tree() -> void:
 	_ground = null
 
 
-# A face under ground painted on its own level is hidden by that ground, and so is its collision:
-# the ground's own tile decides whether the cell blocks. A face hanging over the void blocks nothing
-# either (nobody stands below it; what walks or jumps off the rim just falls), and a passage (stairs,
-# a rope) on any layer beside it opens the cell too.
+# No collision where the face's own ground covers it (that tile decides), where it hangs over the void
+# (what walks off the rim just falls), or where a passage (stairs, a rope) on a layer beside it opens it.
 func collision_hidden_at(coords: Vector2i) -> bool:
 	var ground := get_parent() as TileMapLayer
 	if ground != null and ground.get_cell_source_id(coords) != -1:
@@ -52,9 +50,8 @@ func collision_hidden_at(coords: Vector2i) -> bool:
 	return false
 
 
-# No lower level (a layer before the ground holding faces of its own) has anything painted under the face,
-# nor under the rest of its column: the upper rows of a wall standing on a lower floor have no floor of
-# their own beneath them, yet they are that wall, not an edge to fall off (Cave1 13,16).
+# No lower level has anything painted under the face's whole column (checking only the cell would
+# treat the upper rows of a wall standing on a lower floor as an edge to fall off).
 func _over_void(coords: Vector2i) -> bool:
 	var ground := get_parent() as TileMapLayer
 	if ground == null or ground.get_parent() == null:

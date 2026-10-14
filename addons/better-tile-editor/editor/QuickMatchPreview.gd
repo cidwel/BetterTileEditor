@@ -1,8 +1,7 @@
 @tool
 extends ConfirmationDialog
-## Create quick terrain's preview: the joins read from the drawing (left button paints them, right
-## button erases, both by dragging) and a map painted with them. Cells of the block with nothing
-## drawn are left out until a join is painted on them or their middle is clicked.
+## Create quick terrain's preview: the joins read from the drawing (drag to paint, right button erases)
+## and a map painted with them. Empty cells stay out until a join is painted or their middle clicked.
 
 const Coverage := preload("res://addons/better-tile-editor/editor/TerrainCoverage.gd")
 const CoverageWindow := preload("res://addons/better-tile-editor/editor/CoverageWindow.gd")

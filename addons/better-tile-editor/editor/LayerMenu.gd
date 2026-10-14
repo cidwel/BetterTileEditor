@@ -1,9 +1,7 @@
 @tool
 extends PopupPanel
-## The menu that asks which layer a wand, bucket or picker click meant. A PopupMenu draws its
-## icon before the text; here each layer row reads "layer › tile name", the tile shown whole at
-## a whole zoom and the row as tall as it, the layer names lined up in a column. The picker's
-## rows are a layer and its choices side by side, see [method add_pick_row].
+## Asks which layer a wand, bucket or picker click meant: rows of "layer › tile name" with the tile
+## shown whole (a PopupMenu can't), the picker's with a layer's choices side by side ([method add_pick_row]).
 
 signal id_pressed(id: int)
 

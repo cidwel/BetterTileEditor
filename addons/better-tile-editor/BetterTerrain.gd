@@ -1842,10 +1842,8 @@ func same_visible_region(tm: TileMapLayer, a: Vector2i, b: Vector2i) -> bool:
 ## Runs the tile solving algorithm on the [TileMapLayer] for the given
 ## [Vector2i] coordinates in the [code]cells[/code] parameter. By default,
 ## the surrounding cells are also solved, but this can be adjusted by passing [code]false[/code]
-## to the [code]and_surrounding_cells[/code] parameter. Cells placed by hand (see
-## [method set_hand_placed]) keep their tile and only shape their neighbours. Seams (see
-## [method set_seams]) keep their tile too, and match whatever their neighbours ask of them, so
-## the terrain runs up to them and stops there open instead of closing around them.
+## to the [code]and_surrounding_cells[/code] parameter. Hand-placed cells and seams keep their tile;
+## a seam matches any neighbour, so the terrain stops at it open.
 ## [br][br]
 ## See also [method update_terrain_area] and [method update_terrain_cell].
 func update_terrain_cells(tm: TileMapLayer, cells: Array, and_surrounding_cells := true) -> void:
@@ -1970,11 +1968,8 @@ func restore_hand_placed(tm: TileMapLayer, marks: Dictionary) -> void:
 		tm.set_meta(HAND_PLACED_META, marks.duplicate())
 
 
-## Cells of [param tm] marked as seams, {cell: true}. A seam is a cut in the terrain: the
-## solver, objects, patches, cliffs and scatter leave its tile as it is (a tile placed there by
-## hand, or none), and to the cells around it the seam matches anything, so their edges run
-## straight into it and end there, open, instead of wrapping around it. Painting a terrain
-## skips seams; loose tiles and erasing still reach them.
+## Cells of [param tm] marked as seams, {cell: true}: cuts every terrain step leaves as they are,
+## where neighbouring edges end open. Painting a terrain skips them; loose tiles and erasing don't.
 func seams(tm: TileMapLayer) -> Dictionary:
 	return tm.get_meta(SEAM_META, {}) if tm != null else {}
 

@@ -15,7 +15,7 @@ A fork of [BetterTerrain](https://github.com/Portponky/better-terrain) by
 - Terrain groups, search and favourites
 - Terrain thumbnails and previews
 - Brush sizes from 1×1 to 8×8
-- Map selection by rectangle or magic wand, copy, paste and stamping
+- Map selection by rectangle or magic wand, copy, paste and stamping; one click selects the tiles buried under walls and cliff faces
 - Fill by visible area or current layer
 - Live terrain updates
 - Floating editor dock

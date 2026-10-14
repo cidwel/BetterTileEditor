@@ -1925,10 +1925,8 @@ func perform_remove_terrain(index: int) -> void:
 		update_tile_view_paint()
 
 
-## The scatter zones of the edited scene's layers keep terrain ids: when the tile set renumbers its
-## terrains they follow, through [param renumber] (old id → new id, -2 drops the zone). Otherwise a
-## zone points at whatever terrain ends up with its old number, and the next rebuild empties it.
-## Scenes that aren't open keep their old numbers.
+## Scatter zones store terrain ids: follow a renumbering ([param renumber]: old → new, -2 drops the
+## zone), or the next rebuild empties them. Scenes that aren't open keep their old numbers.
 func _renumber_scatter_zones(renumber: Callable) -> void:
 	var root := EditorInterface.get_edited_scene_root()
 	if root == null or tileset == null:
@@ -2596,9 +2594,8 @@ func _canvas_input(event: InputEvent) -> bool:
 			update_overlay.emit()
 			return true
 
-		# Erasing with the tile of a scattered piece (picked off the map) takes those pieces off,
-		# like Ctrl with the scatter terrain: not the layer's own tile under them, and not the zone,
-		# whose edge margin would then empty every cell around the hole.
+		# Erasing with a scattered piece's tile takes off just those pieces: erasing the zone would
+		# empty every cell around the hole through its edge margin.
 		if _is_single(type) and paint_mode == PaintMode.ERASE \
 				and paint_action == PaintAction.NO_ACTION and draw_button.button_pressed:
 			var hit := _scattered_with_brush(type, _brush_cells(_get_tileset_line(prev_position, current_position, tileset)))
@@ -3083,6 +3080,15 @@ func _add_map_select_button() -> void:
 		_map_select_shapes.add_child(b)
 		if shape[0] == "Magic Wand":
 			_map_wand = b
+	var buried := Button.new()
+	buried.name = "SelectBuried"
+	buried.flat = true
+	buried.focus_mode = Control.FOCUS_NONE
+	_icon_or_text(buried, ICON_DIR + "SelectBuried.svg", ["Unlinked"], "Buried")
+	buried.tooltip_text = "Buried tiles\nSelect the tiles of this layer hidden under a wall or cliff face drawn on top,\n" + \
+		"whose collision keeps anyone from walking onto them. Delete removes them."
+	buried.pressed.connect(_select_buried)
+	_map_select_shapes.add_child(buried)
 	_map_select_shapes.hide()
 	_map_target_layer = CheckBox.new()
 	_map_target_layer.name = "TargetLayer"
@@ -3317,9 +3323,8 @@ func _pick_entries(cell: Vector2i) -> Array:
 	return entries
 
 
-## A row for each piece scattered under [param point] (the generated _ScatterDecor layers'
-## tiles), and one for the scatter terrain that put it there. Without them a piece was not
-## pickable at all: a support layer answers for its owner, whose own tile (or nothing) was read.
+## A row for each piece scattered under [param point], and one for its scatter terrain: a support
+## layer answers for its owner, so the pieces were otherwise not pickable.
 func _scatter_piece_entries(point: Vector2, root: Node) -> Array:
 	var entries := []
 	if root == null:
@@ -3348,9 +3353,8 @@ func _scatter_piece_entries(point: Vector2, root: Node) -> Array:
 	return entries
 
 
-## Picks from the layer chosen in the menu, making it the edited one when it is another. A
-## tile row takes the tile as a loose tile; a terrain row takes its terrain.
-## A scattered piece's rows read their generated layer and edit its owner ([code]target[/code]).
+## Picks from the layer chosen in the menu and makes it the edited one: a tile row as a loose tile, a
+## terrain row its terrain. A scattered piece's rows edit its owner ([code]target[/code]).
 func _pick_from_entry(entry: Dictionary) -> void:
 	var layer: TileMapLayer = entry.layer
 	if not is_instance_valid(layer):
@@ -4774,9 +4778,6 @@ func _layer_menu_names(entries: Array) -> Array:
 	return out
 
 
-## [icon, name] of the tile at [param cell] of [param layer]: a picture of it, and the name of
-## the favorite holding it, else of its terrain, else of its texture file; a scene tile's scene
-## name. Either may be empty.
 ## The picker's menu: a row per layer, with a card for its tile and one for the tile's terrain.
 func _fill_pick_menu(entries: Array, names: Array) -> void:
 	var headings := [tr("Tile")]
@@ -5055,10 +5056,8 @@ func _on_layer_menu_closed() -> void:
 	update_overlay.emit()
 
 
-## Turns every layer but [param keep] (and its support layers) almost see-through, or with
-## null brings them all back. Faded on the rendering server, not through the layer's
-## properties: a property change makes the layer emit changed, and whatever listens to that
-## (a game's tile effects) rebuilds on every hover.
+## Fades every layer but [param keep] (null brings them back) on the rendering server: a property
+## change would emit changed, and a game's tile effects would rebuild on every hover.
 func _fade_layers(keep: Variant) -> void:
 	for layer in _wand_faded:
 		if is_instance_valid(layer):
@@ -6174,10 +6173,8 @@ var _hand_placed_before := {}
 var _hand_placed_stroke := {}
 
 
-## Loose tiles of a terrain are marked as placed by hand, so the solver, objects and patches
-## leave them as they are; painting anything else or erasing over them clears the mark. Goes
-## before the paint in the action, so the solving after it already sees the marks. Each step
-## sets the whole set, as a merged stroke replays only its last step.
+## Marks loose tiles of a terrain as hand-placed (painting or erasing over them clears it), before the
+## paint so the solving sees them; each step sets the whole set, as a merged stroke replays its last.
 func _mark_hand_placed(type: int, cells: Array, erasing: bool, merged: bool) -> void:
 	var on := not erasing and _is_single(type) and _brush_has_terrain(type)
 	var before := _hand_placed_before if merged else BetterTerrain.hand_placed(tilemap).duplicate()
@@ -7812,9 +7809,8 @@ func _map_collision_mesh(transform: Transform2D) -> Dictionary:
 						COLLISIONS.add_to_mesh(mesh, cell_transform * polygon, drawn[physics])
 	return mesh
 
-## Edges a layer walls off at runtime, and the hops off them, for layers that report them through
-## cliff_hops_at(cell) -> [[direction: Vector2i, landing: Vector2i or null], ...]: a line along each
-## walled side, and an arrow from it to where a hop lands.
+## Walled edges and hops of layers with cliff_hops_at(cell) -> [[direction, landing or null], ...]:
+## a line along each walled side, an arrow to where a hop lands.
 func _draw_level_edges(overlay: Control, transform: Transform2D) -> void:
 	if _collision_physics_layer() < 0 or not COLLISIONS.overlay_on_map():
 		return
@@ -7850,6 +7846,88 @@ func _draw_level_edges(overlay: Control, transform: Transform2D) -> void:
 				var back := (start - tip).normalized() * 5.0
 				overlay.draw_line(tip, tip + back.rotated(0.5), hop_color, 1.5)
 				overlay.draw_line(tip, tip + back.rotated(-0.5), hop_color, 1.5)
+
+
+## Tiles of the edited layer buried under a layer drawn on top that walls off their centre and hides them:
+## nothing can walk onto them and nobody sees them. Under a see-through tile they would leave a hole, so they stay.
+func _select_buried() -> void:
+	if tilemap == null:
+		return
+	_map_all_layers.button_pressed = false
+	var own_z := _effective_z(tilemap)
+	var above: Array = []
+	for layer: TileMapLayer in _collision_layers():
+		if layer == tilemap or not layer.collision_enabled:
+			continue
+		var z := _effective_z(layer)
+		if z > own_z or (z == own_z and layer.is_greater_than(tilemap)):
+			above.append(layer)
+	var cells: Array = []
+	var see_through := 0
+	var opaque := {}
+	for c: Vector2i in tilemap.get_used_cells():
+		var world := tilemap.to_global(tilemap.map_to_local(c))
+		var walled := false
+		var hidden := false
+		for layer: TileMapLayer in above:
+			var lc := layer.local_to_map(layer.to_local(world))
+			if layer.get_cell_source_id(lc) < 0:
+				continue
+			walled = walled or (not _collision_hidden(layer, lc) and _blocks_centre(layer, lc))
+			hidden = hidden or _tile_opaque(layer, lc, opaque)
+		if walled and hidden:
+			cells.append(c)
+		elif walled:
+			see_through += 1
+	_apply_map_selection(cells, 0)
+	if see_through > 0:
+		print("Better Terrain: %d buried tiles selected; %d more left out, their cover is see-through." % [cells.size(), see_through])
+	update_overlay.emit()
+
+
+func _tile_opaque(layer: TileMapLayer, c: Vector2i, cache: Dictionary) -> bool:
+	var src := tileset.get_source(layer.get_cell_source_id(c)) as TileSetAtlasSource
+	var coords := layer.get_cell_atlas_coords(c)
+	var key := [src, coords]
+	if cache.has(key):
+		return cache[key]
+	var image: Image = cache.get(src) if cache.has(src) else (src.texture.get_image() if src != null and src.texture != null else null)
+	cache[src] = image
+	var result := image != null and not image.is_compressed()
+	if result:
+		var region := src.get_tile_texture_region(coords)
+		for y in region.size.y:
+			for x in region.size.x:
+				if image.get_pixel(region.position.x + x, region.position.y + y).a < 0.99:
+					result = false
+					break
+			if not result:
+				break
+	cache[key] = result
+	return result
+
+
+## Whether the cell's collision covers the middle of the tile (the same test the game's bot navmesh uses).
+func _blocks_centre(layer: TileMapLayer, c: Vector2i) -> bool:
+	var source_id := layer.get_cell_source_id(c)
+	if source_id < 0:
+		return false
+	var alt := layer.get_cell_alternative_tile(c)
+	var td := _cell_tile_data(source_id, layer.get_cell_atlas_coords(c), alt)
+	if td == null:
+		return false
+	var half := Vector2(tileset.tile_size) / 4
+	var centre := Rect2(-half, half * 2)
+	for physics in tileset.get_physics_layers_count():
+		for polygon: PackedVector2Array in COLLISIONS.cell_polygons(td, physics, alt & COLLISIONS.FLIP_FLAGS):
+			if polygon.is_empty():
+				continue
+			var box := Rect2(polygon[0], Vector2.ZERO)
+			for point in polygon:
+				box = box.expand(point)
+			if box.intersects(centre):
+				return true
+	return false
 
 
 ## A cell whose layer takes its collision away at runtime (cliff faces under their own ground).
@@ -8547,9 +8625,8 @@ func _end_seam_stroke(to: Vector2i) -> void:
 	set_seams(cells, _seam_adding)
 
 
-## Adds or removes seams on the edited layer as one undo step, and solves the cells around them
-## again. A new seam erases the tile under it, so the terrain is cut there; removing one leaves
-## the cell empty to paint again.
+## Adds or removes seams on the edited layer as one undo step and solves around them; a new seam
+## erases the tile under it, a removed one leaves the cell empty.
 func set_seams(cells: Array, adding: bool) -> void:
 	if tilemap == null:
 		return
