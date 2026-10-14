@@ -117,7 +117,7 @@ func _build() -> void:
 	var pal := ScrollContainer.new()
 	pal.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	right.add_child(pal)
-	# Load after the autoload exists; TileView depends on BetterTerrain.
+	# Load after the autoload exists; TileView depends on BetterTileEditor.
 	_palette_view = load("res://addons/better-tile-editor/editor/TileView.gd").new()
 	_palette_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_palette_view.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST

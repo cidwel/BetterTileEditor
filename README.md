@@ -99,7 +99,8 @@ To track the latest changes instead, copy `addons/better-tile-editor` from
 
 - Godot 4.6+; tested on 4.6 and 4.7
 - GDScript and C#
-- Same `BetterTerrain` autoload and existing API
+- No autoload: the API is the global class `BetterTileEditor` (`BetterTileEditor.set_cells(...)`), same functions as BetterTerrain's
+- Coming from the `BetterTerrain` autoload? It keeps working. **Options → Migrate off the BetterTerrain autoload…** rewrites your scripts to the new class (originals are backed up) and removes the autoload
 - Extra runtime steps for Object, Patch, Scatter and cliffs: see [technical notes](addons/better-tile-editor/DESIGN.md)
 
 ## Changelog
@@ -126,6 +127,20 @@ To track the latest changes instead, copy `addons/better-tile-editor` from
 - A simpler cliff face editor, and a whole face autoassigned from a block of the tileset.
 - Atlases are labelled in the view, with their empty space trimmed.
 - Renamed to Better Tile Editor.
+
+## Support the project
+
+Better Tile Editor is free and open source, and it stays that way. Every update, fix and new
+tool is built in my spare time, and I want to keep shipping them at no cost to anyone.
+
+If it saves you hours of tile work, a tip on Ko-fi helps me keep maintaining it and adding
+features. Tips are optional: the plugin is never locked behind them.
+
+<p align="center">
+  <a href="https://ko-fi.com/cidwel">
+    <img src="https://img.shields.io/badge/Ko--fi-Support%20the%20project-FF5E5B?style=for-the-badge&logo=kofi&logoColor=white" alt="Support Better Tile Editor on Ko-fi">
+  </a>
+</p>
 
 ## More
 

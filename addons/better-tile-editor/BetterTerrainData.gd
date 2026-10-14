@@ -20,25 +20,25 @@ const _terrain_peering_vflip : Array[int] = [0, 1, 14, 15, 12, 13, 10, 11, 8, 9,
 const _terrain_peering_transpose : Array[int] = [4, 5, 2, 3, 0, 1, 14, 15, 12, 13, 10, 11, 8, 9, 6, 7]
 
 const symmetry_mapping := {
-	BetterTerrain.SymmetryType.NONE: [0],
-	BetterTerrain.SymmetryType.MIRROR: [0, TileSetAtlasSource.TRANSFORM_FLIP_H],
-	BetterTerrain.SymmetryType.FLIP: [0, TileSetAtlasSource.TRANSFORM_FLIP_V],
-	BetterTerrain.SymmetryType.REFLECT: [
+	BetterTileEditor.SymmetryType.NONE: [0],
+	BetterTileEditor.SymmetryType.MIRROR: [0, TileSetAtlasSource.TRANSFORM_FLIP_H],
+	BetterTileEditor.SymmetryType.FLIP: [0, TileSetAtlasSource.TRANSFORM_FLIP_V],
+	BetterTileEditor.SymmetryType.REFLECT: [
 		0,
 		TileSetAtlasSource.TRANSFORM_FLIP_H,
 		TileSetAtlasSource.TRANSFORM_FLIP_V,
 		TileSetAtlasSource.TRANSFORM_FLIP_H | TileSetAtlasSource.TRANSFORM_FLIP_V
 	],
-	BetterTerrain.SymmetryType.ROTATE_CLOCKWISE: [0, TileSetAtlasSource.TRANSFORM_FLIP_H | TileSetAtlasSource.TRANSFORM_TRANSPOSE],
-	BetterTerrain.SymmetryType.ROTATE_COUNTER_CLOCKWISE: [0, TileSetAtlasSource.TRANSFORM_FLIP_V | TileSetAtlasSource.TRANSFORM_TRANSPOSE],
-	BetterTerrain.SymmetryType.ROTATE_180: [0, TileSetAtlasSource.TRANSFORM_FLIP_H | TileSetAtlasSource.TRANSFORM_FLIP_V],
-	BetterTerrain.SymmetryType.ROTATE_ALL: [
+	BetterTileEditor.SymmetryType.ROTATE_CLOCKWISE: [0, TileSetAtlasSource.TRANSFORM_FLIP_H | TileSetAtlasSource.TRANSFORM_TRANSPOSE],
+	BetterTileEditor.SymmetryType.ROTATE_COUNTER_CLOCKWISE: [0, TileSetAtlasSource.TRANSFORM_FLIP_V | TileSetAtlasSource.TRANSFORM_TRANSPOSE],
+	BetterTileEditor.SymmetryType.ROTATE_180: [0, TileSetAtlasSource.TRANSFORM_FLIP_H | TileSetAtlasSource.TRANSFORM_FLIP_V],
+	BetterTileEditor.SymmetryType.ROTATE_ALL: [
 		0,
 		TileSetAtlasSource.TRANSFORM_FLIP_H | TileSetAtlasSource.TRANSFORM_TRANSPOSE,
 		TileSetAtlasSource.TRANSFORM_FLIP_H | TileSetAtlasSource.TRANSFORM_FLIP_V,
 		TileSetAtlasSource.TRANSFORM_FLIP_V | TileSetAtlasSource.TRANSFORM_TRANSPOSE
 	],
-	BetterTerrain.SymmetryType.ALL: [
+	BetterTileEditor.SymmetryType.ALL: [
 		0,
 		TileSetAtlasSource.TRANSFORM_FLIP_H,
 		TileSetAtlasSource.TRANSFORM_FLIP_V,
@@ -54,32 +54,32 @@ const symmetry_mapping := {
 ## Returns an [Array] of ints of type [enum TileSet.CellNeighbor] which represent
 ## the valid neighboring tiles for a terrain of [code]type[/code] in TileSet
 static func get_terrain_peering_cells(ts: TileSet, type: int) -> Array[int]:
-	if !ts or type < 0 or type >= BetterTerrain.TerrainType.MAX:
+	if !ts or type < 0 or type >= BetterTileEditor.TerrainType.MAX:
 		return []
 	
-	if type == BetterTerrain.TerrainType.CATEGORY:
+	if type == BetterTileEditor.TerrainType.CATEGORY:
 		return _terrain_peering_non_modifying
-	if type == BetterTerrain.TerrainType.DECORATION:
-		type = BetterTerrain.TerrainType.MATCH_TILES
+	if type == BetterTileEditor.TerrainType.DECORATION:
+		type = BetterTileEditor.TerrainType.MATCH_TILES
 	
 	match [ts.tile_shape, type]:
-		[TileSet.TILE_SHAPE_SQUARE, BetterTerrain.TerrainType.MATCH_TILES]:
+		[TileSet.TILE_SHAPE_SQUARE, BetterTileEditor.TerrainType.MATCH_TILES]:
 			return _terrain_peering_square_tiles
-		[TileSet.TILE_SHAPE_SQUARE, BetterTerrain.TerrainType.MATCH_VERTICES]:
+		[TileSet.TILE_SHAPE_SQUARE, BetterTileEditor.TerrainType.MATCH_VERTICES]:
 			return _terrain_peering_square_vertices
-		[TileSet.TILE_SHAPE_ISOMETRIC, BetterTerrain.TerrainType.MATCH_TILES]:
+		[TileSet.TILE_SHAPE_ISOMETRIC, BetterTileEditor.TerrainType.MATCH_TILES]:
 			return _terrain_peering_isometric_tiles
-		[TileSet.TILE_SHAPE_ISOMETRIC, BetterTerrain.TerrainType.MATCH_VERTICES]:
+		[TileSet.TILE_SHAPE_ISOMETRIC, BetterTileEditor.TerrainType.MATCH_VERTICES]:
 			return _terrain_peering_isometric_vertices
 	
 	match [ts.tile_offset_axis, type]:
-		[TileSet.TILE_OFFSET_AXIS_VERTICAL, BetterTerrain.TerrainType.MATCH_TILES]:
+		[TileSet.TILE_OFFSET_AXIS_VERTICAL, BetterTileEditor.TerrainType.MATCH_TILES]:
 			return _terrain_peering_vertical_tiles
-		[TileSet.TILE_OFFSET_AXIS_VERTICAL, BetterTerrain.TerrainType.MATCH_VERTICES]:
+		[TileSet.TILE_OFFSET_AXIS_VERTICAL, BetterTileEditor.TerrainType.MATCH_VERTICES]:
 			return _terrain_peering_vertical_vertices
-		[TileSet.TILE_OFFSET_AXIS_HORIZONTAL, BetterTerrain.TerrainType.MATCH_TILES]:
+		[TileSet.TILE_OFFSET_AXIS_HORIZONTAL, BetterTileEditor.TerrainType.MATCH_TILES]:
 			return _terrain_peering_horiztonal_tiles
-		[TileSet.TILE_OFFSET_AXIS_HORIZONTAL, BetterTerrain.TerrainType.MATCH_VERTICES]:
+		[TileSet.TILE_OFFSET_AXIS_HORIZONTAL, BetterTileEditor.TerrainType.MATCH_VERTICES]:
 			return _terrain_peering_horiztonal_vertices
 	
 	return []
@@ -446,29 +446,29 @@ static func _peering_non_modifying() -> PackedVector2Array:
 ## Returns a parameterized polygon (coordinated are between 0 and 1) for [code]peering[/code]
 ## direction for a terrain of [code]type[/code] in [TileSet]
 static func peering_polygon(ts: TileSet, type: int, peering: int) -> PackedVector2Array:
-	if type == BetterTerrain.TerrainType.CATEGORY:
+	if type == BetterTileEditor.TerrainType.CATEGORY:
 		return _peering_non_modifying()
-	if type == BetterTerrain.TerrainType.DECORATION:
-		type = BetterTerrain.TerrainType.MATCH_TILES
+	if type == BetterTileEditor.TerrainType.DECORATION:
+		type = BetterTileEditor.TerrainType.MATCH_TILES
 	
 	match [ts.tile_shape, type]:
-		[TileSet.TILE_SHAPE_SQUARE, BetterTerrain.TerrainType.MATCH_TILES]:
+		[TileSet.TILE_SHAPE_SQUARE, BetterTileEditor.TerrainType.MATCH_TILES]:
 			return _peering_polygon_square_tiles(peering)
-		[TileSet.TILE_SHAPE_SQUARE, BetterTerrain.TerrainType.MATCH_VERTICES]:
+		[TileSet.TILE_SHAPE_SQUARE, BetterTileEditor.TerrainType.MATCH_VERTICES]:
 			return _peering_polygon_square_vertices(peering)
-		[TileSet.TILE_SHAPE_ISOMETRIC, BetterTerrain.TerrainType.MATCH_TILES]:
+		[TileSet.TILE_SHAPE_ISOMETRIC, BetterTileEditor.TerrainType.MATCH_TILES]:
 			return _peering_polygon_isometric_tiles(peering)
-		[TileSet.TILE_SHAPE_ISOMETRIC, BetterTerrain.TerrainType.MATCH_VERTICES]:
+		[TileSet.TILE_SHAPE_ISOMETRIC, BetterTileEditor.TerrainType.MATCH_VERTICES]:
 			return _peering_polygon_isometric_vertices(peering)
 	
 	match [ts.tile_offset_axis, type]:
-		[TileSet.TILE_OFFSET_AXIS_VERTICAL, BetterTerrain.TerrainType.MATCH_TILES]:
+		[TileSet.TILE_OFFSET_AXIS_VERTICAL, BetterTileEditor.TerrainType.MATCH_TILES]:
 			return _peering_polygon_vertical_tiles(peering)
-		[TileSet.TILE_OFFSET_AXIS_VERTICAL, BetterTerrain.TerrainType.MATCH_VERTICES]:
+		[TileSet.TILE_OFFSET_AXIS_VERTICAL, BetterTileEditor.TerrainType.MATCH_VERTICES]:
 			return _peering_polygon_vertical_vertices(peering)
-		[TileSet.TILE_OFFSET_AXIS_HORIZONTAL, BetterTerrain.TerrainType.MATCH_TILES]:
+		[TileSet.TILE_OFFSET_AXIS_HORIZONTAL, BetterTileEditor.TerrainType.MATCH_TILES]:
 			return _peering_polygon_horizontal_tiles(peering)
-		[TileSet.TILE_OFFSET_AXIS_HORIZONTAL, BetterTerrain.TerrainType.MATCH_VERTICES]:
+		[TileSet.TILE_OFFSET_AXIS_HORIZONTAL, BetterTileEditor.TerrainType.MATCH_VERTICES]:
 			return _peering_polygon_horizontal_vertices(peering)
 	
 	return PackedVector2Array()

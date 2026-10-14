@@ -13,7 +13,7 @@ static func invalidate(ts: TileSet) -> void:
 	_objects_cache.erase(ts)
 
 
-const TYPE_OBJECT := 4  # BetterTerrain.TerrainType.OBJECT
+const TYPE_OBJECT := 4  # BetterTileEditor.TerrainType.OBJECT
 
 
 #region Blocks worked out from the marked tiles

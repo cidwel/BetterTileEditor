@@ -1,9 +1,6 @@
 @tool
 extends EditorPlugin
 
-const AUTOLOAD_NAME = "BetterTerrain"
-const AUTOLOAD_SCRIPT = "res://addons/better-tile-editor/BetterTerrain.gd"
-
 const AUTO_OPEN_SETTING := "editors/better_terrain/open_panel_on_select"
 const PERF := preload("res://addons/better-tile-editor/Perf.gd")
 
@@ -17,24 +14,10 @@ var _picker_cursor_on := false
 
 var _integration: RefCounted
 var _integration_attempted := false
-var _enabled_by_user := false
 const TileMapIntegration := preload("res://addons/better-tile-editor/editor/TileMapIntegration.gd")
 
-func _enable_plugin() -> void:
-	_enabled_by_user = true
-
-
 func _enter_tree() -> void:
-	# Wait for autoloads to register
 	await get_tree().process_frame
-
-	if !_autoload_is_loaded():
-		add_autoload_singleton(AUTOLOAD_NAME, "res://addons/better-tile-editor/BetterTerrain.gd")
-		ProjectSettings.save()
-		# Enabled just now: nothing that uses the autoload has been compiled yet, so
-		# it works right away. Loaded at startup without it: scripts already failed.
-		if !_enabled_by_user:
-			_ask_restart()
 
 	_support_editor = preload("res://addons/better-tile-editor/editor/SupportLayerEditor.gd").new()
 	add_child(_support_editor)
@@ -98,29 +81,6 @@ func _try_integrate() -> void:
 		_apply_options()
 	else:
 		_add_bottom_panel()
-
-
-func _ask_restart() -> void:
-	var confirm = ConfirmationDialog.new()
-	confirm.dialog_text = "The editor needs to be restarted for Better Tile Editor to load correctly. Restart now? Note: Unsaved changes will be lost."
-	confirm.confirmed.connect(func():
-		OS.set_restart_on_exit(true, ["-e"])
-		get_tree().quit()
-	)
-	EditorInterface.popup_dialog_centered(confirm)
-
-
-# Godot 4.7 editor autoloads may be unnamed; match the script as a fallback.
-func _autoload_is_loaded() -> bool:
-	if get_tree().root.get_node_or_null(NodePath(AUTOLOAD_NAME)):
-		return true
-
-	for child in get_tree().root.get_children():
-		var script: Script = child.get_script()
-		if script and script.resource_path == AUTOLOAD_SCRIPT:
-			return true
-
-	return false
 
 
 func _exit_tree() -> void:

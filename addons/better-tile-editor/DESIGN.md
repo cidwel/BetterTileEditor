@@ -28,6 +28,24 @@ still its head. It is not archived and still has open issues, so this may change
 
 ## What is different
 
+### 0. No autoload: the API is a static class
+
+`BetterTileEditor.gd` (`class_name BetterTileEditor`) holds what the `BetterTerrain` autoload
+used to. Every function is `static`, the cache and RNG are `static var`s, and the tileset
+watchers are `RefCounted` kept in `_watchers` instead of child nodes. Nothing needs the
+scene tree, so scripts compile in the editor, in `-s` scripts and in 4.7 where editor
+autoloads arrive unnamed, and A below no longer applies to the plugin itself.
+
+`BetterTerrain.gd` stays only as a shim that extends it, so projects whose `project.godot`
+still lists the autoload keep working. The plugin no longer registers it.
+`editor/Migration.gd` (Options → Migrate) rewrites `BetterTerrain.*` and
+`get_node("/root/BetterTerrain")` to the class in the project's `.gd` files, backs the originals
+up under `.godot/better_tile_editor_migration/` and removes the autoload if it is this addon's.
+The C# wrapper loads the script instead of looking up the node, so C# code needs no change.
+
+Consequence: the class cannot be handed around as a node; it is a `GDScript`, and
+`Object` methods such as `callv` must go through `Callable(BetterTileEditor, name)`.
+
 ### A. The false "editor needs to be restarted" dialog (Godot 4.7.1)
 
 `TerrainPlugin.gd` → `_autoload_is_loaded()`

@@ -40,7 +40,7 @@ static func target_alts(src: TileSetAtlasSource, coords: Vector2i, scope: int) -
 
 ## The whole tile, in the cell's shape: a square, a diamond or a hexagon.
 static func full_polygon(ts: TileSet, src: TileSetAtlasSource, coords: Vector2i) -> PackedVector2Array:
-	var shape: PackedVector2Array = BetterTerrain.data.cell_polygon(ts)
+	var shape: PackedVector2Array = BetterTileEditor.data.cell_polygon(ts)
 	var extent := Vector2(ts.tile_size * src.get_tile_size_in_atlas(coords))
 	var out := PackedVector2Array()
 	for p in shape:

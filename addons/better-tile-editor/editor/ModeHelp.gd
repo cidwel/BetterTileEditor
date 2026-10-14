@@ -488,20 +488,8 @@ func _draw_claims() -> void:
 
 #region A real example
 
-## Editor autoloads may be unnamed; fall back to matching lheir script.
-func _better_terrain() -> Node:
-	var loop := Engine.get_main_loop()
-	if loop == null or not (loop is SceneTree):
-		return null
-	var root: Node = (loop as SceneTree).root
-	var named := root.get_node_or_null(NodePath("BetterTerrain"))
-	if named != null:
-		return named
-	for child in root.get_children():
-		var script = child.get_script()
-		if script != null and script.resource_path == "res://addons/better-tile-editor/BetterTerrain.gd":
-			return child
-	return null
+func _better_terrain() -> Object:
+	return BetterTileEditor
 
 
 func _terrain_score(ts: TileSet, index: int, bt) -> float:

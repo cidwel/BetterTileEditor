@@ -96,8 +96,8 @@ var _standin: TileData
 var _held := false
 # Off for pickers that only need the plain atlas
 var show_terrain_marks := true
-var paint := BetterTerrain.TileCategory.NON_TERRAIN
-var paint_symmetry := BetterTerrain.SymmetryType.NONE
+var paint := BetterTileEditor.TileCategory.NON_TERRAIN
+var paint_symmetry := BetterTileEditor.SymmetryType.NONE
 var highlighted_tile_part := { valid = false }
 var zoom_level := 1.0
 
@@ -555,14 +555,14 @@ func _ref(part: Dictionary) -> Array:
 	return [part.source_id, part.coord, part.alternate]
 
 
-## Calls a BetterTerrain method on the tile a _ref points at, if it still exists.
+## Calls a BetterTileEditor method on the tile a _ref points at, if it still exists.
 func _on_tile(method: StringName, ref: Array, rest: Array = []) -> void:
 	if tileset == null or not tileset.has_source(ref[0]):
 		return
 	var source := tileset.get_source(ref[0]) as TileSetAtlasSource
 	if source == null or not source.has_tile(ref[1]) or not source.has_alternative_tile(ref[1], ref[2]):
 		return
-	BetterTerrain.callv(method, [tileset, source.get_tile_data(ref[1], ref[2])] + rest)
+	Callable(BetterTileEditor, method).callv([tileset, source.get_tile_data(ref[1], ref[2])] + rest)
 
 
 ## Tiles made since the last click, [source id, coords] each; one undo step takes them all.
@@ -653,18 +653,18 @@ func _untiled_part(band: Dictionary, untiled: Dictionary, pos: Vector2i) -> Dict
 
 func _build_tile_part_from_position(result: Dictionary, pos: Vector2i, rect: Rect2) -> void:
 	result.rect = rect
-	var type := BetterTerrain.get_tile_terrain_type(result.data)
-	if type == BetterTerrain.TileCategory.NON_TERRAIN:
+	var type := BetterTileEditor.get_tile_terrain_type(result.data)
+	if type == BetterTileEditor.TileCategory.NON_TERRAIN:
 		return
 	result.terrain_type = type
 	
 	var normalize_position := (Vector2(pos) - rect.position) / rect.size
 	
-	var terrain := BetterTerrain.get_terrain(tileset, type)
+	var terrain := BetterTileEditor.get_terrain(tileset, type)
 	if !terrain.valid:
 		return
-	for p in BetterTerrain.data.get_terrain_peering_cells(tileset, terrain.type):
-		var side_polygon = BetterTerrain.data.peering_polygon(tileset, terrain.type, p)
+	for p in BetterTileEditor.data.get_terrain_peering_cells(tileset, terrain.type):
+		var side_polygon = BetterTileEditor.data.peering_polygon(tileset, terrain.type, p)
 		if Geometry2D.is_point_in_polygon(normalize_position, side_polygon):
 			result.peering = p
 			result.polygon = side_polygon
@@ -954,16 +954,16 @@ var _draw_polygons := {}
 
 func _drawing_terrain(id: int) -> Dictionary:
 	if not _draw_terrains.has(id):
-		var terrain := BetterTerrain.get_terrain(tileset, id)
+		var terrain := BetterTileEditor.get_terrain(tileset, id)
 		if terrain.valid:
-			terrain["peering_cells"] = BetterTerrain.data.get_terrain_peering_cells(tileset, terrain.type)
+			terrain["peering_cells"] = BetterTileEditor.data.get_terrain_peering_cells(tileset, terrain.type)
 		_draw_terrains[id] = terrain
 	return _draw_terrains[id]
 
 func _drawing_polygon(type: int, bit: int) -> PackedVector2Array:
 	var key := Vector2i(type, bit)
 	if not _draw_polygons.has(key):
-		_draw_polygons[key] = BetterTerrain.data.peering_polygon(tileset, type, bit)
+		_draw_polygons[key] = BetterTileEditor.data.peering_polygon(tileset, type, bit)
 	return _draw_polygons[key]
 
 func editing_rules() -> bool:
@@ -990,8 +990,8 @@ func _draw_tile_data(texture: Texture2D, rect: Rect2, src_rect: Rect2, td: TileD
 
 	if not show_terrain_marks or collision_mode:
 		return
-	var type := BetterTerrain.get_tile_terrain_type(td)
-	if type == BetterTerrain.TileCategory.NON_TERRAIN:
+	var type := BetterTileEditor.get_tile_terrain_type(td)
+	if type == BetterTileEditor.TileCategory.NON_TERRAIN:
 		if dim_unassigned_tiles:
 			draw_rect(rect, Color(0.1, 0.1, 0.1, 0.5), true)
 		return
@@ -1002,14 +1002,14 @@ func _draw_tile_data(texture: Texture2D, rect: Rect2, src_rect: Rect2, td: TileD
 
 	var transform := Transform2D(0.0, rect.size, 0.0, rect.position)
 	var center_polygon = transform * _drawing_polygon(terrain.type, -1)
-	if terrain.type == BetterTerrain.TerrainType.DECORATION:
+	if terrain.type == BetterTileEditor.TerrainType.DECORATION:
 		draw_colored_polygon(center_polygon, Color(terrain.color, 0.6))
 		center_polygon.append(center_polygon[0])
 		draw_polyline(center_polygon, Color.BLACK)
 	else:
 		_queue_polygon(center_polygon, Color(terrain.color, 0.6))
 
-	if paint < BetterTerrain.TileCategory.EMPTY or paint >= BetterTerrain.terrain_count(tileset):
+	if paint < BetterTileEditor.TileCategory.EMPTY or paint >= BetterTileEditor.terrain_count(tileset):
 		return
 
 	if not draw_sides:
@@ -1017,9 +1017,9 @@ func _draw_tile_data(texture: Texture2D, rect: Rect2, src_rect: Rect2, td: TileD
 
 	var paint_terrain := _drawing_terrain(paint)
 	var paint_color := Color(paint_terrain.color, 0.6)
-	var paint_is_decoration: bool = paint_terrain.type == BetterTerrain.TerrainType.DECORATION
+	var paint_is_decoration: bool = paint_terrain.type == BetterTileEditor.TerrainType.DECORATION
 	for p in terrain.peering_cells:
-		if paint in BetterTerrain.tile_peering_types(td, p):
+		if paint in BetterTileEditor.tile_peering_types(td, p):
 			var side_polygon = transform * _drawing_polygon(terrain.type, p)
 			if paint_is_decoration:
 				draw_colored_polygon(side_polygon, paint_color)
@@ -1027,9 +1027,9 @@ func _draw_tile_data(texture: Texture2D, rect: Rect2, src_rect: Rect2, td: TileD
 				draw_polyline(side_polygon, Color.BLACK)
 			else:
 				_queue_polygon(side_polygon, paint_color)
-		elif paint in BetterTerrain.tile_not_peering_types(td, p):
-			for shape in BetterTerrain.data.not_marker(transform * _drawing_polygon(terrain.type, p)):
-				_queue_polygon(shape[0], BetterTerrain.data.NOT_RED if shape[1] else Color(paint_terrain.color, 0.9))
+		elif paint in BetterTileEditor.tile_not_peering_types(td, p):
+			for shape in BetterTileEditor.data.not_marker(transform * _drawing_polygon(terrain.type, p)):
+				_queue_polygon(shape[0], BetterTileEditor.data.NOT_RED if shape[1] else Color(paint_terrain.color, 0.9))
 
 
 func _draw_tile_symmetry(texture: Texture2D, rect: Rect2, src_rect: Rect2, td: TileData, draw_icon: bool = true) -> void:
@@ -1051,7 +1051,7 @@ func _draw_tile_symmetry(texture: Texture2D, rect: Rect2, src_rect: Rect2, td: T
 	if not draw_icon:
 		return
 	
-	var symmetry_type = BetterTerrain.get_tile_symmetry_type(td)
+	var symmetry_type = BetterTileEditor.get_tile_symmetry_type(td)
 	if symmetry_type == 0:
 		return
 	var symmetry_icon = paint_symmetry_icons[symmetry_type]
@@ -1231,9 +1231,9 @@ func _draw_timed() -> void:
 	if paint_mode == PaintMode.PASTE:
 		if staged_paste_tile_states.size() > 0:
 			var base_rect = staged_paste_tile_states[0].base_rect
-			var paint_terrain := BetterTerrain.get_terrain(tileset, paint)
+			var paint_terrain := BetterTileEditor.get_terrain(tileset, paint)
 			var paint_terrain_type = paint_terrain.type
-			if paint_terrain_type == BetterTerrain.TerrainType.CATEGORY:
+			if paint_terrain_type == BetterTileEditor.TerrainType.CATEGORY:
 				paint_terrain_type = 0
 			for state in staged_paste_tile_states:
 				var staged_rect:Rect2 = state.base_rect
@@ -1248,16 +1248,16 @@ func _draw_timed() -> void:
 				if real_rect.position.x >= 0:
 					draw_rect(real_rect, Color(0,0,0, 0.3), true)
 					var transform := Transform2D(0.0, real_rect.size, 0.0, real_rect.position)
-					var tile_sides = BetterTerrain.data.get_terrain_peering_cells(tileset, paint_terrain_type)
+					var tile_sides = BetterTileEditor.data.get_terrain_peering_cells(tileset, paint_terrain_type)
 					for p in tile_sides:
-						if state.paint in BetterTerrain.tile_peering_types(state.part.data, p):
-							var side_polygon = BetterTerrain.data.peering_polygon(tileset, paint_terrain_type, p)
+						if state.paint in BetterTileEditor.tile_peering_types(state.part.data, p):
+							var side_polygon = BetterTileEditor.data.peering_polygon(tileset, paint_terrain_type, p)
 							var color = Color(paint_terrain.color, 0.6)
 							draw_colored_polygon(transform * side_polygon, color)
-						elif state.paint in BetterTerrain.tile_not_peering_types(state.part.data, p):
-							var side_polygon = transform * BetterTerrain.data.peering_polygon(tileset, paint_terrain_type, p)
-							for shape in BetterTerrain.data.not_marker(side_polygon):
-								draw_colored_polygon(shape[0], BetterTerrain.data.NOT_RED if shape[1] else Color(paint_terrain.color, 0.6))
+						elif state.paint in BetterTileEditor.tile_not_peering_types(state.part.data, p):
+							var side_polygon = transform * BetterTileEditor.data.peering_polygon(tileset, paint_terrain_type, p)
+							for shape in BetterTileEditor.data.not_marker(side_polygon):
+								draw_colored_polygon(shape[0], BetterTileEditor.data.NOT_RED if shape[1] else Color(paint_terrain.color, 0.6))
 				
 				draw_rect(staged_rect, Color.DEEP_PINK, false)
 
@@ -1268,11 +1268,11 @@ func delete_selection():
 	undo_manager.create_action("Delete tile terrain peering types", UndoRedo.MERGE_DISABLE, tileset)
 	for t in selected_tile_states:
 		for side in range(16):
-			var old_peering = BetterTerrain.tile_peering_types(t.part.data, side)
+			var old_peering = BetterTileEditor.tile_peering_types(t.part.data, side)
 			if old_peering.has(paint):
 				undo_manager.add_do_method(self, &"_on_tile", &"remove_tile_peering_type", _ref(t.part), [side, paint])
 				undo_manager.add_undo_method(self, &"_on_tile", &"add_tile_peering_type", _ref(t.part), [side, paint])
-			if BetterTerrain.tile_not_peering_types(t.part.data, side).has(paint):
+			if BetterTileEditor.tile_not_peering_types(t.part.data, side).has(paint):
 				undo_manager.add_do_method(self, &"_on_tile", &"remove_tile_not_peering_type", _ref(t.part), [side, paint])
 				undo_manager.add_undo_method(self, &"_on_tile", &"add_tile_not_peering_type", _ref(t.part), [side, paint])
 	
@@ -1284,11 +1284,11 @@ func delete_selection():
 func toggle_selection():
 	undo_manager.create_action("Toggle tile terrain", UndoRedo.MERGE_DISABLE, tileset, true)
 	for t in selected_tile_states:
-		var type := BetterTerrain.get_tile_terrain_type(t.part.data)
-		var goal := paint if paint != type else BetterTerrain.TileCategory.NON_TERRAIN
+		var type := BetterTileEditor.get_tile_terrain_type(t.part.data)
+		var goal := paint if paint != type else BetterTileEditor.TileCategory.NON_TERRAIN
 		
 		terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"set_tile_terrain_type", _ref(t.part), [goal]])
-		if goal == BetterTerrain.TileCategory.NON_TERRAIN:
+		if goal == BetterTileEditor.TileCategory.NON_TERRAIN:
 			terrain_undo.create_peering_restore_point_tile(
 				undo_manager,
 				tileset,
@@ -1397,8 +1397,8 @@ func _draw_marked_blocks(band: Dictionary) -> void:
 func _draw_exemplar_outline(band: Dictionary) -> void:
 	if tileset == null or paint < 0:
 		return
-	var t := BetterTerrain.get_terrain(tileset, paint)
-	if not t.valid or t.type != BetterTerrain.TerrainType.EXEMPLAR:
+	var t := BetterTileEditor.get_terrain(tileset, paint)
+	if not t.valid or t.type != BetterTileEditor.TerrainType.EXEMPLAR:
 		return
 	var source: TileSetAtlasSource = band.source
 	var source_id: int = band.source_id
@@ -1429,7 +1429,7 @@ func _draw_exemplar_outline(band: Dictionary) -> void:
 		hi = Vector2i(-(1 << 30), -(1 << 30))
 		for i in source.get_tiles_count():
 			var coord := source.get_tile_id(i)
-			if BetterTerrain.get_tile_terrain_type(source.get_tile_data(coord, 0)) != paint:
+			if BetterTileEditor.get_tile_terrain_type(source.get_tile_data(coord, 0)) != paint:
 				continue
 			marked[coord] = true
 			lo = Vector2i(mini(lo.x, coord.x), mini(lo.y, coord.y))
@@ -1513,15 +1513,15 @@ func _paint_object_block(is_lone: bool) -> void:
 
 	undo_manager.create_action("Mark object block", UndoRedo.MERGE_DISABLE, tileset, true)
 	for d in data:
-		var before := BetterTerrain.get_tile_terrain_type(src.get_tile_data(d[1], 0))
+		var before := BetterTileEditor.get_tile_terrain_type(src.get_tile_data(d[1], 0))
 		undo_manager.add_do_method(self, &"_on_tile", &"set_tile_terrain_type", d, [paint])
 		undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_terrain_type", d, [before])
 	if is_lone:
 		var updated := cfg.duplicate()
 		updated["size"] = [object_size.x, object_size.y]
 		updated["lone"] = [origin.x, origin.y]
-		undo_manager.add_do_method(BetterTerrain, &"set_terrain_object", tileset, paint, updated)
-		undo_manager.add_undo_method(BetterTerrain, &"set_terrain_object", tileset, paint, cfg)
+		undo_manager.add_do_method(BetterTileEditor, &"set_terrain_object", tileset, paint, updated)
+		undo_manager.add_undo_method(BetterTileEditor, &"set_terrain_object", tileset, paint, cfg)
 	undo_manager.add_do_method(self, &"queue_redraw")
 	undo_manager.add_undo_method(self, &"queue_redraw")
 	undo_manager.commit_action()
@@ -1543,21 +1543,21 @@ func _erase_object_block() -> void:
 			var c: Vector2i = origin + Vector2i(dx, dy)
 			if src.get_tile_at_coords(c) != c:
 				continue
-			if BetterTerrain.get_tile_terrain_type(src.get_tile_data(c, 0)) == paint:
+			if BetterTileEditor.get_tile_terrain_type(src.get_tile_data(c, 0)) == paint:
 				data.push_back([highlighted_tile_part.source_id, c, 0])
 	if data.is_empty():
 		return
 
 	undo_manager.create_action("Clear object block", UndoRedo.MERGE_DISABLE, tileset, true)
 	for d in data:
-		undo_manager.add_do_method(self, &"_on_tile", &"set_tile_terrain_type", d, [BetterTerrain.TileCategory.NON_TERRAIN])
+		undo_manager.add_do_method(self, &"_on_tile", &"set_tile_terrain_type", d, [BetterTileEditor.TileCategory.NON_TERRAIN])
 		undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_terrain_type", d, [paint])
 	var lone: Array = cfg.get("lone", [])
 	if lone.size() == 2 and Vector2i(lone[0], lone[1]) == origin:
 		var updated := cfg.duplicate()
 		updated.erase("lone")
-		undo_manager.add_do_method(BetterTerrain, &"set_terrain_object", tileset, paint, updated)
-		undo_manager.add_undo_method(BetterTerrain, &"set_terrain_object", tileset, paint, cfg)
+		undo_manager.add_do_method(BetterTileEditor, &"set_terrain_object", tileset, paint, updated)
+		undo_manager.add_undo_method(BetterTileEditor, &"set_terrain_object", tileset, paint, cfg)
 	undo_manager.add_do_method(self, &"queue_redraw")
 	undo_manager.add_undo_method(self, &"queue_redraw")
 	undo_manager.commit_action()
@@ -1584,7 +1584,7 @@ func set_disabled_sources(list):
 ## Whether [param td] belongs to the entry being painted, which the atlas outlines.
 ## Nothing selected is NON_TERRAIN too, and must not outline every untyped tile.
 func is_painted_terrain(td: TileData) -> bool:
-	return paint != BetterTerrain.TileCategory.NON_TERRAIN and BetterTerrain.get_tile_terrain_type(td) == paint
+	return paint != BetterTileEditor.TileCategory.NON_TERRAIN and BetterTileEditor.get_tile_terrain_type(td) == paint
 
 
 func _source_hidden(source_id: int) -> bool:
@@ -1764,7 +1764,7 @@ func _gui_input_timed(event) -> void:
 						continue
 					
 					for side in range(16):
-						var old_peering = BetterTerrain.tile_peering_types(old_tile_part.data, side)
+						var old_peering = BetterTileEditor.tile_peering_types(old_tile_part.data, side)
 						var new_sides = new_tile_state.sides
 						if new_sides.has(side) and not old_peering.has(paint):
 							undo_manager.add_do_method(self, &"_on_tile", &"add_tile_peering_type", _ref(old_tile_part), [side, paint])
@@ -1773,7 +1773,7 @@ func _gui_input_timed(event) -> void:
 							undo_manager.add_do_method(self, &"_on_tile", &"remove_tile_peering_type", _ref(old_tile_part), [side, paint])
 							undo_manager.add_undo_method(self, &"_on_tile", &"add_tile_peering_type", _ref(old_tile_part), [side, paint])
 						
-						var old_not = BetterTerrain.tile_not_peering_types(old_tile_part.data, side)
+						var old_not = BetterTileEditor.tile_not_peering_types(old_tile_part.data, side)
 						var new_not_sides = new_tile_state.get("not_sides", [])
 						if new_not_sides.has(side) and not old_not.has(paint):
 							undo_manager.add_do_method(self, &"_on_tile", &"add_tile_not_peering_type", _ref(old_tile_part), [side, paint])
@@ -1782,7 +1782,7 @@ func _gui_input_timed(event) -> void:
 							undo_manager.add_do_method(self, &"_on_tile", &"remove_tile_not_peering_type", _ref(old_tile_part), [side, paint])
 							undo_manager.add_undo_method(self, &"_on_tile", &"add_tile_not_peering_type", _ref(old_tile_part), [side, paint])
 					
-					var old_symmetry = BetterTerrain.get_tile_symmetry_type(old_tile_part.data)
+					var old_symmetry = BetterTileEditor.get_tile_symmetry_type(old_tile_part.data)
 					var new_symmetry = new_tile_state.symmetry
 					if new_symmetry != old_symmetry:
 						undo_manager.add_do_method(self, &"_on_tile", &"set_tile_symmetry_type", _ref(old_tile_part), [new_symmetry])
@@ -1802,16 +1802,16 @@ func _gui_input_timed(event) -> void:
 		if !highlighted_tile_part.valid:
 			return
 		
-		var t = BetterTerrain.get_terrain(tileset, paint)
+		var t = BetterTileEditor.get_terrain(tileset, paint)
 		var prev_icon = t.icon.duplicate()
 		var icon = {
 			source_id = highlighted_tile_part.source_id,
 			coord = highlighted_tile_part.coord
 		}
 		undo_manager.create_action("Edit terrain details", UndoRedo.MERGE_DISABLE, tileset)
-		undo_manager.add_do_method(BetterTerrain, &"set_terrain", tileset, paint, t.name, t.color, t.type, t.categories, icon)
+		undo_manager.add_do_method(BetterTileEditor, &"set_terrain", tileset, paint, t.name, t.color, t.type, t.categories, icon)
 		undo_manager.add_do_method(self, &"emit_terrain_updated", paint)
-		undo_manager.add_undo_method(BetterTerrain, &"set_terrain", tileset, paint, t.name, t.color, t.type, t.categories, prev_icon)
+		undo_manager.add_undo_method(BetterTileEditor, &"set_terrain", tileset, paint, t.name, t.color, t.type, t.categories, prev_icon)
 		undo_manager.add_undo_method(self, &"emit_terrain_updated", paint)
 		undo_manager.commit_action()
 		pick_icon_terrain = -1
@@ -1821,7 +1821,7 @@ func _gui_input_timed(event) -> void:
 		pick_icon_terrain = -1
 		pick_icon_terrain_cancel = false
 	
-	if paint != BetterTerrain.TileCategory.NON_TERRAIN and clicked:
+	if paint != BetterTileEditor.TileCategory.NON_TERRAIN and clicked:
 		paint_action = PaintAction.NO_ACTION
 		if highlighted_tile_part.valid:
 			match [paint_mode, event.button_index]:
@@ -1856,15 +1856,15 @@ func _gui_input_timed(event) -> void:
 			for t in selected_tile_parts:
 				var not_sides := []
 				for side in range(16):
-					if paint in BetterTerrain.tile_not_peering_types(t.data, side):
+					if paint in BetterTileEditor.tile_not_peering_types(t.data, side):
 						not_sides.push_back(side)
 				var state := {
 					part = t,
 					base_rect = Rect2(t.rect.position / zoom_level, t.rect.size / zoom_level),
 					paint = paint,
-					sides = BetterTerrain.tile_peering_for_type(t.data, paint),
+					sides = BetterTileEditor.tile_peering_for_type(t.data, paint),
 					not_sides = not_sides,
-					symmetry = BetterTerrain.get_tile_symmetry_type(t.data)
+					symmetry = BetterTileEditor.get_tile_symmetry_type(t.data)
 				}
 				selected_tile_states.push_back(state)
 		else:
@@ -1889,13 +1889,13 @@ func _gui_input_timed(event) -> void:
 				elif paint_action == PaintAction.ERASE_OBJECT_BLOCK:
 					_erase_object_block()
 				elif paint_action == PaintAction.DRAW_TYPE or paint_action == PaintAction.ERASE_TYPE:
-					var type := BetterTerrain.get_tile_terrain_type(highlighted_tile_part.data)
-					var goal := paint if paint_action == PaintAction.DRAW_TYPE else BetterTerrain.TileCategory.NON_TERRAIN
+					var type := BetterTileEditor.get_tile_terrain_type(highlighted_tile_part.data)
+					var goal := paint if paint_action == PaintAction.DRAW_TYPE else BetterTileEditor.TileCategory.NON_TERRAIN
 					if type != goal:
 						undo_manager.create_action("Set tile terrain type " + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tileset, true)
 						terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"set_tile_terrain_type", _ref(highlighted_tile_part), [goal]])
 						terrain_undo.add_do_method(undo_manager, self, &"queue_redraw", [])
-						if goal == BetterTerrain.TileCategory.NON_TERRAIN:
+						if goal == BetterTileEditor.TileCategory.NON_TERRAIN:
 							terrain_undo.create_peering_restore_point_tile(
 								undo_manager,
 								tileset,
@@ -1913,8 +1913,8 @@ func _gui_input_timed(event) -> void:
 						var td = highlighted_tile_part.data
 						var tref := _ref(highlighted_tile_part)
 						var side = highlighted_tile_part.peering
-						var has_match = paint in BetterTerrain.tile_peering_types(td, side)
-						var has_not = paint in BetterTerrain.tile_not_peering_types(td, side)
+						var has_match = paint in BetterTileEditor.tile_peering_types(td, side)
+						var has_not = paint in BetterTileEditor.tile_not_peering_types(td, side)
 						if clicked and (has_match or has_not):
 							# A click on a set side flips it between match and must-not-match
 							var from_add := &"add_tile_peering_type" if has_match else &"add_tile_not_peering_type"
@@ -1946,8 +1946,8 @@ func _gui_input_timed(event) -> void:
 						var td = highlighted_tile_part.data
 						var tref := _ref(highlighted_tile_part)
 						var side = highlighted_tile_part.peering
-						var has_match = paint in BetterTerrain.tile_peering_types(td, side)
-						var has_not = paint in BetterTerrain.tile_not_peering_types(td, side)
+						var has_match = paint in BetterTileEditor.tile_peering_types(td, side)
+						var has_not = paint in BetterTileEditor.tile_not_peering_types(td, side)
 						if has_match or has_not:
 							undo_manager.create_action("Remove tile terrain peering type " + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tileset, true)
 							if has_match:
@@ -1961,9 +1961,9 @@ func _gui_input_timed(event) -> void:
 							undo_manager.commit_action()
 							terrain_undo.action_count += 1
 				elif paint_action == PaintAction.DRAW_SYMMETRY:
-					if paint == BetterTerrain.get_tile_terrain_type(highlighted_tile_part.data):
+					if paint == BetterTileEditor.get_tile_terrain_type(highlighted_tile_part.data):
 						undo_manager.create_action("Set tile symmetry type " + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tileset, true)
-						var old_symmetry = BetterTerrain.get_tile_symmetry_type(highlighted_tile_part.data)
+						var old_symmetry = BetterTileEditor.get_tile_symmetry_type(highlighted_tile_part.data)
 						terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"set_tile_symmetry_type", _ref(highlighted_tile_part), [paint_symmetry]])
 						terrain_undo.add_do_method(undo_manager, self, &"queue_redraw", [])
 						undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_symmetry_type", _ref(highlighted_tile_part), [old_symmetry])
@@ -1971,10 +1971,10 @@ func _gui_input_timed(event) -> void:
 						undo_manager.commit_action()
 						terrain_undo.action_count += 1
 				elif paint_action == PaintAction.ERASE_SYMMETRY:
-					if paint == BetterTerrain.get_tile_terrain_type(highlighted_tile_part.data):
+					if paint == BetterTileEditor.get_tile_terrain_type(highlighted_tile_part.data):
 						undo_manager.create_action("Remove tile symmetry type " + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tileset, true)
-						var old_symmetry = BetterTerrain.get_tile_symmetry_type(highlighted_tile_part.data)
-						terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"set_tile_symmetry_type", _ref(highlighted_tile_part), [BetterTerrain.SymmetryType.NONE]])
+						var old_symmetry = BetterTileEditor.get_tile_symmetry_type(highlighted_tile_part.data)
+						terrain_undo.add_do_method(undo_manager, self, &"_on_tile", [&"set_tile_symmetry_type", _ref(highlighted_tile_part), [BetterTileEditor.SymmetryType.NONE]])
 						terrain_undo.add_do_method(undo_manager, self, &"queue_redraw", [])
 						undo_manager.add_undo_method(self, &"_on_tile", &"set_tile_symmetry_type", _ref(highlighted_tile_part), [old_symmetry])
 						undo_manager.add_undo_method(self, &"queue_redraw")

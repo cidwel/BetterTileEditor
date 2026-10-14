@@ -140,9 +140,7 @@ var initial_height := -1
 
 func setup(ts: TileSet, index: int, cliff_name: String, height := -1) -> void:
 	initial_height = height
-	_bt = get_node_or_null("/root/BetterTerrain")
-	if _bt == null:
-		_bt = load("res://addons/better-tile-editor/BetterTerrain.gd").new()
+	_bt = BetterTileEditor
 	tile_set = ts
 	terrain_index = index
 	terrain_name = cliff_name

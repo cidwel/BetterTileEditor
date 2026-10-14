@@ -87,8 +87,8 @@ func refresh() -> void:
 	var previous := selected_group()
 
 	_list.clear()
-	for g in BetterTerrain.get_terrain_groups(tileset):
-		var count := BetterTerrain.get_terrains_in_group(tileset, g.name).size()
+	for g in BetterTileEditor.get_terrain_groups(tileset):
+		var count := BetterTileEditor.get_terrains_in_group(tileset, g.name).size()
 		var index := _list.add_item("%s  (%d)" % [g.name, count])
 		_list.set_item_custom_fg_color(index, g.color)
 		if g.name == previous:
@@ -109,7 +109,7 @@ func selected_group() -> String:
 	var index := selected_index()
 	if index < 0:
 		return ""
-	var groups := BetterTerrain.get_terrain_groups(tileset)
+	var groups := BetterTileEditor.get_terrain_groups(tileset)
 	return groups[index].name if index < groups.size() else ""
 
 
@@ -132,27 +132,27 @@ func _sync_color_option() -> void:
 		_color_option.disabled = true
 		return
 
-	var groups := BetterTerrain.get_terrain_groups(tileset)
+	var groups := BetterTileEditor.get_terrain_groups(tileset)
 	if index >= groups.size():
 		_color_option.disabled = true
 		return
 
 	var group : Dictionary = groups[index]
-	var members := BetterTerrain.get_terrains_in_group(tileset, group.name)
+	var members := BetterTileEditor.get_terrains_in_group(tileset, group.name)
 
 	_color_option.disabled = members.is_empty()
 	_color_option.add_item("First terrain of the group")
 	_color_option.set_item_metadata(0, -1)
 	if !members.is_empty():
-		var first := BetterTerrain.get_terrain_icon_texture(tileset, members[0])
+		var first := BetterTileEditor.get_terrain_icon_texture(tileset, members[0])
 		_color_option.set_item_icon(0, first if first else _swatch(group.color))
 
 	var selected := 0
 	for id in members:
-		var terrain := BetterTerrain.get_terrain(tileset, id)
+		var terrain := BetterTileEditor.get_terrain(tileset, id)
 		var item := _color_option.item_count
 		_color_option.add_item(terrain.name)
-		var texture := BetterTerrain.get_terrain_icon_texture(tileset, id)
+		var texture := BetterTileEditor.get_terrain_icon_texture(tileset, id)
 		_color_option.set_item_icon(item, texture if texture else _swatch(terrain.color))
 		_color_option.set_item_metadata(item, id)
 		if id == group.icon_terrain:
@@ -172,7 +172,7 @@ func _on_add() -> void:
 	if group_name.is_empty():
 		return
 
-	if BetterTerrain.add_terrain_group(tileset, group_name):
+	if BetterTileEditor.add_terrain_group(tileset, group_name):
 		_name_edit.text = ""
 		refresh()
 		groups_changed.emit()
@@ -189,7 +189,7 @@ func _on_rename() -> void:
 		_name_edit.grab_focus()
 		return
 
-	if BetterTerrain.rename_terrain_group(tileset, index, group_name):
+	if BetterTileEditor.rename_terrain_group(tileset, index, group_name):
 		_name_edit.text = ""
 		refresh()
 		groups_changed.emit()
@@ -199,7 +199,7 @@ func _on_remove() -> void:
 	var group_name := selected_group()
 	if group_name.is_empty():
 		return
-	var count := BetterTerrain.get_terrains_in_group(tileset, group_name).size()
+	var count := BetterTileEditor.get_terrains_in_group(tileset, group_name).size()
 	if count == 0:
 		_remove_group(group_name)
 		return
@@ -215,9 +215,9 @@ func _on_remove() -> void:
 
 
 func _remove_group(group_name: String) -> void:
-	var groups := BetterTerrain.get_terrain_groups(tileset)
+	var groups := BetterTileEditor.get_terrain_groups(tileset)
 	var index := groups.find_custom(func(group): return group.name == group_name)
-	if index >= 0 and BetterTerrain.remove_terrain_group(tileset, index):
+	if index >= 0 and BetterTileEditor.remove_terrain_group(tileset, index):
 		refresh()
 		groups_changed.emit()
 
@@ -231,7 +231,7 @@ func _move(delta: int) -> void:
 	if target < 0 or target >= _list.item_count:
 		return
 
-	if BetterTerrain.move_terrain_group(tileset, index, target):
+	if BetterTileEditor.move_terrain_group(tileset, index, target):
 		refresh()
 		_list.select(target)
 		_sync_buttons()
@@ -243,6 +243,6 @@ func _on_icon_terrain_selected(item: int) -> void:
 	if index < 0:
 		return
 
-	if BetterTerrain.set_terrain_group_icon_terrain(tileset, index, _color_option.get_item_metadata(item)):
+	if BetterTileEditor.set_terrain_group_icon_terrain(tileset, index, _color_option.get_item_metadata(item)):
 		refresh()
 		groups_changed.emit()

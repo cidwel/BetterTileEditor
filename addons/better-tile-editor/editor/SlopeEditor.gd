@@ -83,7 +83,7 @@ func open(ts: TileSet, undo: EditorUndoRedoManager, owner_dock: Node) -> void:
 	var found_now := SlopeTerrain.roles(tileset)
 	var chosen: int = dock.selected_entry
 	if not found_now.has("ground") and chosen >= 0 and not chosen in found_now.values() \
-			and BetterTerrain.get_terrain(tileset, chosen).type == BetterTerrain.TerrainType.MATCH_TILES:
+			and BetterTileEditor.get_terrain(tileset, chosen).type == BetterTileEditor.TerrainType.MATCH_TILES:
 		found_now.ground = chosen
 		SlopeTerrain.save_roles(tileset, found_now)
 	# Rules get lost when tiles are re-picked, so a complete set gets them back here
@@ -299,7 +299,7 @@ func _next_missing() -> String:
 func _refresh() -> void:
 	_tiles.clear()
 	for slot in ADVANCED_SECTIONS.map(func(s): return s[1]).reduce(func(a, b): return a + b, []):
-		_tiles[slot] = SlopeTerrain.slot_tile(BetterTerrain, tileset, slot)
+		_tiles[slot] = SlopeTerrain.slot_tile(BetterTileEditor, tileset, slot)
 	(_simple if _mode() == "simple" else _advanced).set_pressed_no_signal(true)
 	# Rebuild only on mode change: a card created under the mouse ignores clicks until it moves
 	if _cards_mode != _mode():
@@ -311,7 +311,7 @@ func _refresh() -> void:
 	var done := needed.filter(func(slot): return not _tiles[slot].is_empty()).size()
 	var is_ready := SlopeTerrain.is_complete(found)
 	_status.text = "%d of %d pieces  ·  %s" % [done, needed.size(), "the slope tool is ready" if is_ready else "the slope tool shows once every piece has a tile"]
-	if found.has("ground") and not SlopeTerrain.has_edges(BetterTerrain, tileset, found.ground):
+	if found.has("ground") and not SlopeTerrain.has_edges(BetterTileEditor, tileset, found.ground):
 		_status.text += "  ·  Ground has no edge tiles yet: set its edges and corners as for any terrain"
 	_rules.disabled = not is_ready
 	_sync_ground_choice(found)
@@ -365,8 +365,8 @@ func _sync_ground_choice(found: Dictionary) -> void:
 	if _ground_choice == null:
 		return
 	_ground_choice.clear()
-	for i in SlopeTerrain.ground_choices(BetterTerrain, tileset):
-		_ground_choice.add_item("Terrain: " + String(BetterTerrain.get_terrain(tileset, i).name), i)
+	for i in SlopeTerrain.ground_choices(BetterTileEditor, tileset):
+		_ground_choice.add_item("Terrain: " + String(BetterTileEditor.get_terrain(tileset, i).name), i)
 	if not found.has("ground"):
 		_ground_choice.add_item("A new terrain, made with the first tile", -1)
 	_ground_choice.select(_ground_choice.get_item_index(found.get("ground", -1)))
@@ -376,9 +376,9 @@ func _choose_ground(index: int) -> void:
 	if index < 0 or index == SlopeTerrain.roles(tileset).get("ground", -100):
 		return
 	var before := _snapshot()
-	SlopeTerrain.set_ground(BetterTerrain, tileset, index)
+	SlopeTerrain.set_ground(BetterTileEditor, tileset, index)
 	_apply_rules()
-	_message.text = "Ground is now the terrain %s." % BetterTerrain.get_terrain(tileset, index).name
+	_message.text = "Ground is now the terrain %s." % BetterTileEditor.get_terrain(tileset, index).name
 	_commit("Choose the slopes' ground", before)
 
 
@@ -470,9 +470,9 @@ func _render(found: Dictionary) -> void:
 		var slot: String = _sample[c]
 		var role := "ground" if slot == "ground" or slot.begins_with("arrow:") else slot.get_slice(":", slot.get_slice_count(":") - 1)
 		if found.has(role):
-			BetterTerrain.set_cell(_layer, c, found[role])
+			BetterTileEditor.set_cell(_layer, c, found[role])
 			painted.append(c)
-	BetterTerrain.update_terrain_cells(_layer, painted)
+	BetterTileEditor.update_terrain_cells(_layer, painted)
 
 
 func _draw_preview() -> void:
@@ -639,10 +639,10 @@ func _snapshot() -> Array:
 			for a in src.get_alternative_tiles_count(coord):
 				var alt := src.get_alternative_tile_id(coord, a)
 				var td := src.get_tile_data(coord, alt)
-				metas[[tileset.get_source_id(s), coord, alt]] = td.get_meta(BetterTerrain.TERRAIN_META).duplicate(true) \
-					if td.has_meta(BetterTerrain.TERRAIN_META) else null
+				metas[[tileset.get_source_id(s), coord, alt]] = td.get_meta(BetterTileEditor.TERRAIN_META).duplicate(true) \
+					if td.has_meta(BetterTileEditor.TERRAIN_META) else null
 	var saved := []
-	for key in [BetterTerrain.TERRAIN_META, SlopeTerrain.META, SlopeTerrain.TAKEN_META, SlopeTerrain.MODE_META, SlopeTerrain.GROUND_PICK_META]:
+	for key in [BetterTileEditor.TERRAIN_META, SlopeTerrain.META, SlopeTerrain.TAKEN_META, SlopeTerrain.MODE_META, SlopeTerrain.GROUND_PICK_META]:
 		# get_meta with a null default still complains about a missing key
 		var value = tileset.get_meta(key) if tileset.has_meta(key) else null
 		saved.append(value.duplicate(true) if value is Dictionary or value is Array else value)
@@ -650,7 +650,7 @@ func _snapshot() -> Array:
 
 
 func _restore(snapshot: Array) -> void:
-	var keys := [BetterTerrain.TERRAIN_META, SlopeTerrain.META, SlopeTerrain.TAKEN_META, SlopeTerrain.MODE_META, SlopeTerrain.GROUND_PICK_META]
+	var keys := [BetterTileEditor.TERRAIN_META, SlopeTerrain.META, SlopeTerrain.TAKEN_META, SlopeTerrain.MODE_META, SlopeTerrain.GROUND_PICK_META]
 	for i in keys.size():
 		var value = snapshot[1][i]
 		if value == null:
@@ -662,12 +662,12 @@ func _restore(snapshot: Array) -> void:
 		if td == null:
 			continue
 		if snapshot[0][key] == null:
-			td.remove_meta(BetterTerrain.TERRAIN_META)
+			td.remove_meta(BetterTileEditor.TERRAIN_META)
 		else:
-			td.set_meta(BetterTerrain.TERRAIN_META, snapshot[0][key].duplicate(true))
+			td.set_meta(BetterTileEditor.TERRAIN_META, snapshot[0][key].duplicate(true))
 	# Flipped pieces are alternative tiles, regenerated from their sources
 	if _mode() == "simple":
-		SlopeTerrain.turn(BetterTerrain, tileset)
+		SlopeTerrain.turn(BetterTileEditor, tileset)
 	_changed()
 
 
@@ -692,8 +692,8 @@ func _assign(source_id: int, tile: Vector2i) -> void:
 		var t: Dictionary = _tiles[s]
 		if s != slot and not t.is_empty() and t.source == source_id and t.coord == tile and int(t.get("alt", 0)) == 0:
 			other = s
-	var error: String = SlopeTerrain.assign(BetterTerrain, tileset, slot, source_id, tile)
-	_log("  result '%s', now %s" % [error, SlopeTerrain.slot_tile(BetterTerrain, tileset, slot)])
+	var error: String = SlopeTerrain.assign(BetterTileEditor, tileset, slot, source_id, tile)
+	_log("  result '%s', now %s" % [error, SlopeTerrain.slot_tile(BetterTileEditor, tileset, slot)])
 	if not error.is_empty():
 		_message.text = error
 		return
@@ -704,12 +704,12 @@ func _assign(source_id: int, tile: Vector2i) -> void:
 		_message.text += " It was %s, which needs another tile now." % _describe(other).trim_suffix(".").to_lower()
 	if not other.is_empty() and other != "ground" and slot != "ground" and other in _all_slots():
 		if not mine.is_empty() and int(mine.get("alt", 0)) == 0:
-			SlopeTerrain.assign(BetterTerrain, tileset, other, mine.source, mine.coord)
+			SlopeTerrain.assign(BetterTileEditor, tileset, other, mine.source, mine.coord)
 			_message.text = "Swapped with %s." % _describe(other).trim_suffix(".").to_lower()
 		else:
 			_message.text = "Taken from %s, which needs another tile now." % _describe(other).trim_suffix(".").to_lower()
 	if _mode() == "simple":
-		SlopeTerrain.turn(BetterTerrain, tileset)
+		SlopeTerrain.turn(BetterTileEditor, tileset)
 	_apply_rules()
 	_commit("Set slope piece", before)
 	var next := _next_missing()
@@ -719,7 +719,7 @@ func _assign(source_id: int, tile: Vector2i) -> void:
 func _set_mode(value: String, confirmed := false) -> void:
 	if tileset == null or value == _mode():
 		return
-	var replaced: Array = SlopeTerrain.hand_made(BetterTerrain, tileset) if value == "simple" else []
+	var replaced: Array = SlopeTerrain.hand_made(BetterTileEditor, tileset) if value == "simple" else []
 	if not replaced.is_empty() and not confirmed:
 		(_advanced if _mode() == "advanced" else _simple).set_pressed_no_signal(true)
 		var ask := ConfirmationDialog.new()
@@ -735,7 +735,7 @@ func _set_mode(value: String, confirmed := false) -> void:
 		ask.popup_centered()
 		return
 	var before := _snapshot()
-	SlopeTerrain.set_mode(BetterTerrain, tileset, value)
+	SlopeTerrain.set_mode(BetterTileEditor, tileset, value)
 	_apply_rules()
 	_message.text = "The other directions and the ceilings are now these pieces flipped." if value == "simple" \
 		else "Every piece can be picked now; the flipped ones stay until you change them."
@@ -746,11 +746,11 @@ func _set_mode(value: String, confirmed := false) -> void:
 # Rules fix the ground under slopes, peaks and valleys; applied as soon as the set is complete
 func _apply_rules() -> void:
 	if SlopeTerrain.is_complete(SlopeTerrain.roles(tileset)):
-		SlopeTerrain.add_rules(BetterTerrain, tileset)
+		SlopeTerrain.add_rules(BetterTileEditor, tileset)
 
 
 func _changed() -> void:
-	BetterTerrain._purge_cache(tileset)
+	BetterTileEditor._purge_cache(tileset)
 	tileset.emit_changed()
 	_palette.refresh_tileset(tileset)
 	roles_changed.emit()
@@ -763,7 +763,7 @@ func _on_clear_pressed() -> void:
 	confirm.dialog_text = "Take every slope piece off its tile and remove the slope terrains?\nGround stays as it is. You can undo this."
 	confirm.confirmed.connect(func() -> void:
 		var before := _snapshot()
-		SlopeTerrain.clear(BetterTerrain, tileset)
+		SlopeTerrain.clear(BetterTileEditor, tileset)
 		_commit("Clear slopes", before))
 	confirm.visibility_changed.connect(func() -> void:
 		if not confirm.visible:
@@ -775,7 +775,7 @@ func _on_clear_pressed() -> void:
 func _example_ground() -> int:
 	var found := SlopeTerrain.roles(tileset)
 	var chosen: int = dock.selected_entry
-	if chosen >= 0 and chosen in SlopeTerrain.ground_choices(BetterTerrain, tileset):
+	if chosen >= 0 and chosen in SlopeTerrain.ground_choices(BetterTileEditor, tileset):
 		return chosen
 	return found.get("ground", -1)
 
@@ -783,26 +783,26 @@ func _example_ground() -> int:
 func _on_example_pressed() -> void:
 	var before: Array = SlopeTerrain.snapshot(tileset)
 	var ground := _example_ground()
-	var id: int = SlopeTerrain.make_example(BetterTerrain, tileset, ground)
+	var id: int = SlopeTerrain.make_example(BetterTileEditor, tileset, ground)
 	undo_manager.create_action("Create example slope map", UndoRedo.MERGE_DISABLE, tileset)
 	var box := [id]
 	undo_manager.add_do_method(self, &"_redo_example", box, ground)
 	undo_manager.add_undo_method(self, &"_undo_example", box, before)
 	undo_manager.commit_action(false)
-	var ground_name := String(BetterTerrain.get_terrain(tileset, SlopeTerrain.roles(tileset).ground).name)
+	var ground_name := String(BetterTileEditor.get_terrain(tileset, SlopeTerrain.roles(tileset).ground).name)
 	_after_example("Example atlas added as source %d; %s is set up with it." % [id, ground_name])
 
 
 # Redo recreates the atlas; keep its new id for the next undo
 func _redo_example(id_box: Array, ground: int) -> void:
-	id_box[0] = SlopeTerrain.make_example(BetterTerrain, tileset, ground)
+	id_box[0] = SlopeTerrain.make_example(BetterTileEditor, tileset, ground)
 	_after_example("")
 
 
 func _undo_example(id_box: Array, before: Array) -> void:
 	if tileset.has_source(id_box[0]):
 		tileset.remove_source(id_box[0])
-	SlopeTerrain.restore(BetterTerrain, tileset, before)
+	SlopeTerrain.restore(BetterTileEditor, tileset, before)
 	_after_example("")
 
 

@@ -378,7 +378,7 @@ func setup(ts: TileSet, terrain_id: int) -> void:
 	_corners_check.set_pressed_no_signal(not settings.has_setting(CORNERS_SETTING) or bool(settings.get_setting(CORNERS_SETTING)))
 	if settings.has_setting(BEND_SETTING):
 		_bend_pick.select(maxi(0, _bend_pick.get_item_index(int(settings.get_setting(BEND_SETTING)))))
-	title = "Complete terrain: %s" % BetterTerrain.get_terrain(ts, terrain_id).name
+	title = "Complete terrain: %s" % BetterTileEditor.get_terrain(ts, terrain_id).name
 	_shape_layer.clear()
 	for layer in ts.get_physics_layers_count():
 		_shape_layer.add_item("Layer %d" % layer, layer)
@@ -395,7 +395,7 @@ func setup(ts: TileSet, terrain_id: int) -> void:
 	_other_pick.add_item("Empty", FACE_NOTHING)
 	var others := Coverage.neighbours(ts, terrain_id)
 	for other: int in others:
-		_other_pick.add_item("%s (%d tile%s)" % [BetterTerrain.get_terrain(ts, other).name, others[other], "" if others[other] == 1 else "s"], other)
+		_other_pick.add_item("%s (%d tile%s)" % [BetterTileEditor.get_terrain(ts, other).name, others[other], "" if others[other] == 1 else "s"], other)
 	_other_row.visible = not others.is_empty()
 	_fill()
 	# A border strip starts a sixteenth of the tile deep: 1 px on 16 px tiles.
@@ -473,7 +473,7 @@ func _load_variety() -> void:
 		turns |= Coverage.Turns.MIRROR if source.flags & Coverage.H else 0
 		turns |= Coverage.Turns.FLIP if source.flags & Coverage.V else 0
 		var src := _ts.get_source(source.source_id) as TileSetAtlasSource
-		weight = BetterTerrain.get_tile_transform_weight(src.get_tile_data(source.coord, source.alt))
+		weight = BetterTileEditor.get_tile_transform_weight(src.get_tile_data(source.coord, source.alt))
 	for bit: int in _variety_checks:
 		_variety_checks[bit].set_pressed_no_signal(turns & bit != 0)
 	_variety_weight.set_value_no_signal(weight * 100.0)
@@ -514,7 +514,7 @@ func _fill() -> void:
 	_missing_cards = 0
 	# Off, Missing pieces changes nothing, inner corners included: the terrain shows as it is.
 	_report = Coverage.analyse(_ts, _terrain_id, _other, _corners_check.button_pressed and _make_on.button_pressed)
-	_corners_check.get_parent().visible = _report.get("type") == BetterTerrain.TerrainType.MATCH_TILES and not _report.get("drawn_corners", true)
+	_corners_check.get_parent().visible = _report.get("type") == BetterTileEditor.TerrainType.MATCH_TILES and not _report.get("drawn_corners", true)
 	_bend_pick.disabled = not _corners_check.button_pressed
 	if not _report.error.is_empty():
 		_summary.text = _report.error
@@ -543,8 +543,8 @@ func _fill() -> void:
 			if not quarters.is_empty():
 				built[mask] = {mask = mask, quarters = quarters, size = found.region_size,
 					image = ImageTexture.create_from_image(Quarters.compose(_ts, quarters, found.region_size, sheets))}
-	var shape := "blob" if _report.with_corners and _report.type == BetterTerrain.TerrainType.MATCH_TILES else "sides only"
-	if _report.type == BetterTerrain.TerrainType.MATCH_VERTICES:
+	var shape := "blob" if _report.with_corners and _report.type == BetterTileEditor.TerrainType.MATCH_TILES else "sides only"
+	if _report.type == BetterTileEditor.TerrainType.MATCH_VERTICES:
 		shape = "corners"
 	_summary.text = "%d / %d pieces (%s)" % [need - missing.size(), need, shape]
 	var draw := missing.size() - suggestions.size() - built.size()
@@ -627,8 +627,8 @@ func _sync_apply() -> void:
 	_where.text = ""
 	if building:
 		var first: Dictionary = _builds.values()[0].quarters[0]
-		_where.text = "Saves to %s" % Quarters.file_for(_ts, BetterTerrain.get_terrain(_ts, _terrain_id).name,
-			first.source_id, BetterTerrain.get_terrain(_ts, _other).name if _other >= 0 else "")
+		_where.text = "Saves to %s" % Quarters.file_for(_ts, BetterTileEditor.get_terrain(_ts, _terrain_id).name,
+			first.source_id, BetterTileEditor.get_terrain(_ts, _other).name if _other >= 0 else "")
 
 
 func _card(mask: int, source: Dictionary, adding: bool) -> Control:
@@ -687,7 +687,7 @@ func _card(mask: int, source: Dictionary, adding: bool) -> Control:
 
 func _draw_diagram(canvas: Control, mask: int) -> void:
 	var cell := DIAGRAM / 3.0
-	var colour: Color = BetterTerrain.get_terrain(_ts, _terrain_id).color
+	var colour: Color = BetterTileEditor.get_terrain(_ts, _terrain_id).color
 	var empty := Color(1, 1, 1, 0.08)
 	var places := {
 		-1: Vector2i(1, 1),
@@ -744,7 +744,7 @@ func _sample_choices() -> Dictionary:
 			if dropped.any(func(d): return d.source_id == source.source_id and d.coord == source.coord and d.flags == source.flags):
 				continue
 			var td := (_ts.get_source(source.source_id) as TileSetAtlasSource).get_tile_data(source.coord, source.alt)
-			var weight := td.probability * (1.0 if source.flags == 0 else BetterTerrain.get_tile_transform_weight(td))
+			var weight := td.probability * (1.0 if source.flags == 0 else BetterTileEditor.get_tile_transform_weight(td))
 			choices.append([source, weight])
 		if not choices.is_empty():
 			out[mask] = choices
@@ -776,7 +776,7 @@ func _draw_sample() -> void:
 		TileSet.CELL_NEIGHBOR_BOTTOM_RIGHT_CORNER: Vector2i(1, 1), TileSet.CELL_NEIGHBOR_BOTTOM_LEFT_CORNER: Vector2i(-1, 1),
 		TileSet.CELL_NEIGHBOR_TOP_LEFT_CORNER: Vector2i(-1, -1), TileSet.CELL_NEIGHBOR_TOP_RIGHT_CORNER: Vector2i(1, -1),
 	}
-	var other_colour: Color = BetterTerrain.get_terrain(_ts, _other).color if _other >= 0 else Color.TRANSPARENT
+	var other_colour: Color = BetterTileEditor.get_terrain(_ts, _other).color if _other >= 0 else Color.TRANSPARENT
 	for y in rows:
 		for x in cols:
 			var r := Rect2(origin + Vector2(x, y) * cell, Vector2(cell, cell))
@@ -897,7 +897,7 @@ func _cell_mask(x: int, y: int, steps: Dictionary) -> int:
 	var mask := 0
 	for bit: int in steps:
 		var step: Vector2i = steps[bit]
-		if _report.type == BetterTerrain.TerrainType.MATCH_VERTICES:
+		if _report.type == BetterTileEditor.TerrainType.MATCH_VERTICES:
 			if Coverage.CORNERS.has(bit) and _painted(x + step.x, y) and _painted(x, y + step.y) and _painted(x + step.x, y + step.y):
 				mask |= 1 << bit
 		elif _painted(x + step.x, y + step.y):

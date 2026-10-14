@@ -82,7 +82,7 @@ func open(sections: Array, simple: bool, describe: Callable) -> void:
 	_describe = describe
 	if _ts == null:
 		_ts = TileSet.new()
-		var id: int = SlopeTerrain.make_example(BetterTerrain, _ts)
+		var id: int = SlopeTerrain.make_example(BetterTileEditor, _ts)
 		_src = _ts.get_source(id) as TileSetAtlasSource
 		_sample = SlopeTerrain.sample()
 		_lo = Vector2i(1 << 20, 1 << 20)
@@ -164,7 +164,7 @@ func _all_slots() -> Array:
 
 
 func _draw_tile(rect: Rect2, slot: String, flip_h: bool, flip_v: bool, alpha := 1.0) -> void:
-	var t := SlopeTerrain.slot_tile(BetterTerrain, _ts, slot)
+	var t := SlopeTerrain.slot_tile(BetterTileEditor, _ts, slot)
 	if t.is_empty():
 		return
 	_canvas.draw_set_transform(rect.get_center(), 0.0, Vector2(-1.0 if flip_h else 1.0, -1.0 if flip_v else 1.0))

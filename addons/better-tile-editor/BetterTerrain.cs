@@ -8,11 +8,10 @@ using Godot.Collections;
 This is a lightweight wrapper for Better Terrain in C#.
 
 It is not a C# implementation, it merely provides a type safe interface to access
-the BetterTerrain autoload from C#. If you are not using Godot in C#, you can ignore
+the BetterTileEditor GDScript class from C#. If you are not using Godot in C#, you can ignore
 this file.
 
-The interface is created for a specific tilemap node, which it uses to locate the
-autoload, and to fill in as a parameter to simplify all the subsequent calls.
+The interface is created for a specific tilemap node, which it uses to fill in as a parameter to simplify all the subsequent calls.
 Very simple example:
 
 ```
@@ -60,14 +59,13 @@ public class BetterTerrain
         All = 8 // All rotated and reflected forms
     }
 
-    private static readonly NodePath nodePath = new("/root/BetterTerrain");
-    private readonly Node betterTerrain;
+    private static GodotObject betterTerrain;
     private readonly TileMapLayer tileMapLayer;
 
     public BetterTerrain(TileMapLayer tileMapLayer)
     {
         this.tileMapLayer = tileMapLayer;
-        betterTerrain = tileMapLayer.GetNode(nodePath);
+        betterTerrain ??= GD.Load<GDScript>("res://addons/better-tile-editor/BetterTileEditor.gd");
     }
 
     public Array<Godot.Collections.Dictionary<string, Variant>> GetTerrainCategories()

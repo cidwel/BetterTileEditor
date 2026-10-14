@@ -49,7 +49,7 @@ func update():
 		return
 	
 	name_label.text = terrain.name
-	tooltip_text = "" if terrain.type == BetterTerrain.TerrainType.SINGLE else "%s (%d)" % [terrain.name, terrain.id]
+	tooltip_text = "" if terrain.type == BetterTileEditor.TerrainType.SINGLE else "%s (%d)" % [terrain.name, terrain.id]
 	if terrain.has("tool_icon"):
 		tooltip_text = terrain.get("tool_hint", "")
 	if terrain.has("scene"):
@@ -96,23 +96,23 @@ func update():
 	color_style_decoration.border_width_bottom = 4
 	
 	match terrain.type:
-		BetterTerrain.TerrainType.MATCH_TILES:
+		BetterTileEditor.TerrainType.MATCH_TILES:
 			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/MatchTiles.svg")
-		BetterTerrain.TerrainType.MATCH_VERTICES:
+		BetterTileEditor.TerrainType.MATCH_VERTICES:
 			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/MatchVertices.svg")
-		BetterTerrain.TerrainType.CATEGORY:
+		BetterTileEditor.TerrainType.CATEGORY:
 			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/NonModifying.svg")
-		BetterTerrain.TerrainType.DECORATION:
+		BetterTileEditor.TerrainType.DECORATION:
 			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/Decoration.svg")
-		BetterTerrain.TerrainType.OBJECT:
+		BetterTileEditor.TerrainType.OBJECT:
 			var mass: bool = bool(terrain.get("object", {}).get("mass", false))
 			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/ObjectMass.svg" if mass
 					else "res://addons/better-tile-editor/icons/ObjectTerrain.svg")
-		BetterTerrain.TerrainType.EXEMPLAR:
+		BetterTileEditor.TerrainType.EXEMPLAR:
 			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/Exemplar.svg")
-		BetterTerrain.TerrainType.SCATTER:
+		BetterTileEditor.TerrainType.SCATTER:
 			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/Scatter.svg")
-		BetterTerrain.TerrainType.SINGLE:
+		BetterTileEditor.TerrainType.SINGLE:
 			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/SingleTile.svg")
 		_:
 			type_icon_slot.texture = null
@@ -158,7 +158,7 @@ func update():
 			terrain_icon_slot.queue_redraw()
 			has_icon = true
 	
-	if not has_icon and terrain.type == BetterTerrain.TerrainType.OBJECT:
+	if not has_icon and terrain.type == BetterTileEditor.TerrainType.OBJECT:
 		var block := _lone_block_region()
 		if block.size.x > 0:
 			_terrain_texture = _lone_source
@@ -166,8 +166,8 @@ func update():
 			terrain_icon_slot.queue_redraw()
 			has_icon = true
 
-	if not has_icon and terrain.type == BetterTerrain.TerrainType.SINGLE:
-		var one: Array = BetterTerrain.single_tile_of(tileset, int(terrain.id))
+	if not has_icon and terrain.type == BetterTileEditor.TerrainType.SINGLE:
+		var one: Array = BetterTileEditor.single_tile_of(tileset, int(terrain.id))
 		if one.size() == 3:
 			var src := tileset.get_source(one[0]) as TileSetAtlasSource
 			if src != null and src.get_tile_at_coords(one[1]) == one[1]:
@@ -176,7 +176,7 @@ func update():
 				terrain_icon_slot.queue_redraw()
 				has_icon = true
 
-	if not has_icon and terrain.type == BetterTerrain.TerrainType.SCATTER:
+	if not has_icon and terrain.type == BetterTileEditor.TerrainType.SCATTER:
 		var ScatterTerrain := load("res://addons/better-tile-editor/ScatterTerrain.gd")
 		var bag: Array = ScatterTerrain.config_of(tileset, int(terrain.id)).get("bag", [])
 		if not bag.is_empty():
@@ -189,7 +189,7 @@ func update():
 				terrain_icon_slot.queue_redraw()
 				has_icon = true
 
-	if not has_icon and terrain.type == BetterTerrain.TerrainType.EXEMPLAR:
+	if not has_icon and terrain.type == BetterTileEditor.TerrainType.EXEMPLAR:
 		var drawing := _exemplar_block_region()
 		if drawing.size.x > 0:
 			_terrain_texture = _lone_source
@@ -198,7 +198,7 @@ func update():
 			has_icon = true
 
 	if not has_icon:
-		var tiles = BetterTerrain.get_tile_sources_in_terrain(tileset, terrain.id)
+		var tiles = BetterTileEditor.get_tile_sources_in_terrain(tileset, terrain.id)
 		if tiles.size() > 0:
 			var source := tiles[0].source as TileSetAtlasSource
 			var coord := tiles[0].coord as Vector2i
@@ -276,7 +276,7 @@ func update_style():
 	# Before _ready the nodes are not there; update() styles the entry once they are.
 	if not is_node_ready():
 		return
-	if terrain.type == BetterTerrain.TerrainType.DECORATION:
+	if terrain.type == BetterTileEditor.TerrainType.DECORATION:
 		type_icon_panel.visible = false
 		color_panel.custom_minimum_size = Vector2i(52,52)
 	else:
@@ -284,7 +284,7 @@ func update_style():
 		color_panel.custom_minimum_size = Vector2i(24,24)
 			
 	if grid_mode:
-		if terrain.type == BetterTerrain.TerrainType.DECORATION:
+		if terrain.type == BetterTileEditor.TerrainType.DECORATION:
 			color_panel.add_theme_stylebox_override("panel", color_style_decoration)
 			color_panel.size_flags_vertical = Control.SIZE_FILL
 			icon_layout_container.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -298,7 +298,7 @@ func update_style():
 		name_label.visible = false
 		icon_layout_container.add_theme_constant_override("separation", -24)
 	else:
-		if terrain.type == BetterTerrain.TerrainType.DECORATION:
+		if terrain.type == BetterTileEditor.TerrainType.DECORATION:
 			color_panel.add_theme_stylebox_override("panel", color_style_decoration)
 		else:
 			color_panel.add_theme_stylebox_override("panel", color_style_list)
@@ -318,7 +318,7 @@ func set_scene_thumbnail(texture: Texture2D) -> void:
 
 
 func terrain_id() -> int:
-	return terrain.id if terrain and terrain.has("id") else BetterTerrain.TileCategory.EMPTY
+	return terrain.id if terrain and terrain.has("id") else BetterTileEditor.TileCategory.EMPTY
 
 
 func set_selected(value:bool = true):
@@ -414,7 +414,7 @@ func _on_focus_exited():
 func _make_custom_tooltip(for_text: String) -> Object:
 	if !tileset or !terrain or !terrain.get("valid", false):
 		return null
-	if terrain.type == BetterTerrain.TerrainType.SINGLE or terrain.has("tool_icon"):
+	if terrain.type == BetterTileEditor.TerrainType.SINGLE or terrain.has("tool_icon"):
 		return null
 	var img := _terrain_preview_image()
 	if img == null:
@@ -432,11 +432,11 @@ func _make_custom_tooltip(for_text: String) -> Object:
 func _terrain_preview_image() -> Image:
 	var region := Rect2i()
 	match terrain.type:
-		BetterTerrain.TerrainType.EXEMPLAR:
+		BetterTileEditor.TerrainType.EXEMPLAR:
 			region = _exemplar_block_region()
-		BetterTerrain.TerrainType.OBJECT:
+		BetterTileEditor.TerrainType.OBJECT:
 			region = _lone_block_region()
-		BetterTerrain.TerrainType.SCATTER:
+		BetterTileEditor.TerrainType.SCATTER:
 			return _scatter_patch_image(10)
 		_:
 			return _terrain_patch_image(5, 3)
@@ -497,8 +497,8 @@ func _terrain_patch_image(side: int, face_rows: int) -> Image:
 	for y in side:
 		for x in side:
 			cells.append(Vector2i(x, y))
-	BetterTerrain.set_cells(scratch, cells, terrain.id)
-	BetterTerrain.update_terrain_area(scratch, Rect2i(0, 0, side, side), false)
+	BetterTileEditor.set_cells(scratch, cells, terrain.id)
+	BetterTileEditor.update_terrain_area(scratch, Rect2i(0, 0, side, side), false)
 
 	var objects = load("res://addons/better-tile-editor/ObjectTerrain.gd")
 	if objects != null and objects.has_objects(tileset):

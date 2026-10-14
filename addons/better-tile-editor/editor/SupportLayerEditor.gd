@@ -94,8 +94,8 @@ func _on_lock_changed() -> void:
 
 func _regenerate(layer: TileMapLayer) -> void:
 	var owner_layer := layer.get_parent() as TileMapLayer
-	var bt := get_tree().root.get_node_or_null("BetterTerrain")
-	if owner_layer == null or bt == null:
+	var bt := BetterTileEditor
+	if owner_layer == null:
 		return
 	var label := str(layer.name).trim_prefix("_")
 	match label:

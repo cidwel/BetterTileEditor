@@ -8,7 +8,7 @@ const EDGES_LAYER_NAME := "_ExemplarEdges"
 const OLD_EDGES_LAYER_NAME := "LookupEdges"
 static var _layer_orders := {}
 
-const TYPE_EXEMPLAR := 5   # BetterTerrain.TerrainType.EXEMPLAR
+const TYPE_EXEMPLAR := 5   # BetterTileEditor.TerrainType.EXEMPLAR
 
 
 static func edges_layer(tm: TileMapLayer, create := false) -> TileMapLayer:

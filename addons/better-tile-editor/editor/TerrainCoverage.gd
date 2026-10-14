@@ -60,8 +60,8 @@ static func unsupported(ts: TileSet, terrain_id: int) -> String:
 		return "No tile set."
 	if ts.tile_shape != TileSet.TILE_SHAPE_SQUARE:
 		return "Only square tiles are read for now."
-	var terrain := BetterTerrain.get_terrain(ts, terrain_id)
-	if not terrain.valid or not terrain.type in [BetterTerrain.TerrainType.MATCH_TILES, BetterTerrain.TerrainType.MATCH_VERTICES]:
+	var terrain := BetterTileEditor.get_terrain(ts, terrain_id)
+	if not terrain.valid or not terrain.type in [BetterTileEditor.TerrainType.MATCH_TILES, BetterTileEditor.TerrainType.MATCH_VERTICES]:
 		return "Only Match tiles and Match vertices terrains have pieces to count."
 	return ""
 
@@ -70,14 +70,14 @@ static func transform_mask(mask: int, flags: int) -> int:
 	var out := 0
 	for bit in 16:
 		if mask & (1 << bit):
-			out |= 1 << BetterTerrain.data.peering_bit_after_symmetry(bit, flags)
+			out |= 1 << BetterTileEditor.data.peering_bit_after_symmetry(bit, flags)
 	return out
 
 
 ## The pieces a full set has: 16 for Match vertices or sides only, 47 for a blob.
 static func required(type: int, with_corners: bool) -> Array[int]:
 	var out: Array[int] = []
-	if type == BetterTerrain.TerrainType.MATCH_VERTICES:
+	if type == BetterTileEditor.TerrainType.MATCH_VERTICES:
 		var corners: Array = CORNERS.keys()
 		for set_bits in 16:
 			out.append(_mask_of(corners, set_bits))
@@ -106,7 +106,7 @@ static func _mask_of(bits: Array, pick: int) -> int:
 
 ## A piece as the set reads it: corners off the blob's grid (beside an open side) dropped.
 static func normalize(mask: int, type: int, with_corners: bool) -> int:
-	if type == BetterTerrain.TerrainType.MATCH_VERTICES:
+	if type == BetterTileEditor.TerrainType.MATCH_VERTICES:
 		var out := 0
 		for corner in CORNERS:
 			out |= mask & (1 << corner)
@@ -126,10 +126,10 @@ static func normalize(mask: int, type: int, with_corners: bool) -> int:
 ## The neighbours a tile joins: peering bits naming the terrain or one of its categories.
 static func tile_mask(ts: TileSet, td: TileData, terrain_id: int) -> int:
 	var joins := [terrain_id]
-	joins.append_array(BetterTerrain.get_terrain(ts, terrain_id).get("categories", []))
+	joins.append_array(BetterTileEditor.get_terrain(ts, terrain_id).get("categories", []))
 	var out := 0
 	for bit in 16:
-		var types: Array = BetterTerrain.tile_peering_types(td, bit)
+		var types: Array = BetterTileEditor.tile_peering_types(td, bit)
 		if types.any(func(t): return t in joins):
 			out |= 1 << bit
 	return out
@@ -138,7 +138,7 @@ static func tile_mask(ts: TileSet, td: TileData, terrain_id: int) -> int:
 ## The piece joined all round: the fill.
 static func full_mask(type: int, with_corners: bool) -> int:
 	var out := 0
-	if type != BetterTerrain.TerrainType.MATCH_VERTICES:
+	if type != BetterTileEditor.TerrainType.MATCH_VERTICES:
 		for side in SIDES:
 			out |= 1 << side
 	if with_corners:
@@ -150,17 +150,17 @@ static func full_mask(type: int, with_corners: bool) -> int:
 ## Whether a tile's open bits face what is asked: nothing (no type, or empty), or the other
 ## terrain. A tile of the terrain bordering a third one belongs to neither set.
 static func _faces(ts: TileSet, td: TileData, terrain_id: int, joined: int, other: int) -> bool:
-	var type: int = BetterTerrain.get_terrain(ts, terrain_id).type
-	for bit in BetterTerrain.data.get_terrain_peering_cells(ts, type):
+	var type: int = BetterTileEditor.get_terrain(ts, terrain_id).type
+	for bit in BetterTileEditor.data.get_terrain_peering_cells(ts, type):
 		if joined & (1 << bit):
 			continue
 		# A corner beside an open side doesn't count in a blob, and often has no bits.
-		if type == BetterTerrain.TerrainType.MATCH_TILES and CORNERS.has(bit) \
+		if type == BetterTileEditor.TerrainType.MATCH_TILES and CORNERS.has(bit) \
 				and not CORNERS[bit].all(func(side): return joined & (1 << side)):
 			continue
-		var types: Array = BetterTerrain.tile_peering_types(td, bit)
+		var types: Array = BetterTileEditor.tile_peering_types(td, bit)
 		# A Match tiles corner with no bits isn't read (a terrain of sides only).
-		if type == BetterTerrain.TerrainType.MATCH_TILES and CORNERS.has(bit) and types.is_empty():
+		if type == BetterTileEditor.TerrainType.MATCH_TILES and CORNERS.has(bit) and types.is_empty():
 			continue
 		if other < 0:
 			if types.any(func(t): return t >= 0):
@@ -179,11 +179,11 @@ static func neighbours(ts: TileSet, terrain_id: int) -> Dictionary:
 			continue
 		for t in src.get_tiles_count():
 			var td := src.get_tile_data(src.get_tile_id(t), 0)
-			if BetterTerrain.get_tile_terrain_type(td) != terrain_id:
+			if BetterTileEditor.get_tile_terrain_type(td) != terrain_id:
 				continue
 			var seen := {}
 			for bit in 16:
-				for other: int in BetterTerrain.tile_peering_types(td, bit):
+				for other: int in BetterTileEditor.tile_peering_types(td, bit):
 					if other >= 0 and other != terrain_id:
 						seen[other] = true
 			for other: int in seen:
@@ -197,9 +197,9 @@ static func analyse(ts: TileSet, terrain_id: int, other := -1, corners := false)
 	var error := unsupported(ts, terrain_id)
 	if not error.is_empty():
 		return {error = error}
-	var type: int = BetterTerrain.get_terrain(ts, terrain_id).type
+	var type: int = BetterTileEditor.get_terrain(ts, terrain_id).type
 	var tiles := []
-	var with_corners := type == BetterTerrain.TerrainType.MATCH_VERTICES
+	var with_corners := type == BetterTileEditor.TerrainType.MATCH_VERTICES
 	for s in ts.get_source_count():
 		var source_id := ts.get_source_id(s)
 		var src := ts.get_source(source_id) as TileSetAtlasSource
@@ -210,20 +210,20 @@ static func analyse(ts: TileSet, terrain_id: int, other := -1, corners := false)
 			for a in src.get_alternative_tiles_count(coord):
 				var alt := src.get_alternative_tile_id(coord, a)
 				var td := src.get_tile_data(coord, alt)
-				if BetterTerrain.get_tile_terrain_type(td) != terrain_id:
+				if BetterTileEditor.get_tile_terrain_type(td) != terrain_id:
 					continue
 				var mask := tile_mask(ts, td, terrain_id)
 				if not _faces(ts, td, terrain_id, mask, other):
 					continue
 				tiles.append({source_id = source_id, coord = coord, alt = alt, mask = mask,
-					symmetry = BetterTerrain.get_tile_symmetry_type(td),
-					transforms = BetterTerrain.get_tile_transforms(td)})
+					symmetry = BetterTileEditor.get_tile_symmetry_type(td),
+					transforms = BetterTileEditor.get_tile_transforms(td)})
 				for corner in CORNERS:
 					if mask & (1 << corner):
 						with_corners = true
 	var drawn_corners := with_corners
 	var upgrade := []
-	if corners and not with_corners and type == BetterTerrain.TerrainType.MATCH_TILES:
+	if corners and not with_corners and type == BetterTileEditor.TerrainType.MATCH_TILES:
 		with_corners = true
 		for tile: Dictionary in tiles:
 			var bits := []
@@ -242,7 +242,7 @@ static func analyse(ts: TileSet, terrain_id: int, other := -1, corners := false)
 	for tile: Dictionary in tiles:
 		if tile.alt == 0 and normalize(tile.mask, type, with_corners) == fill:
 			fill_tiles.append(tile)
-		var flags_list: Array = BetterTerrain.data.symmetry_mapping[tile.symmetry].duplicate()
+		var flags_list: Array = BetterTileEditor.data.symmetry_mapping[tile.symmetry].duplicate()
 		for flags: int in tile.transforms:
 			if not flags in flags_list:
 				flags_list.append(flags)

@@ -6,9 +6,9 @@ extends RefCounted
 const META = &"_better_terrain_slopes"
 # tile state from before the set-up took it, restored when released
 const TAKEN_META = &"_better_terrain_slopes_taken"
-const TYPE_MATCH_TILES := 0  # BetterTerrain.TerrainType.MATCH_TILES
-const TYPE_CATEGORY := 2  # BetterTerrain.TerrainType.CATEGORY
-const TYPE_FREE := -2  # BetterTerrain.TileCategory.NON_TERRAIN, a tile with no terrain
+const TYPE_MATCH_TILES := 0  # BetterTileEditor.TerrainType.MATCH_TILES
+const TYPE_CATEGORY := 2  # BetterTileEditor.TerrainType.CATEGORY
+const TYPE_FREE := -2  # BetterTileEditor.TileCategory.NON_TERRAIN, a tile with no terrain
 const MAX_FILL := 64
 # group the terrain list hides
 const HIDDEN_GROUP := "_hidden"

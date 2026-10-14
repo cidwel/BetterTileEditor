@@ -136,7 +136,7 @@ func _sync() -> void:
 
 
 static func _match() -> int:
-	return BetterTerrain.TerrainType.MATCH_TILES
+	return BetterTileEditor.TerrainType.MATCH_TILES
 
 
 func _with_corners() -> bool:

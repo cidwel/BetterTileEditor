@@ -9,10 +9,10 @@ const ObjectTerrain := preload("res://addons/better-tile-editor/ObjectTerrain.gd
 
 const TERRAIN_META = &"_better_terrain"
 const ZONES_META = &"_better_terrain_scatter"
-## The layer's seams (BetterTerrain.SEAM_META): no piece is thrown on them.
+## The layer's seams (BetterTileEditor.SEAM_META): no piece is thrown on them.
 const SEAM_META = &"_better_terrain_seams"
 
-const TYPE_SCATTER := 6  # BetterTerrain.TerrainType.SCATTER
+const TYPE_SCATTER := 6  # BetterTileEditor.TerrainType.SCATTER
 ## Zone key of the cells whose generated piece was removed by hand: no piece covers them.
 ## Kept with the zones so it moves, saves and undoes with them.
 const REMOVED := -1

@@ -62,8 +62,8 @@ static func layout_template(type: int, with_corners: bool) -> Dictionary:
 	var out := {}
 	var add := func(cell: Vector2i, joins: int) -> void:
 		# Match vertices: a corner is the terrain's when its two sides and itself are.
-		var mask := Coverage.normalize(joins, BetterTerrain.TerrainType.MATCH_TILES,
-			with_corners or type == BetterTerrain.TerrainType.MATCH_VERTICES)
+		var mask := Coverage.normalize(joins, BetterTileEditor.TerrainType.MATCH_TILES,
+			with_corners or type == BetterTileEditor.TerrainType.MATCH_VERTICES)
 		mask = Coverage.normalize(mask, type, with_corners)
 		if not out.has(mask):
 			out[mask] = cell
@@ -130,8 +130,8 @@ static func _rest_key(mask: int) -> Array:
 	return [count, sides, mask & ~sides]
 
 
-static func look(mask: int, quarter: int, with_corners: bool, type := BetterTerrain.TerrainType.MATCH_TILES) -> int:
-	if type == BetterTerrain.TerrainType.MATCH_VERTICES:
+static func look(mask: int, quarter: int, with_corners: bool, type := BetterTileEditor.TerrainType.MATCH_TILES) -> int:
+	if type == BetterTileEditor.TerrainType.MATCH_VERTICES:
 		var out := 0
 		for i in 3:
 			if mask & (1 << VERTEX_QUARTERS[quarter][i]):
@@ -177,7 +177,7 @@ static func catalog(ts: TileSet, report: Dictionary, turns: int) -> Dictionary:
 		if region == Vector2i.ZERO or sizes[size] > sizes[region]:
 			region = size
 	var by_look := []
-	var count := 8 if report.type == BetterTerrain.TerrainType.MATCH_VERTICES else Look.size()
+	var count := 8 if report.type == BetterTileEditor.TerrainType.MATCH_VERTICES else Look.size()
 	for quarter in 4:
 		var looks := []
 		for _look in count:
@@ -202,9 +202,9 @@ static func catalog(ts: TileSet, report: Dictionary, turns: int) -> Dictionary:
 static func plan(ts: TileSet, found: Dictionary, mask: int, with_corners: bool, images: Dictionary) -> Array:
 	var options := []
 	for quarter in 4:
-		var kind := look(mask, quarter, with_corners, found.get("type", BetterTerrain.TerrainType.MATCH_TILES))
+		var kind := look(mask, quarter, with_corners, found.get("type", BetterTileEditor.TerrainType.MATCH_TILES))
 		var list: Array = found.by_look[quarter][kind]
-		if list.is_empty() and kind == Look.INNER and found.get("type") == BetterTerrain.TerrainType.MATCH_TILES:
+		if list.is_empty() and kind == Look.INNER and found.get("type") == BetterTileEditor.TerrainType.MATCH_TILES:
 			list = _inner_from_edges(found, quarter)
 		if list.is_empty():
 			return []
@@ -427,7 +427,7 @@ static func file_for(ts: TileSet, terrain_name: String, source_id: int, other_na
 ## that fails).
 static func build_source(ts: TileSet, terrain_id: int, pieces: Array, size: Vector2i, path: String) -> TileSetAtlasSource:
 	var sheets := {}
-	var cells := layout(pieces, BetterTerrain.get_terrain(ts, terrain_id).type)
+	var cells := layout(pieces, BetterTileEditor.get_terrain(ts, terrain_id).type)
 	var extent := Vector2i.ONE
 	for cell in cells:
 		extent = extent.max(cell + Vector2i.ONE)
@@ -446,7 +446,7 @@ static func build_source(ts: TileSet, terrain_id: int, pieces: Array, size: Vect
 	var src := TileSetAtlasSource.new()
 	src.texture = texture
 	src.texture_region_size = size
-	src.set_meta(GENERATED_META, {terrain = BetterTerrain.get_terrain(ts, terrain_id).name, file = path})
+	src.set_meta(GENERATED_META, {terrain = BetterTileEditor.get_terrain(ts, terrain_id).name, file = path})
 	for cell in cells:
 		src.create_tile(cell)
 	return src
@@ -457,21 +457,21 @@ static func build_source(ts: TileSet, terrain_id: int, pieces: Array, size: Vect
 static func fill_source(ts: TileSet, src: TileSetAtlasSource, terrain_id: int, pieces: Array, shapes := {},
 		other := -1, with_corners := true) -> void:
 	var sheets := {}
-	var type: int = BetterTerrain.get_terrain(ts, terrain_id).type
+	var type: int = BetterTileEditor.get_terrain(ts, terrain_id).type
 	var facing := []
 	if other >= 0:
-		for bit in BetterTerrain.data.get_terrain_peering_cells(ts, type):
-			if type == BetterTerrain.TerrainType.MATCH_VERTICES or Coverage.SIDES.has(bit) or with_corners:
+		for bit in BetterTileEditor.data.get_terrain_peering_cells(ts, type):
+			if type == BetterTileEditor.TerrainType.MATCH_VERTICES or Coverage.SIDES.has(bit) or with_corners:
 				facing.append(bit)
 	var cells := layout(pieces, type)
 	for i in pieces.size():
 		var td := src.get_tile_data(cells[i], 0)
-		BetterTerrain.set_tile_terrain_type(ts, td, terrain_id)
+		BetterTileEditor.set_tile_terrain_type(ts, td, terrain_id)
 		for bit in 16:
 			if pieces[i].mask & (1 << bit):
-				BetterTerrain.add_tile_peering_type(ts, td, bit, terrain_id)
+				BetterTileEditor.add_tile_peering_type(ts, td, bit, terrain_id)
 			elif bit in facing:
-				BetterTerrain.add_tile_peering_type(ts, td, bit, other)
+				BetterTileEditor.add_tile_peering_type(ts, td, bit, other)
 		if shapes.get("off", false):
 			continue
 		# Filled again on every redo, so nothing piles up.
@@ -515,7 +515,7 @@ static func quarter_shapes(ts: TileSet, quarters: Array, size: Vector2i, layer: 
 static func piece_shapes(image: Image, mask: int, shapes: Dictionary) -> Array:
 	if shapes.get("mode") == SHAPES_STRIP:
 		return strip_shapes(mask, image.get_size(), float(shapes.get("strip", 2)),
-			shapes.get("type", BetterTerrain.TerrainType.MATCH_TILES), shapes.get("with_corners", true))
+			shapes.get("type", BetterTileEditor.TerrainType.MATCH_TILES), shapes.get("with_corners", true))
 	return art_shapes(image, shapes.get("mode", SHAPES_FULL))
 
 
@@ -528,7 +528,7 @@ static func strip_shapes(mask: int, size: Vector2i, depth: float, type: int, wit
 	var d := clampf(depth, 1.0, minf(w, h))
 	var rects: Array[Rect2] = []
 	var joined := func(bit: int) -> bool: return mask & (1 << bit) != 0
-	if type == BetterTerrain.TerrainType.MATCH_VERTICES:
+	if type == BetterTileEditor.TerrainType.MATCH_VERTICES:
 		var halves := {
 			TileSet.CELL_NEIGHBOR_TOP_LEFT_CORNER: [Rect2(0, 0, w / 2, d), Rect2(0, 0, d, h / 2)],
 			TileSet.CELL_NEIGHBOR_TOP_RIGHT_CORNER: [Rect2(w / 2, 0, w / 2, d), Rect2(w - d, 0, d, h / 2)],

@@ -55,7 +55,7 @@ var terrain_object : Dictionary:
 		if !_size_spin[0]:
 			return {}
 		var object_size := Vector2i(int(_size_spin[0].value), int(_size_spin[1].value))
-		if terrain_type != BetterTerrain.TerrainType.OBJECT:
+		if terrain_type != BetterTileEditor.TerrainType.OBJECT:
 			return {}
 		return ObjectTerrain.make_config(object_size, _lone_coord,
 				_object_preview != null and _object_preview.mass, _base_rect())
@@ -142,7 +142,7 @@ func _sync_group_option() -> void:
 	_group_option.set_item_metadata(0, "")
 
 	var selected := 0
-	for g in BetterTerrain.get_terrain_groups(_tileset):
+	for g in BetterTileEditor.get_terrain_groups(_tileset):
 		var item := _group_option.item_count
 		_group_option.add_item(g.name)
 		_group_option.set_item_metadata(item, g.name)
@@ -246,7 +246,7 @@ func _terrain_tiles() -> Array:
 	for i in _tileset.get_source_count():
 		var id := _tileset.get_source_id(i)
 		source_ids[_tileset.get_source(id)] = id
-	for t in BetterTerrain.get_tile_sources_in_terrain(_tileset, _icon_terrain_id):
+	for t in BetterTileEditor.get_tile_sources_in_terrain(_tileset, _icon_terrain_id):
 		if source_ids.has(t.source):
 			out.push_back({source_id = source_ids[t.source], coord = t.coord})
 	return out
@@ -316,7 +316,7 @@ func set_categories(ids : Array):
 
 func get_categories() -> Array:
 	var result := []
-	if terrain_type == BetterTerrain.TerrainType.CATEGORY:
+	if terrain_type == BetterTileEditor.TerrainType.CATEGORY:
 		return result
 	for c in %CategoryLayout.get_children():
 		if c.button_pressed:
@@ -362,7 +362,7 @@ func _on_confirmed() -> void:
 
 func _on_type_option_item_selected(index: int) -> void:
 	var id : int = %TypeOption.get_item_id(index) if index >= 0 else 0
-	var categories_available = (id != BetterTerrain.TerrainType.CATEGORY)
+	var categories_available = (id != BetterTileEditor.TerrainType.CATEGORY)
 	_sync_help_button()
 	for c in %CategoryLayout.get_children():
 		c.disabled = !categories_available
@@ -377,9 +377,9 @@ func set_object_data(ts: TileSet, terrain_id: int = -1) -> void:
 		%NameEdit.text_changed.connect(func(_t: String): _check_name())
 	_check_name()
 
-	_add_type_option(BetterTerrain.TerrainType.OBJECT, "Object (NxM)", object_icon)
-	_add_type_option(BetterTerrain.TerrainType.EXEMPLAR, "Patch", exemplar_icon)
-	_add_type_option(BetterTerrain.TerrainType.SCATTER, "Scatter", scatter_icon)
+	_add_type_option(BetterTileEditor.TerrainType.OBJECT, "Object (NxM)", object_icon)
+	_add_type_option(BetterTileEditor.TerrainType.EXEMPLAR, "Patch", exemplar_icon)
+	_add_type_option(BetterTileEditor.TerrainType.SCATTER, "Scatter", scatter_icon)
 	_wrap_type_row()
 
 	if _obj_rows.is_empty():
@@ -467,10 +467,10 @@ var _name_watch := false
 func _name_taken(candidate: String) -> bool:
 	if _tileset == null or candidate.is_empty():
 		return false
-	for i in BetterTerrain.terrain_count(_tileset):
+	for i in BetterTileEditor.terrain_count(_tileset):
 		if i == _terrain_id:
 			continue
-		if BetterTerrain.get_terrain(_tileset, i).get("name", "") == candidate:
+		if BetterTileEditor.get_terrain(_tileset, i).get("name", "") == candidate:
 			return true
 	return false
 
@@ -531,7 +531,7 @@ func _base_rect() -> Rect2i:
 func _sync_object_row() -> void:
 	if _obj_rows.is_empty():
 		return
-	var visible_rows: bool = terrain_type == BetterTerrain.TerrainType.OBJECT
+	var visible_rows: bool = terrain_type == BetterTileEditor.TerrainType.OBJECT
 	for row in _obj_rows:
 		row[0].visible = visible_rows
 		row[1].visible = visible_rows
@@ -561,7 +561,7 @@ func _refresh_blocks() -> void:
 	var object_size := Vector2i(int(_size_spin[0].value), int(_size_spin[1].value))
 	var blocks := ObjectTerrain.detect_blocks(_tileset, _terrain_id, object_size) if _terrain_id >= 0 else []
 	if _terrain_id >= 0:
-		var t = BetterTerrain.get_terrain(_tileset, _terrain_id)
+		var t = BetterTileEditor.get_terrain(_tileset, _terrain_id)
 		var lone: Array = t.get("object", {}).get("lone", []) if t.valid else []
 		if lone.size() == 2:
 			_lone_coord = Vector2i(lone[0], lone[1])
@@ -584,7 +584,7 @@ func _refresh_blocks() -> void:
 
 	var as_area: bool = _object_preview != null and _object_preview.mass
 	for row in _base_rows:
-		row[0].visible = as_area and terrain_type == BetterTerrain.TerrainType.OBJECT
+		row[0].visible = as_area and terrain_type == BetterTileEditor.TerrainType.OBJECT
 		row[1].visible = row[0].visible
 	var tall: bool = object_size.y > object_size.x
 	if _terrain_id < 0:
