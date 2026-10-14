@@ -105,6 +105,17 @@ To track the latest changes instead, copy `addons/better-tile-editor` from
 
 ## Changelog
 
+### 0.3.1 (2026-10-14)
+
+- The API is now the global class `BetterTileEditor`, with no autoload. This fixes the editor failing to load right after installing in Godot 4.7.
+- Projects that call the old `BetterTerrain` autoload keep working. Options > Migrate off the BetterTerrain autoload rewrites those scripts and removes it.
+- Cliff faces block nothing where the ground covers them, where they hang over the void, or beside stairs and ropes, and the collision overlay shows it.
+- The collision overlay skips layers with collision disabled and draws the edges a layer walls off, with arrows for the hops off them.
+- Buried tiles: a Select tool button picks the tiles hidden under a wall or cliff face that nothing can walk onto. The Delete key removes them.
+- Scattered pieces can be picked from the map and erased one by one.
+- Scatter zones follow their terrain when terrains are reordered or removed, and renaming a scatter terrain keeps its bag.
+- Undo keeps a terrain's group and object config, and hiding generated tiles also hides their sources.
+
 ### 0.3.0 (2026-10-11)
 
 - Seams: mark cells where a terrain stops joining, to break it on purpose. They also work at runtime.
