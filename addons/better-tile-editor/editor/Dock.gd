@@ -653,7 +653,10 @@ func perform_move_terrain(from: int, to: int, group: String) -> void:
 	var step := 1 if to > from else -1
 	var i := from
 	while i != to:
-		BetterTerrain.swap_terrains(tileset, i, i + step)
+		if BetterTerrain.swap_terrains(tileset, i, i + step):
+			var a := i
+			var b := i + step
+			_renumber_scatter_zones(func(id): return b if id == a else (a if id == b else id))
 		i += step
 	var t := BetterTerrain.get_terrain(tileset, to)
 	if String(t.group) != group:
@@ -802,38 +805,7 @@ func _tiles_changed_timed() -> void:
 	
 	rebuild_terrain_list()
 
-	source_selector_popup.clear()
-	source_selector_popup.add_item("All", SourceSelectors.ALL)
-	source_selector_popup.add_item("None", SourceSelectors.NONE)
-	var source_count = tileset.get_source_count() if tileset else 0
-	for s in source_count:
-		var source_id = tileset.get_source_id(s)
-		var source := tileset.get_source(source_id)
-		if !(source is TileSetAtlasSource):
-			continue
-		
-		var source_name := source.resource_name
-		if source_name.is_empty():
-			var texture := (source as TileSetAtlasSource).texture
-			var texture_name := texture.resource_name if texture else ""
-			if !texture_name.is_empty():
-				source_name = texture_name
-			else:
-				var texture_path := texture.resource_path if texture else ""
-				if !texture_path.is_empty():
-					source_name = texture_path.get_file()
-		
-		if !source_name.is_empty():
-			source_name += " "
-		source_name += " (ID: %d)" % source_id
-		
-		source_selector_popup.add_check_item(source_name, source_id)
-		
-		source_selector_popup.set_item_checked(
-			source_selector_popup.get_item_index(source_id),
-			not tile_view.disabled_sources.has(source_id)
-		)
-	source_selector.visible = source_selector_popup.item_count > 3 # All, None and more than one source
+	_rebuild_source_selector()
 	
 	update_tile_view_paint()
 	tile_view.refresh_tileset(tileset)
@@ -881,6 +853,43 @@ func about_to_be_visible(becoming_visible: bool) -> void:
 	var settings := EditorInterface.get_editor_settings()
 	layer_highlight.set_pressed_no_signal(settings.get_setting("editors/tiles_editor/highlight_selected_layer"))
 	layer_grid.set_pressed_no_signal(settings.get_setting("editors/tiles_editor/display_grid"))
+
+
+func _rebuild_source_selector() -> void:
+	source_selector_popup.clear()
+	source_selector_popup.add_item("All", SourceSelectors.ALL)
+	source_selector_popup.add_item("None", SourceSelectors.NONE)
+	var source_count = tileset.get_source_count() if tileset else 0
+	for s in source_count:
+		var source_id = tileset.get_source_id(s)
+		var source := tileset.get_source(source_id)
+		if !(source is TileSetAtlasSource):
+			continue
+		if tile_view.hide_generated and source.has_meta(QUARTER_PIECES.GENERATED_META):
+			continue
+		
+		var source_name := source.resource_name
+		if source_name.is_empty():
+			var texture := (source as TileSetAtlasSource).texture
+			var texture_name := texture.resource_name if texture else ""
+			if !texture_name.is_empty():
+				source_name = texture_name
+			else:
+				var texture_path := texture.resource_path if texture else ""
+				if !texture_path.is_empty():
+					source_name = texture_path.get_file()
+		
+		if !source_name.is_empty():
+			source_name += " "
+		source_name += " (ID: %d)" % source_id
+		
+		source_selector_popup.add_check_item(source_name, source_id)
+		
+		source_selector_popup.set_item_checked(
+			source_selector_popup.get_item_index(source_id),
+			not tile_view.disabled_sources.has(source_id)
+		)
+	source_selector.visible = source_selector_popup.item_count > 3 # All, None and more than one source
 
 
 func queue_tiles_changed() -> void:
@@ -1318,7 +1327,12 @@ func _on_edit_terrain_pressed() -> void:
 	await popup.visibility_changed
 	if popup.accepted:
 		undo_manager.create_action("Edit terrain details", UndoRedo.MERGE_DISABLE, tileset)
-		undo_manager.add_do_method(self, &"perform_edit_terrain", selected_entry, popup.terrain_name, popup.terrain_color, popup.terrain_type, popup.terrain_categories, popup.terrain_icon_data(), popup.terrain_group, popup.terrain_object)
+		# The dialog only edits an Object's config; any other kind keeps its own (a scatter's bag)
+		# while its type stays, or renaming a scatter terrain emptied its bag.
+		var object: Dictionary = popup.terrain_object
+		if popup.terrain_type != BetterTerrain.TerrainType.OBJECT:
+			object = t.get("object", {}) if popup.terrain_type == t.type else {}
+		undo_manager.add_do_method(self, &"perform_edit_terrain", selected_entry, popup.terrain_name, popup.terrain_color, popup.terrain_type, popup.terrain_categories, popup.terrain_icon_data(), popup.terrain_group, object)
 		undo_manager.add_undo_method(self, &"perform_edit_terrain", selected_entry, t.name, t.color, t.type, t.categories, t.icon, t.group, t.get("object", {}))
 		if t.type != popup.terrain_type:
 			terrain_undo.create_terrain_type_restore_point(undo_manager, tileset)
@@ -1441,7 +1455,7 @@ func _on_remove_terrain_pressed() -> void:
 	elif confirmed[0]:
 		undo_manager.create_action("Remove terrain type", UndoRedo.MERGE_DISABLE, tileset)
 		undo_manager.add_do_method(self, &"perform_remove_terrain", selected_entry)
-		undo_manager.add_undo_method(self, &"perform_add_terrain", t.name, t.color, t.type, t.categories, t.icon, t.group)
+		undo_manager.add_undo_method(self, &"perform_add_terrain", t.name, t.color, t.type, t.categories, t.icon, t.group, t.get("object", {}))
 		for n in range(BetterTerrain.terrain_count(tileset) - 1, selected_entry, -1):
 			undo_manager.add_undo_method(self, &"perform_swap_terrain", n, n - 1)
 		# Undo runs in the order added: the atlases come back before their tiles' bits do.
@@ -1906,8 +1920,37 @@ func perform_remove_terrain(index: int) -> void:
 	if index >= BetterTerrain.terrain_count(tileset):
 		return
 	if BetterTerrain.remove_terrain(tileset, index):
+		_renumber_scatter_zones(func(id): return -2 if id == index else (id - 1 if id > index else id))
 		rebuild_terrain_list()
 		update_tile_view_paint()
+
+
+## The scatter zones of the edited scene's layers keep terrain ids: when the tile set renumbers its
+## terrains they follow, through [param renumber] (old id → new id, -2 drops the zone). Otherwise a
+## zone points at whatever terrain ends up with its old number, and the next rebuild empties it.
+## Scenes that aren't open keep their old numbers.
+func _renumber_scatter_zones(renumber: Callable) -> void:
+	var root := EditorInterface.get_edited_scene_root()
+	if root == null or tileset == null:
+		return
+	var layers: Array = root.find_children("*", "TileMapLayer", true, false)
+	if root is TileMapLayer:
+		layers.push_front(root)
+	for layer: TileMapLayer in layers:
+		if layer.tile_set != tileset or SUPPORT_LAYERS.is_support(layer):
+			continue
+		var zones := SCATTER_TERRAIN.zones_of(layer)
+		if zones.is_empty():
+			continue
+		var renumbered := {}
+		var changed := false
+		for id in zones:
+			var to: int = int(id) if int(id) == SCATTER_TERRAIN.REMOVED else int(renumber.call(int(id)))
+			changed = changed or to != int(id)
+			if to != -2:
+				renumbered[to] = zones[id]
+		if changed:
+			SCATTER_TERRAIN.set_zones(layer, renumbered)
 
 
 func perform_swap_terrain(index1: int, index2: int) -> void:
@@ -1918,6 +1961,7 @@ func perform_swap_terrain(index1: int, index2: int) -> void:
 		return
 
 	if BetterTerrain.swap_terrains(tileset, lower, higher):
+		_renumber_scatter_zones(func(id): return higher if id == lower else (lower if id == higher else id))
 		selected_entry = index2
 		rebuild_terrain_list()
 		update_tile_view_paint()
@@ -2552,6 +2596,21 @@ func _canvas_input(event: InputEvent) -> bool:
 			update_overlay.emit()
 			return true
 
+		# Erasing with the tile of a scattered piece (picked off the map) takes those pieces off,
+		# like Ctrl with the scatter terrain: not the layer's own tile under them, and not the zone,
+		# whose edge margin would then empty every cell around the hole.
+		if _is_single(type) and paint_mode == PaintMode.ERASE \
+				and paint_action == PaintAction.NO_ACTION and draw_button.button_pressed:
+			var hit := _scattered_with_brush(type, _brush_cells(_get_tileset_line(prev_position, current_position, tileset)))
+			if not hit.is_empty():
+				undo_manager.create_action(tr("Remove scatter tiles") + str(terrain_undo.action_index), UndoRedo.MERGE_ALL, tilemap, true)
+				terrain_undo.add_do_method(undo_manager, SCATTER_TERRAIN, &"add_cells", [tilemap, SCATTER_TERRAIN.REMOVED, hit])
+				undo_manager.add_undo_method(SCATTER_TERRAIN, &"remove_cells", tilemap, SCATTER_TERRAIN.REMOVED, hit)
+				undo_manager.commit_action()
+				terrain_undo.action_count += 1
+				update_overlay.emit()
+				return true
+
 		# Right-click with the pencil erases the zone; with Ctrl it removes the generated pieces
 		# under it instead, to fine-tune a roll. The ground stays.
 		if _is_scatter(type) and paint_mode == PaintMode.ERASE \
@@ -2611,6 +2670,20 @@ func _canvas_input(event: InputEvent) -> bool:
 		return true
 	
 	return false
+
+
+## The cells among [param cells] where this layer's scatter put a piece of the single-tile
+## brush [param type]'s tile.
+func _scattered_with_brush(type: int, cells: Array) -> Array:
+	var decor := SCATTER_TERRAIN.find_layer(tilemap)
+	if decor == null:
+		return []
+	var block: Dictionary = BetterTerrain.single_block_of(tileset, type)
+	if block.is_empty():
+		return []
+	var rect := Rect2i(block.origin, block.size)
+	return cells.filter(func(c): return decor.get_cell_source_id(c) == block.source \
+		and rect.has_point(decor.get_cell_atlas_coords(c)))
 
 
 func _add_post_process(cells: Array, erasing: bool, merged: bool) -> void:
@@ -3126,9 +3199,12 @@ func _pick_at_timed(cell: Vector2i) -> void:
 		if _picker_active() and _tool_before_pick != null:
 			_tool_before_pick.button_pressed = true
 		return
-	if entries.size() > 1:
+	if entries.size() > 1 or (entries.size() == 1 and entries[0].has("target")):
 		if _picker_active() and _tool_before_pick != null:
 			_tool_before_pick.button_pressed = true
+		if entries.size() == 1:
+			_pick_from_entry(entries[0])
+			return
 		_popup_layer_menu(entries, 0, &"pick", false)
 		return
 	var layer := tilemap
@@ -3225,8 +3301,10 @@ func _pick_entries(cell: Vector2i) -> Array:
 	if tilemap == null or not tilemap.is_inside_tree():
 		return []
 	var root := EditorInterface.get_edited_scene_root()
-	var entries := []
-	for hit in _layers_at(tilemap.to_global(tilemap.map_to_local(cell))):
+	var point := tilemap.to_global(tilemap.map_to_local(cell))
+	# Scattered pieces are drawn in front of their layer, so they come first.
+	var entries := _scatter_piece_entries(point, root)
+	for hit in _layers_at(point):
 		var layer: TileMapLayer = hit[0]
 		var label := str(layer.name) if layer == root else str(root.get_path_to(layer))
 		entries.append({kind = &"layer", layer = layer, cell = hit[1], label = label})
@@ -3239,11 +3317,55 @@ func _pick_entries(cell: Vector2i) -> Array:
 	return entries
 
 
+## A row for each piece scattered under [param point] (the generated _ScatterDecor layers'
+## tiles), and one for the scatter terrain that put it there. Without them a piece was not
+## pickable at all: a support layer answers for its owner, whose own tile (or nothing) was read.
+func _scatter_piece_entries(point: Vector2, root: Node) -> Array:
+	var entries := []
+	if root == null:
+		return entries
+	for found in root.find_children("*", "TileMapLayer", true, false):
+		var decor: TileMapLayer = found
+		if str(decor.name) != SCATTER_TERRAIN.LAYER_NAME or not SUPPORT_LAYERS.is_support(decor) \
+				or not decor.is_visible_in_tree() or decor.tile_set == null:
+			continue
+		var owner_layer := decor.get_parent() as TileMapLayer
+		if owner_layer != root and owner_layer.owner != root:
+			continue
+		var c := decor.local_to_map(decor.to_local(point))
+		if decor.get_cell_source_id(c) == -1:
+			continue
+		var path := str(owner_layer.name) if owner_layer == root else str(root.get_path_to(owner_layer))
+		entries.append({kind = &"layer", layer = decor, target = owner_layer, cell = c,
+			label = "%s (%s)" % [path, tr("scattered")]})
+		for id in SCATTER_TERRAIN.cells_in_any(owner_layer, [c]):
+			if id == SCATTER_TERRAIN.REMOVED:
+				continue
+			var terrain := BetterTerrain.get_terrain(owner_layer.tile_set, id)
+			entries.append({kind = &"terrain", layer = decor, target = owner_layer, cell = c, terrain = id,
+				label = str(terrain.name), color = terrain.color})
+			break
+	return entries
+
+
 ## Picks from the layer chosen in the menu, making it the edited one when it is another. A
 ## tile row takes the tile as a loose tile; a terrain row takes its terrain.
+## A scattered piece's rows read their generated layer and edit its owner ([code]target[/code]).
 func _pick_from_entry(entry: Dictionary) -> void:
 	var layer: TileMapLayer = entry.layer
 	if not is_instance_valid(layer):
+		return
+	if entry.has("target"):
+		var target: TileMapLayer = entry.target
+		if not is_instance_valid(target):
+			return
+		if target != tilemap:
+			var selection := EditorInterface.get_selection()
+			selection.clear()
+			selection.add_node(target)
+			EditorInterface.edit_node(target)
+		# The dock may switch tileset first, so pick deferred.
+		_pick_scattered.call_deferred(entry)
 		return
 	var as_tile: bool = entry.kind == &"layer"
 	if layer != tilemap:
@@ -3255,6 +3377,20 @@ func _pick_from_entry(entry: Dictionary) -> void:
 		_pick_from.call_deferred(layer, entry.cell, as_tile)
 		return
 	_pick_from(layer, entry.cell, as_tile)
+
+
+func _pick_scattered(entry: Dictionary) -> void:
+	var decor: TileMapLayer = entry.layer
+	if not is_instance_valid(decor) or decor.tile_set != tileset:
+		return
+	if entry.kind == &"terrain":
+		_select_entry(entry.terrain)
+		var source_id := decor.get_cell_source_id(entry.cell)
+		if tileset.has_source(source_id) and tileset.get_source(source_id) is TileSetAtlasSource:
+			_center_atlas_on.call_deferred(source_id, decor.get_cell_atlas_coords(entry.cell), Vector2i.ONE)
+		update_overlay.emit()
+		return
+	_pick_from(decor, entry.cell, true)
 
 
 ## The cells of [param layer] holding the same tile as [param cell].
@@ -5671,6 +5807,8 @@ func _set_option(enabled: bool, setting: String) -> void:
 	if setting == HIDE_GENERATED_SETTING:
 		tile_view.hide_generated = enabled
 		tile_view.queue_redraw()
+		if tileset:
+			_rebuild_source_selector()
 	if setting == HIDE_UNTILED_SETTING:
 		tile_view.show_untiled = not enabled
 	zoom_slider_container.visible = bool(settings.get_setting(SHOW_ZOOM_SETTING))
@@ -7440,6 +7578,7 @@ func _collision_mark_cells(cells: Array) -> void:
 
 
 ## Visible layers of the edited scene drawn with this tile set, selected layer included.
+## The overlay leaves out those with collision disabled; picking a tile still sees them.
 func _collision_layers() -> Array:
 	var out: Array = []
 	var root: Node = EditorInterface.get_edited_scene_root() if tilemap.is_inside_tree() else null
@@ -7607,6 +7746,7 @@ func _draw_map_collisions(overlay: Control, transform: Transform2D) -> void:
 	var mesh := _map_collision_mesh(transform)
 	if not mesh.indices.is_empty():
 		RenderingServer.canvas_item_add_triangle_array(overlay.get_canvas_item(), mesh.indices, mesh.points, mesh.colors)
+	_draw_level_edges(overlay, transform)
 	if _collision_tip_ready and not _collision_stroking:
 		_draw_collision_tip(overlay, _collision_hits_at(transform.affine_inverse() * _collision_tip_at))
 	_draw_hover_cell(overlay, transform)
@@ -7645,6 +7785,8 @@ func _map_collision_mesh(transform: Transform2D) -> Dictionary:
 			.expand(tilemap.to_global(tilemap.map_to_local(_view_cells.end)))
 		var to_overlay := transform * tilemap.global_transform.affine_inverse()
 		for map_layer: TileMapLayer in _collision_layers():
+			if not map_layer.collision_enabled:
+				continue
 			var lo := map_layer.local_to_map(map_layer.to_local(view_world.position)) - Vector2i.ONE
 			var hi := map_layer.local_to_map(map_layer.to_local(view_world.end)) + Vector2i.ONE
 			var area := Rect2i(lo, hi - lo).intersection(map_layer.get_used_rect())
@@ -7656,7 +7798,7 @@ func _map_collision_mesh(transform: Transform2D) -> Dictionary:
 			var layer_transform := to_overlay * map_layer.global_transform
 			for c: Vector2i in cells:
 				var source_id := map_layer.get_cell_source_id(c)
-				if source_id < 0:
+				if source_id < 0 or _collision_hidden(map_layer, c):
 					continue
 				var coords := map_layer.get_cell_atlas_coords(c)
 				var alt := map_layer.get_cell_alternative_tile(c)
@@ -7669,6 +7811,50 @@ func _map_collision_mesh(transform: Transform2D) -> Dictionary:
 					for polygon: PackedVector2Array in shapes[key]:
 						COLLISIONS.add_to_mesh(mesh, cell_transform * polygon, drawn[physics])
 	return mesh
+
+## Edges a layer walls off at runtime, and the hops off them, for layers that report them through
+## cliff_hops_at(cell) -> [[direction: Vector2i, landing: Vector2i or null], ...]: a line along each
+## walled side, and an arrow from it to where a hop lands.
+func _draw_level_edges(overlay: Control, transform: Transform2D) -> void:
+	if _collision_physics_layer() < 0 or not COLLISIONS.overlay_on_map():
+		return
+	var wall_color := COLLISIONS.overlay_color()
+	wall_color.a = 0.9
+	var hop_color := Color(1.0, 0.85, 0.2, 0.9)
+	var view_world := Rect2(tilemap.to_global(tilemap.map_to_local(_view_cells.position)), Vector2.ZERO) \
+		.expand(tilemap.to_global(tilemap.map_to_local(_view_cells.end)))
+	var to_overlay := transform * tilemap.global_transform.affine_inverse()
+	for map_layer: TileMapLayer in _collision_layers():
+		if not map_layer.collision_enabled or not map_layer.has_method(&"cliff_hops_at"):
+			continue
+		var lo := map_layer.local_to_map(map_layer.to_local(view_world.position)) - Vector2i.ONE
+		var hi := map_layer.local_to_map(map_layer.to_local(view_world.end)) + Vector2i.ONE
+		var area := Rect2i(lo, hi - lo).intersection(map_layer.get_used_rect())
+		if not area.has_area() or area.get_area() > MAX_COLLISION_SCAN:
+			continue
+		var layer_transform := to_overlay * map_layer.global_transform
+		var half := Vector2(map_layer.tile_set.tile_size) / 2
+		for c: Vector2i in _cells_in_area(Rect2i(area.position, area.size - Vector2i.ONE)):
+			if map_layer.get_cell_source_id(c) < 0:
+				continue
+			for entry: Array in map_layer.cliff_hops_at(c):
+				var dir := Vector2(entry[0])
+				var side := map_layer.map_to_local(c) + dir * half
+				var along := Vector2(dir.y, dir.x) * half
+				overlay.draw_line(layer_transform * (side - along), layer_transform * (side + along), wall_color, 2.0)
+				if entry[1] == null:
+					continue
+				var tip := layer_transform * map_layer.map_to_local(entry[1])
+				var start := layer_transform * side
+				overlay.draw_line(start, tip, hop_color, 1.5)
+				var back := (start - tip).normalized() * 5.0
+				overlay.draw_line(tip, tip + back.rotated(0.5), hop_color, 1.5)
+				overlay.draw_line(tip, tip + back.rotated(-0.5), hop_color, 1.5)
+
+
+## A cell whose layer takes its collision away at runtime (cliff faces under their own ground).
+static func _collision_hidden(map_layer: TileMapLayer, c: Vector2i) -> bool:
+	return map_layer.has_method(&"collision_hidden_at") and map_layer.collision_hidden_at(c)
 
 ## The tile data a map cell draws, flips taken off the alternative id, or null.
 func _cell_tile_data(source_id: int, coords: Vector2i, alt: int) -> TileData:
@@ -7685,10 +7871,12 @@ func _collision_hits_at(point: Vector2) -> Array:
 	var hits := []
 	var world := tilemap.to_global(point)
 	for map_layer: TileMapLayer in _collision_layers():
+		if not map_layer.collision_enabled:
+			continue
 		var local := map_layer.to_local(world)
 		var c := map_layer.local_to_map(local)
 		var source_id := map_layer.get_cell_source_id(c)
-		if source_id < 0:
+		if source_id < 0 or _collision_hidden(map_layer, c):
 			continue
 		var coords := map_layer.get_cell_atlas_coords(c)
 		var alt := map_layer.get_cell_alternative_tile(c)
