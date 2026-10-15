@@ -997,7 +997,7 @@ func _on_live_test_toggled(pressed: bool) -> void:
 
 	var used_cells := tilemap.get_used_cells()
 	if not used_cells.any(func(c): return BetterTileEditor.get_cell(tilemap, c) >= 0):
-		push_warning("[Live test] None of this layer's tiles has a terrain type assigned in the TileSet, so there is nothing to reconnect. Assign terrains to those tiles in the BetterTileEditor editor.")
+		push_warning("[Live test] None of this layer's tiles has a terrain type assigned in the TileSet, so there is nothing to reconnect. Assign terrains to those tiles in Better Tile Editor.")
 
 	undo_manager.create_action(tr("Re-solve terrain layer"), UndoRedo.MERGE_DISABLE, tilemap)
 	undo_manager.add_do_method(BetterTileEditor, &"update_terrain_area", tilemap, area)
@@ -3090,6 +3090,13 @@ func _add_map_select_button() -> void:
 		"whose collision keeps anyone from walking onto them. The Delete key will remove them."
 	buried.pressed.connect(_select_buried)
 	_map_select_shapes.add_child(buried)
+	_map_clear_cliffs = CheckBox.new()
+	_map_clear_cliffs.name = "ClearOnCliffs"
+	_map_clear_cliffs.text = "Clear on cliffs"
+	_map_clear_cliffs.tooltip_text = "Buried tiles also picks the ground under a cliff face.\n" + \
+		"That ground is what gives the face its collision: without it the wall turns into a drop."
+	_map_clear_cliffs.focus_mode = Control.FOCUS_NONE
+	_map_select_shapes.add_child(_map_clear_cliffs)
 	_map_select_shapes.hide()
 	_map_target_layer = CheckBox.new()
 	_map_target_layer.name = "TargetLayer"
@@ -3684,6 +3691,7 @@ var _map_select: Button
 var _map_select_shapes: HBoxContainer
 var _map_wand: Button
 var _map_target_layer: CheckBox
+var _map_clear_cliffs: CheckBox
 var _map_select_from := Vector2i.ZERO
 var _map_selecting := false
 
@@ -4220,6 +4228,9 @@ func _on_map_sel_action(id: int) -> void:
 			return
 		MapSelAction.DELETE:
 			if _map_sel.is_empty():
+				return
+			var supports := _map_sel.filter(func(c: Vector2i) -> bool: return _supports_cliff(tilemap, c)).size()
+			if supports > 0 and not await _confirm_cliff_delete(supports):
 				return
 			var box := _box_of(_map_sel).grow(2)
 			undo_manager.create_action(tr("Delete tiles"), UndoRedo.MERGE_DISABLE, tilemap)
@@ -5355,14 +5366,17 @@ func _sync_cliff_rows() -> void:
 	var faces = CLIFF_TERRAIN.find_faces(tilemap)
 	var has_layer := faces != null
 	_rows_spin.editable = true
-	_rows_reset.disabled = not has_layer or int(faces.get("cliffRows")) < 0
+	# A faces layer without CliffFacesLayer.gd has no overrides.
+	var rows_override = faces.get("cliffRows") if has_layer else null
+	var level_override = faces.get("cliffLevel") if has_layer else null
+	_rows_reset.disabled = rows_override == null or int(rows_override) < 0
 	_rows_syncing = true
 	_rows_spin.value = CLIFF_TERRAIN.rows_for(tilemap) if tilemap != null else 0
 	if _level_spin != null:
 		var takes_part := tilemap != null and CLIFF_TERRAIN.is_level(tilemap)
 		_level_spin.editable = takes_part
 		_level_spin.value = CLIFF_TERRAIN.level_of(tilemap) if takes_part else 0
-		_level_reset.disabled = not has_layer or int(faces.get("cliffLevel")) < 0
+		_level_reset.disabled = level_override == null or int(level_override) < 0
 	_rows_syncing = false
 	_rows_spin.tooltip_text = \
 		"How many rows tall this layer's wall is. Empty means the layer's level,\n" + \
@@ -7910,6 +7924,7 @@ func _select_buried() -> void:
 			above.append(layer)
 	var cells: Array = []
 	var see_through := 0
+	var under_cliffs := 0
 	var opaque := {}
 	for c: Vector2i in tilemap.get_used_cells():
 		var world := tilemap.to_global(tilemap.map_to_local(c))
@@ -7921,14 +7936,50 @@ func _select_buried() -> void:
 				continue
 			walled = walled or (not _collision_hidden(layer, lc) and _blocks_centre(layer, lc))
 			hidden = hidden or _tile_opaque(layer, lc, opaque)
-		if walled and hidden:
+		if walled and hidden and not _map_clear_cliffs.button_pressed and _supports_cliff(tilemap, c):
+			under_cliffs += 1
+		elif walled and hidden:
 			cells.append(c)
 		elif walled:
 			see_through += 1
 	_apply_map_selection(cells, 0)
 	if see_through > 0:
 		print("Better Terrain: %d buried tiles selected; %d more left out, their cover is see-through." % [cells.size(), see_through])
+	if under_cliffs > 0:
+		print("Better Terrain: %d buried tiles left out, they hold up a cliff face (tick Clear on cliffs to pick them)." % under_cliffs)
 	update_overlay.emit()
+
+
+## A cell of a level layer standing under a higher level's cliff face: CliffFacesLayer keeps the face solid
+## only while a lower level has ground under its column, so erasing it turns the wall into a drop.
+func _supports_cliff(layer: TileMapLayer, c: Vector2i) -> bool:
+	var holder := layer.get_parent()
+	if holder == null or not layer.get_children().any(func(n: Node) -> bool: return n.has_method(&"collision_hidden_at")):
+		return false
+	for i in range(layer.get_index() + 1, holder.get_child_count()):
+		var upper := holder.get_child(i) as TileMapLayer
+		if upper == null or upper.get_cell_source_id(c) != -1:
+			continue
+		for faces in upper.get_children():
+			if faces is TileMapLayer and faces.has_method(&"collision_hidden_at") and faces.get_cell_source_id(c) != -1:
+				return true
+	return false
+
+
+func _confirm_cliff_delete(count: int) -> bool:
+	var confirmed := [false]
+	var popup := ConfirmationDialog.new()
+	popup.dialog_text = tr("%d of these tiles hold up a cliff face drawn above them.\nWithout them the face loses its collision and the wall becomes a drop.\n\nDelete them anyway?") % count
+	popup.ok_button_text = tr("Delete")
+	popup.dialog_hide_on_ok = false
+	popup.confirmed.connect(func():
+		confirmed[0] = true
+		popup.hide()
+	)
+	EditorInterface.popup_dialog_centered(popup)
+	await popup.visibility_changed
+	popup.queue_free()
+	return confirmed[0]
 
 
 func _tile_opaque(layer: TileMapLayer, c: Vector2i, cache: Dictionary) -> bool:

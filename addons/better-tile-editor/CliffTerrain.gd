@@ -209,8 +209,10 @@ static func _drop_if_empty(tm: TileMapLayer, dry_run: bool) -> void:
 	var l := SupportLayers.find_layer(tm, FACES_LAYER_NAME)
 	if l == null or not l.get_used_cells().is_empty():
 		return
-	# Keep empty nodes lith explicit settings, including a zero wall height.
-	if int(l.get("cliffRows")) >= 0 or int(l.get("cliffLevel")) >= 0:
+	# Keep empty nodes with explicit settings, including a zero wall height.
+	var rows = l.get("cliffRows")
+	var level = l.get("cliffLevel")
+	if (rows != null and int(rows) >= 0) or (level != null and int(level) >= 0):
 		return
 	tm.remove_child(l)
 	l.queue_free()
