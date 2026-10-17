@@ -4,6 +4,7 @@ extends Window
 const ExemplarData := preload("res://addons/better-tile-editor/ExemplarData.gd")
 const ObjectTerrain := preload("res://addons/better-tile-editor/ObjectTerrain.gd")
 const ExemplarTerrain := preload("res://addons/better-tile-editor/ExemplarTerrain.gd")
+const StretchTerrain := preload("res://addons/better-tile-editor/StretchTerrain.gd")
 
 # Use numeric IDs so help can load without the editor autoload.
 const MATCH_TILES := 0
@@ -14,6 +15,7 @@ const OBJECT := 4
 const EXEMPLAR := 5
 const SCATTER := 6
 const SINGLE := 7
+const STRETCH := 8
 
 const ZOOM := 2
 const SQUARE_STEPS := [
@@ -170,12 +172,26 @@ const MODE_STEPS := {
 		 + "other. The bucket and the picker still recognise what you painted: "
 		 + "they go by which tile is in the cell.", "single"],
 	],
+	STRETCH: [
+		["One block that grows",
+		 "Mark a block of tiles in the atlas with Paint terrain types: a waterfall, "
+		 + "a bridge, a rug. Paint any region and each cell takes the block tile for "
+		 + "its place in it: the first rows of the block at the top, the last rows "
+		 + "at the bottom, the edge columns at the sides.\n\nOne row and one column "
+		 + "repeat to fill the rest. They start as the middle ones; Shift+click a "
+		 + "tile of the block to make its row and column the ones that repeat.", "stretch"],
+		["Smaller than the block",
+		 "A region shorter than the block drops middle rows first, so the top and "
+		 + "the bottom always show; narrower drops middle columns. Every column of "
+		 + "the region is measured on its own, so a region that is not a rectangle "
+		 + "still ends in the right rows.", "stretch"],
+	],
 }
 
 const MODE_TITLES := {
 	MATCH_TILES: "Match tiles", MATCH_VERTICES: "Match vertices", CATEGORY: "Category",
 	DECORATION: "Decoration", OBJECT: "Object (NxM)", EXEMPLAR: "Patch",
-	SCATTER: "Scatter", SINGLE: "Single tile",
+	SCATTER: "Scatter", SINGLE: "Single tile", STRETCH: "Stretch",
 }
 
 const DIR_NAMES := ["E", "SE", "S", "SW", "W", "NW", "N", "NE"]
@@ -454,6 +470,7 @@ func _draw_canvas() -> void:
 		"real_area": _draw_area_help(false)
 		"real_area_edge": _draw_area_help(true)
 		"single": _draw_single()
+		"stretch": _draw_stretch()
 		"scatter": _draw_scatter(false)
 		"scatter_block": _draw_scatter(true)
 
@@ -1196,6 +1213,33 @@ func _draw_single() -> void:
 	_canvas.draw_string(get_theme_default_font(), origin + Vector2(0, cs.y * 4 + 26),
 		"the tile you picked, wherever you put it", HORIZONTAL_ALIGNMENT_LEFT, -1, 13,
 		Color(1, 1, 1, 0.6))
+
+
+func _draw_stretch() -> void:
+	var side := floorf(minf(_canvas.size.x / 9.5, (_canvas.size.y - 40.0) / 7.0))
+	var cs := Vector2(side, side)
+	var block := {"rect": Rect2i(0, 0, 3, 5), "row": 2, "col": 1}
+	var shade := func(at: Vector2i) -> Color:
+		return Color.from_hsv(fposmod(terrain_color.h + at.x * 0.09, 1.0), 0.45, 0.45 + at.y * 0.12)
+	var left := Vector2(10, 10)
+	for y in 5:
+		for x in 3:
+			var where := Rect2(left + Vector2(x, y) * cs, cs)
+			_canvas.draw_rect(where.grow(-1), shade.call(Vector2i(x, y)))
+	_canvas.draw_rect(Rect2(left + Vector2(0, 2) * cs, Vector2(3, 1) * cs), Color.WHITE, false, 2.0)
+	_canvas.draw_rect(Rect2(left + Vector2(1, 0) * cs, Vector2(1, 5) * cs), Color.WHITE, false, 2.0)
+	var region := {}
+	for y in 7:
+		for x in 5:
+			if not (y < 2 and x > 2):
+				region[Vector2i(x, y)] = true
+	var right := left + Vector2(cs.x * 4, 0)
+	for c in region:
+		var where := Rect2(right + Vector2(c) * cs, cs)
+		_canvas.draw_rect(where.grow(-1), shade.call(StretchTerrain.tile_for(region, c, block)))
+	var font := get_theme_default_font()
+	_canvas.draw_string(font, left + Vector2(0, cs.y * 5 + 20), "block", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.6))
+	_canvas.draw_string(font, right + Vector2(0, cs.y * 7 + 20), "painted region", HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(1, 1, 1, 0.6))
 
 
 func _draw_scatter(blocks: bool) -> void:

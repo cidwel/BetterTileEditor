@@ -6,6 +6,7 @@ var object_icon := load("res://addons/better-tile-editor/icons/ObjectTerrain.svg
 var exemplar_icon := load("res://addons/better-tile-editor/icons/Exemplar.svg")
 var scatter_icon := load("res://addons/better-tile-editor/icons/Scatter.svg")
 var single_icon := load("res://addons/better-tile-editor/icons/SingleTile.svg")
+var stretch_icon := load("res://addons/better-tile-editor/icons/Stretch.svg")
 
 const CATEGORY_CHECK_ID = &"category_check_id"
 
@@ -380,6 +381,7 @@ func set_object_data(ts: TileSet, terrain_id: int = -1) -> void:
 	_add_type_option(BetterTileEditor.TerrainType.OBJECT, "Object (NxM)", object_icon)
 	_add_type_option(BetterTileEditor.TerrainType.EXEMPLAR, "Patch", exemplar_icon)
 	_add_type_option(BetterTileEditor.TerrainType.SCATTER, "Scatter", scatter_icon)
+	_add_type_option(BetterTileEditor.TerrainType.STRETCH, "Stretch", stretch_icon)
 	_wrap_type_row()
 
 	if _obj_rows.is_empty():

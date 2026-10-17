@@ -3890,3 +3890,31 @@ whenever the dock is editing it, in every mode, so a break never looks like a so
 
 Not carried over: copying and pasting a map selection does not move seams with the tiles,
 and the C# wrapper has no seam calls yet (call the GDScript singleton directly).
+
+### AU. A new terrain type: `STRETCH` (one block grown to fit)
+
+`StretchTerrain.gd`; `TileView.gd` → `_pick_stretch_repeat()`, `_draw_stretch_outline()`
+
+For art drawn as one piece with no repeated tiles: a waterfall (rim, start of the fall, the
+fall, foam, splash), a bridge, a rug. None of the other types fits it. Match types pick by
+neighbours, and a cell in the second row of a waterfall has the same neighbours as one in
+the third. Patch needs a ring and a 5x5 drawing at least, and the cliff face has only three
+row bands.
+
+**The block** is the marked tiles (Paint terrain types, as in Patch), pinned in the
+terrain's config as `stretch = {source, rect, row, col}`. Only a fully marked rectangle
+replaces a pinned one, as in Patch. `row` and `col` are the ones that repeat and default to
+the middle ones; Shift+click on a block tile in the atlas sets both (one undo step).
+
+**Each cell picks its tile by position**, rows and columns on their own: count the region
+cells in an unbroken run above it (`before`) and below it (`after`). If `before` is less than
+the repeat row, the cell takes row `before`. If `after` is less than the rows past the repeat,
+it takes row `H-1-after`. When both hold, the nearer end wins, ties going to the top. Anything
+else takes the repeat row. So a region shorter than the block drops middle rows first, and a
+column of a region that is not a rectangle ends in the right rows. There is no minimum size.
+
+Painting puts down the terrain's first tile as a placeholder, as with Patch. `rebuild()` runs
+after each stroke and with the full rebuild, and rewrites the whole layer's stretch cells (it
+only writes cells that change). A region is every cell holding a block tile or a tile
+marked as the terrain, minus hand-placed cells and seams. A change moves tiles only along the
+runs through it, so `affected()` adds those runs to the stroke's undo restore point.

@@ -25,6 +25,7 @@ const SCATTER_BAG_SCRIPT := preload("res://addons/better-tile-editor/editor/Scat
 
 var _scatter_bag: PanelContainer = null
 const EXEMPLAR_TERRAIN := preload("res://addons/better-tile-editor/ExemplarTerrain.gd")
+const STRETCH_TERRAIN := preload("res://addons/better-tile-editor/StretchTerrain.gd")
 const EXEMPLAR_EDITOR_SCRIPT := preload("res://addons/better-tile-editor/editor/ExemplarEditor.gd")
 const CLIFF_DATA := preload("res://addons/better-tile-editor/CliffData.gd")
 const SLOPE_TERRAIN := preload("res://addons/better-tile-editor/SlopeTerrain.gd")
@@ -48,7 +49,7 @@ const TOOL_MODES := {
 	"paint_type": [
 		BT_SCRIPT.TerrainType.MATCH_TILES, BT_SCRIPT.TerrainType.MATCH_VERTICES,
 		BT_SCRIPT.TerrainType.CATEGORY, BT_SCRIPT.TerrainType.DECORATION,
-		BT_SCRIPT.TerrainType.EXEMPLAR,
+		BT_SCRIPT.TerrainType.EXEMPLAR, BT_SCRIPT.TerrainType.STRETCH,
 	],
 	"paint_terrain": [
 		BT_SCRIPT.TerrainType.MATCH_TILES, BT_SCRIPT.TerrainType.MATCH_VERTICES,
@@ -1126,7 +1127,7 @@ func _apply_entry_filters() -> void:
 			var paintable : bool = c.terrain.type in [BetterTileEditor.TerrainType.MATCH_TILES,
 				BetterTileEditor.TerrainType.MATCH_VERTICES, BetterTileEditor.TerrainType.OBJECT,
 				BetterTileEditor.TerrainType.EXEMPLAR, BetterTileEditor.TerrainType.SCATTER,
-				BetterTileEditor.TerrainType.SINGLE] or c.terrain.has("tool_icon")
+				BetterTileEditor.TerrainType.SINGLE, BetterTileEditor.TerrainType.STRETCH] or c.terrain.has("tool_icon")
 			c.visible = in_filter and (!quick or paintable)
 		else:
 			c.visible = in_filter
@@ -1154,7 +1155,7 @@ func _update_tile_view_paint_timed() -> void:
 	var t = BetterTileEditor.get_terrain(tileset, selected_entry) if editable else {valid = false}
 	var mode : int = int(t.type) if t.valid else -1
 	var is_object : bool = mode == BetterTileEditor.TerrainType.OBJECT
-	var is_exemplar : bool = mode == BetterTileEditor.TerrainType.EXEMPLAR
+	var is_exemplar : bool = mode in [BetterTileEditor.TerrainType.EXEMPLAR, BetterTileEditor.TerrainType.STRETCH]
 
 	for mode_name in TOOL_MODES:
 		var button: Button = _tool_button(mode_name)
@@ -2016,6 +2017,8 @@ func _on_terrain_updated(index):
 		return
 	entry.terrain = BetterTileEditor.get_terrain(tileset, index)
 	entry.update()
+	if entry.terrain.type == BetterTileEditor.TerrainType.STRETCH:
+		_mark_cliffs_dirty()
 
 
 func canvas_tilemap_transform() -> Transform2D:
@@ -2704,6 +2707,11 @@ func _add_post_process_timed(cells: Array, erasing: bool, merged: bool) -> void:
 				terrain_undo.add_do_method(undo_manager, EXEMPLAR_TERRAIN, &"rebuild", [tilemap, BetterTileEditor, cells])
 			else:
 				undo_manager.add_do_method(EXEMPLAR_TERRAIN, &"rebuild", tilemap, BetterTileEditor, cells)
+		if tilemap != null and STRETCH_TERRAIN.has_stretch(tilemap.tile_set):
+			if merged:
+				terrain_undo.add_do_method(undo_manager, STRETCH_TERRAIN, &"rebuild", [tilemap, BetterTileEditor, cells])
+			else:
+				undo_manager.add_do_method(STRETCH_TERRAIN, &"rebuild", tilemap, BetterTileEditor, cells)
 	if cells.is_empty() or !ObjectTerrain.has_objects(tileset) or not ObjectTerrain.stroke_affects_objects(tilemap, cells, -1 if erasing else selected_entry):
 		return
 	if merged:
@@ -2719,6 +2727,8 @@ func _restore_cells(cells: Array) -> Array:
 		return cells
 	if paint_mode == PaintMode.ERASE and ObjectTerrain.can_erase_mass_locally(tilemap, cells):
 		return ObjectTerrain.mass_erase_region(tilemap, cells).keys()
+	# A stretch retiles the runs through the stroke, so undo must restore them too.
+	cells = STRETCH_TERRAIN.affected(tilemap, BetterTileEditor, cells)
 	if not ObjectTerrain.stroke_affects_objects(tilemap, cells, -1 if paint_mode == PaintMode.ERASE else selected_entry):
 		return cells
 	if ObjectTerrain.has_mass(tileset):
@@ -6037,6 +6047,7 @@ func _rebuild_cliffs_now_timed() -> void:
 			var lk: Dictionary = EXEMPLAR_TERRAIN.rebuild(c, BetterTileEditor)
 			PERF.end("exemplar.rebuild", t, "%s cells=%d" % [c.name, c.get_used_cells().size()])
 			changed = changed or lk.region > 0 or lk.edges > 0
+			changed = STRETCH_TERRAIN.rebuild(c, BetterTileEditor).written > 0 or changed
 
 	if changed:
 		update_overlay.emit()
@@ -8841,6 +8852,8 @@ func _add_seam_rebuilds(cells: Array, on_do: bool) -> void:
 	var steps := []
 	if EXEMPLAR_TERRAIN.has_exemplar(tileset):
 		steps.append([EXEMPLAR_TERRAIN, &"rebuild", tilemap, BetterTileEditor, cells])
+	if STRETCH_TERRAIN.has_stretch(tileset):
+		steps.append([STRETCH_TERRAIN, &"rebuild", tilemap, BetterTileEditor, cells])
 	if ObjectTerrain.has_objects(tileset):
 		# The blocks around a seam stop or start joining it, so they are rebuilt too.
 		if on_do:

@@ -3,6 +3,7 @@ extends Control
 
 const ObjectTerrain := preload("res://addons/better-tile-editor/ObjectTerrain.gd")
 const ExemplarData := preload("res://addons/better-tile-editor/ExemplarData.gd")
+const StretchTerrain := preload("res://addons/better-tile-editor/StretchTerrain.gd")
 const Collisions := preload("res://addons/better-tile-editor/editor/Collisions.gd")
 const CustomData := preload("res://addons/better-tile-editor/editor/CustomData.gd")
 const QuarterPieces := preload("res://addons/better-tile-editor/editor/QuarterPieces.gd")
@@ -1173,6 +1174,7 @@ func _draw_timed() -> void:
 				alt_offset.y += zoom_level * rect.size.y
 		
 		_draw_exemplar_outline(entry)
+		_draw_stretch_outline(entry)
 		_draw_marked_blocks(entry)
 		if not flash.is_empty() and flash.source_id == entry.source_id:
 			var lit := atlas_rect(flash.source_id, flash.region)
@@ -1396,6 +1398,65 @@ func _draw_marked_blocks(band: Dictionary) -> void:
 			return
 		draw_rect(box, Color(1.0, 1.0, 1.0, 0.12))
 		draw_rect(box, Color(1.0, 0.95, 0.4), false, 2.0)
+
+
+## Shift+click on a tile of a Stretch block makes its row and column the repeating ones.
+func _pick_stretch_repeat() -> bool:
+	if tileset == null or paint < 0 or not highlighted_tile_part.valid:
+		return false
+	var t := BetterTileEditor.get_terrain(tileset, paint)
+	if not t.valid or t.type != BetterTileEditor.TerrainType.STRETCH:
+		return false
+	var b := StretchTerrain.sync_block(tileset, paint)
+	var at: Vector2i = highlighted_tile_part.coord
+	if b.is_empty() or int(b.source) != int(highlighted_tile_part.source_id) or not (b.rect as Rect2i).has_point(at):
+		return false
+	var inside: Vector2i = at - (b.rect as Rect2i).position
+	undo_manager.create_action("Set stretch repeat", UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(StretchTerrain, &"record_block", tileset, paint, int(b.source), b.rect, inside.y, inside.x)
+	undo_manager.add_undo_method(StretchTerrain, &"record_block", tileset, paint, int(b.source), b.rect, int(b.row), int(b.col))
+	for m in [&"add_do_method", &"add_undo_method"]:
+		undo_manager.call(m, self, &"emit_terrain_updated", paint)
+		undo_manager.call(m, self, &"queue_redraw")
+	undo_manager.commit_action()
+	return true
+
+
+func _draw_stretch_outline(band: Dictionary) -> void:
+	if tileset == null or paint < 0:
+		return
+	var t := BetterTileEditor.get_terrain(tileset, paint)
+	if not t.valid or t.type != BetterTileEditor.TerrainType.STRETCH:
+		return
+	var b := StretchTerrain.block_of(tileset, paint)
+	if b.is_empty():
+		var marked := ExemplarData.marked_rect(tileset, paint)
+		if marked.is_empty():
+			return
+		@warning_ignore("integer_division")
+		b = {"source": marked.source, "rect": marked.rect, "row": marked.rect.size.y / 2, "col": marked.rect.size.x / 2}
+	if int(b.source) != int(band.source_id):
+		return
+	var source: TileSetAtlasSource = band.source
+	var step := Vector2(source.texture_region_size + source.separation)
+	var cell := Vector2(source.texture_region_size) * zoom_level
+	var at := func(c: Vector2i) -> Vector2:
+		return _texture_point(band, Vector2(source.margins) + Vector2(c) * step)
+	var rect: Rect2i = b.rect
+	var span := func(lo: Vector2i, hi: Vector2i) -> Rect2:
+		return Rect2(at.call(lo), at.call(hi) - at.call(lo) + cell)
+	var block: Rect2 = span.call(rect.position, rect.end - Vector2i.ONE)
+	var gold := Color(1.0, 0.85, 0.3)
+	var row: Rect2 = span.call(rect.position + Vector2i(0, int(b.row)), Vector2i(rect.end.x - 1, rect.position.y + int(b.row)))
+	var col: Rect2 = span.call(rect.position + Vector2i(int(b.col), 0), Vector2i(rect.position.x + int(b.col), rect.end.y - 1))
+	draw_rect(row, Color(gold, 0.18))
+	draw_rect(col, Color(gold, 0.18))
+	draw_rect(row, gold, false, 1.0)
+	draw_rect(col, gold, false, 1.0)
+	draw_rect(block.grow(2), Color(0, 0, 0, 0.6), false, 4.0)
+	draw_rect(block.grow(2), gold, false, 2.0)
+	draw_string(get_theme_default_font(), block.position + Vector2(4, -6), "stretch: Shift+click picks what repeats",
+		HORIZONTAL_ALIGNMENT_LEFT, -1, get_theme_default_font_size(), gold)
 
 
 func _draw_exemplar_outline(band: Dictionary) -> void:
@@ -1836,6 +1897,10 @@ func _gui_input_timed(event) -> void:
 		pick_icon_terrain = -1
 		pick_icon_terrain_cancel = false
 	
+	if clicked and event.shift_pressed and event.button_index == MOUSE_BUTTON_LEFT \
+			and paint_mode == PaintMode.PAINT_TYPE and _pick_stretch_repeat():
+		return
+
 	if paint != BetterTileEditor.TileCategory.NON_TERRAIN and clicked:
 		paint_action = PaintAction.NO_ACTION
 		if highlighted_tile_part.valid:

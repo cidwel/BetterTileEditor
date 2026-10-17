@@ -114,6 +114,8 @@ func update():
 			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/Scatter.svg")
 		BetterTileEditor.TerrainType.SINGLE:
 			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/SingleTile.svg")
+		BetterTileEditor.TerrainType.STRETCH:
+			type_icon_slot.texture = load("res://addons/better-tile-editor/icons/Stretch.svg")
 		_:
 			type_icon_slot.texture = null
 	type_icon_slot.visible = show_type_icon
@@ -189,8 +191,8 @@ func update():
 				terrain_icon_slot.queue_redraw()
 				has_icon = true
 
-	if not has_icon and terrain.type == BetterTileEditor.TerrainType.EXEMPLAR:
-		var drawing := _exemplar_block_region()
+	if not has_icon and terrain.type in [BetterTileEditor.TerrainType.EXEMPLAR, BetterTileEditor.TerrainType.STRETCH]:
+		var drawing := _exemplar_block_region() if terrain.type == BetterTileEditor.TerrainType.EXEMPLAR else _stretch_block_region()
 		if drawing.size.x > 0:
 			_terrain_texture = _lone_source
 			_terrain_texture_rect = drawing
@@ -249,6 +251,20 @@ func _exemplar_block_region() -> Rect2i:
 	_lone_source = src.texture
 	var one_tile := src.get_tile_texture_region(origin, 0)
 	return Rect2i(Vector2i(one_tile.position), Vector2i(one_tile.size) * Vector2i(int(block[2]), int(block[3])))
+
+
+func _stretch_block_region() -> Rect2i:
+	var StretchTerrain = load("res://addons/better-tile-editor/StretchTerrain.gd")
+	var b: Dictionary = StretchTerrain.block_of(tileset, terrain.id)
+	if b.is_empty():
+		return Rect2i()
+	var src := tileset.get_source(int(b.source)) as TileSetAtlasSource if tileset.has_source(int(b.source)) else null
+	var rect: Rect2i = b.rect
+	if !src or !src.texture or not src.has_tile(rect.position):
+		return Rect2i()
+	_lone_source = src.texture
+	var one_tile := src.get_tile_texture_region(rect.position, 0)
+	return Rect2i(Vector2i(one_tile.position), Vector2i(one_tile.size) * rect.size)
 
 
 func _lone_block_region() -> Rect2i:
@@ -434,6 +450,8 @@ func _terrain_preview_image() -> Image:
 	match terrain.type:
 		BetterTileEditor.TerrainType.EXEMPLAR:
 			region = _exemplar_block_region()
+		BetterTileEditor.TerrainType.STRETCH:
+			region = _stretch_block_region()
 		BetterTileEditor.TerrainType.OBJECT:
 			region = _lone_block_region()
 		BetterTileEditor.TerrainType.SCATTER:

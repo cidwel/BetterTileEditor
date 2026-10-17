@@ -52,6 +52,7 @@ enum TerrainType {
 	EXEMPLAR,
 	SCATTER,
 	SINGLE,
+	STRETCH, ## Grows one atlas block to fit the painted region.
 	MAX,
 }
 
