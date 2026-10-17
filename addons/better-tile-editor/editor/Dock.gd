@@ -27,6 +27,7 @@ var _scatter_bag: PanelContainer = null
 const EXEMPLAR_TERRAIN := preload("res://addons/better-tile-editor/ExemplarTerrain.gd")
 const STRETCH_TERRAIN := preload("res://addons/better-tile-editor/StretchTerrain.gd")
 const EXEMPLAR_EDITOR_SCRIPT := preload("res://addons/better-tile-editor/editor/ExemplarEditor.gd")
+const STRETCH_EDITOR_SCRIPT := preload("res://addons/better-tile-editor/editor/StretchEditor.gd")
 const CLIFF_DATA := preload("res://addons/better-tile-editor/CliffData.gd")
 const SLOPE_TERRAIN := preload("res://addons/better-tile-editor/SlopeTerrain.gd")
 const SLOPE_EDITOR_SCRIPT := preload("res://addons/better-tile-editor/editor/SlopeEditor.gd")
@@ -63,6 +64,7 @@ const TOOL_MODES := {
 	"object_joined": [BT_SCRIPT.TerrainType.OBJECT],
 	"object_bake": [BT_SCRIPT.TerrainType.OBJECT],
 	"exemplar": [BT_SCRIPT.TerrainType.EXEMPLAR],
+	"stretch": [BT_SCRIPT.TerrainType.STRETCH],
 	"cliff": [BT_SCRIPT.TerrainType.MATCH_TILES, BT_SCRIPT.TerrainType.MATCH_VERTICES,
 		BT_SCRIPT.TerrainType.EXEMPLAR],
 }
@@ -1210,6 +1212,7 @@ func _tool_button(mode_name: String) -> Button:
 		"object_joined": return object_joined
 		"object_bake": return _oven_button
 		"exemplar": return _exemplar_button
+		"stretch": return _stretch_button
 		"cliff": return _cliff_button
 	return null
 
@@ -2017,8 +2020,6 @@ func _on_terrain_updated(index):
 		return
 	entry.terrain = BetterTileEditor.get_terrain(tileset, index)
 	entry.update()
-	if entry.terrain.type == BetterTileEditor.TerrainType.STRETCH:
-		_mark_cliffs_dirty()
 
 
 func canvas_tilemap_transform() -> Transform2D:
@@ -5233,6 +5234,55 @@ func _add_exemplar_button(toolbar: Node) -> void:
 	_exemplar_button = lookup
 
 
+var _stretch_button: Button = null
+var _stretch_window: Window = null
+
+
+func _add_stretch_button(toolbar: Node) -> void:
+	_stretch_button = Button.new()
+	_stretch_button.name = "StretchRepeat"
+	_icon_or_text(_stretch_button, ICON_DIR + "Stretch.svg", ["Tools"], "Repeat")
+	_stretch_button.tooltip_text = "Choose which row and column of the block repeat."
+	_stretch_button.focus_mode = Control.FOCUS_NONE
+	_stretch_button.pressed.connect(_open_stretch_editor)
+	toolbar.add_child(_stretch_button)
+	if _exemplar_button != null:
+		toolbar.move_child(_stretch_button, _exemplar_button.get_index() + 1)
+
+
+func _open_stretch_editor() -> void:
+	var t := BetterTileEditor.get_terrain(tileset, selected_entry) if tileset != null and selected_entry >= 0 else {valid = false}
+	if not t.valid or t.type != BetterTileEditor.TerrainType.STRETCH:
+		return
+	if is_instance_valid(_stretch_window):
+		_stretch_window.queue_free()
+	var window := STRETCH_EDITOR_SCRIPT.new()
+	if not window.setup(tileset, selected_entry, t.name):
+		window.free()
+		_say(tr("Mark the block's tiles with Paint terrain types first."))
+		return
+	_stretch_window = window
+	add_child(window)
+	var index := selected_entry
+	window.repeat_chosen.connect(func(row: int, col: int): _set_stretch_repeat(index, row, col))
+	window.close_requested.connect(window.queue_free)
+	window.confirmed.connect(window.queue_free, CONNECT_DEFERRED)
+	window.canceled.connect(window.queue_free)
+	window.popup_centered()
+
+
+func _set_stretch_repeat(index: int, row: int, col: int) -> void:
+	var b := STRETCH_TERRAIN.block_of(tileset, index)
+	if b.is_empty() or (int(b.row) == row and int(b.col) == col):
+		return
+	undo_manager.create_action(tr("Set stretch repeat"), UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.add_do_method(STRETCH_TERRAIN, &"record_block", tileset, index, int(b.source), b.rect, row, col)
+	undo_manager.add_undo_method(STRETCH_TERRAIN, &"record_block", tileset, index, int(b.source), b.rect, int(b.row), int(b.col))
+	undo_manager.add_do_method(self, &"_mark_cliffs_dirty")
+	undo_manager.add_undo_method(self, &"_mark_cliffs_dirty")
+	undo_manager.commit_action()
+
+
 var _oven_button: Button = null
 var _oven: Window = null
 
@@ -5337,6 +5387,7 @@ func _add_cliff_button() -> void:
 
 
 	_add_exemplar_button(toolbar)
+	_add_stretch_button(toolbar)
 	_add_oven_button()
 
 	_level_spin = SpinBox.new()
@@ -6615,7 +6666,7 @@ func _arrange_toolbar() -> void:
 	var terrain_options := HBoxContainer.new()
 	terrain_options.name = "TerrainOptions"
 	context.add_child(terrain_options)
-	for control: Control in [_picker, _fill_rule, _fill_seen, _fill_layer, _slope_autofill, _slope_freehand, _slope_smooth, _add_favorite_button, _quick_terrain_box, select_tiles, paint_type, paint_terrain, object_lone, object_joined, _oven_button, _exemplar_button, paint_symmetry, symmetry_options, _cliff_button, live_test_button, _collision_mode_box, _data_panel.mode_bar]:
+	for control: Control in [_picker, _fill_rule, _fill_seen, _fill_layer, _slope_autofill, _slope_freehand, _slope_smooth, _add_favorite_button, _quick_terrain_box, select_tiles, paint_type, paint_terrain, object_lone, object_joined, _oven_button, _exemplar_button, _stretch_button, paint_symmetry, symmetry_options, _cliff_button, live_test_button, _collision_mode_box, _data_panel.mode_bar]:
 		control.reparent(terrain_options)
 	_picker_select_layer.reparent(terrain_options)
 	terrain_options.move_child(_picker_select_layer, _picker.get_index() + 1)
@@ -7000,6 +7051,8 @@ func _create_quick_terrain(kind: int, options := {}) -> void:
 		options.get("bits", {}))
 	undo_manager.add_undo_method(self, &"_restore_quick_terrain", before_meta, before_tables, tile_metas, block.source, new_tiles)
 	undo_manager.commit_action()
+	if kind == QuickKind.STRETCH:
+		_open_stretch_editor()
 
 
 func perform_quick_terrain(kind: int, terrain_name: String, color: Color, source_id: int, rect: Rect2i, alt: int, tiles: Array, new_tiles: Array = [], bits: Dictionary = {}) -> void:

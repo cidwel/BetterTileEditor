@@ -3893,7 +3893,7 @@ and the C# wrapper has no seam calls yet (call the GDScript singleton directly).
 
 ### AU. A new terrain type: `STRETCH` (one block grown to fit)
 
-`StretchTerrain.gd`; `TileView.gd` → `_pick_stretch_repeat()`, `_draw_stretch_outline()`
+`StretchTerrain.gd`; `editor/StretchEditor.gd`; `Dock.gd` → `_open_stretch_editor()`
 
 For art drawn as one piece with no repeated tiles: a waterfall (rim, start of the fall, the
 fall, foam, splash), a bridge, a rug. None of the other types fits it. Match types pick by
@@ -3904,7 +3904,9 @@ row bands.
 **The block** is the marked tiles (Paint terrain types, as in Patch), pinned in the
 terrain's config as `stretch = {source, rect, row, col}`. Only a fully marked rectangle
 replaces a pinned one, as in Patch. `row` and `col` are the ones that repeat and default to
-the middle ones; Shift+click on a block tile in the atlas sets both (one undo step).
+the middle ones. They are picked in a window, not on the atlas: it opens right after
+Create Stretch and from the Repeat button in the toolbar. Clicking a block tile takes its row
+and column, and a preview shows the block grown by 2×3. Apply is one undo step.
 
 **Each cell picks its tile by position**, rows and columns on their own: count the region
 cells in an unbroken run above it (`before`) and below it (`after`). If `before` is less than
