@@ -173,11 +173,24 @@ static func _layers_above(tm: Node, level: int) -> Array:
 	var parent := tm.get_parent()
 	if parent == null:
 		return out
-	for c in parent.get_children():
-		if c == tm or not is_level(c):
-			continue
-		if level_of(c) > level:
+	var levels := _levels(parent)
+	for c: Node in levels:
+		if c != tm and levels[c] > level:
 			out.append(c)
+	return out
+
+
+## Every level layer's level in one pass, as level_of counts them: asking level_of for each
+## sibling walks the siblings again for each.
+static func _levels(parent: Node) -> Dictionary:
+	var out := {}
+	var level := -1
+	for c in parent.get_children():
+		if not is_level(c):
+			continue
+		var e := explicit_level(c)
+		level = e if e >= 0 else level + 1
+		out[c] = level
 	return out
 
 
