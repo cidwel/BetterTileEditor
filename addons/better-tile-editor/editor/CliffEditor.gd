@@ -121,6 +121,9 @@ var _save_new_btn: Button
 var _editing_shape := ""
 var _in_use := {}
 var _height_spin: SpinBox
+## The Height control again, in the preview's bar, while Autoassign hides the left one.
+var _auto_height_box: HBoxContainer
+var _auto_height_spin: SpinBox
 var _more: MenuButton
 var _shape_menu: PopupMenu
 var _inherit_banner: HBoxContainer
@@ -149,6 +152,9 @@ func setup(ts: TileSet, index: int, cliff_name: String, height := -1) -> void:
 		_kind = KIND_PATTERN
 		_simple_mode = false
 	_migrate_orphan_slots(cliff_name)
+	if not CliffData.has_captured() and \
+			BetterTileEditor.get_terrain(ts, index).get("type", -1) == BetterTileEditor.TerrainType.MATCH_VERTICES:
+		_fixture_index = _shape_index_named("Cave plateau")
 	_puff_tex = _make_puff_texture()
 	_refresh_mask()
 	title = "Cliff face: %s" % cliff_name
@@ -426,6 +432,19 @@ func _build_preview_bar() -> Control:
 		+ "drag over the wall in the preview, then click the block's top-left tile in the palette.")
 	_matrix_button.toggled.connect(_on_matrix_mode_toggled)
 	shape_bar.add_child(_matrix_button)
+	_auto_height_box = HBoxContainer.new()
+	_auto_height_box.visible = false
+	var height_label := Label.new()
+	height_label.text = "Height"
+	_auto_height_box.add_child(height_label)
+	_auto_height_spin = SpinBox.new()
+	_auto_height_spin.min_value = _height_spin.min_value
+	_auto_height_spin.max_value = _height_spin.max_value
+	_auto_height_spin.value = _height_spin.value
+	_auto_height_spin.tooltip_text = _height_spin.tooltip_text
+	_auto_height_spin.value_changed.connect(func(v: float) -> void: _height_spin.value = v)
+	_auto_height_box.add_child(_auto_height_spin)
+	shape_bar.add_child(_auto_height_box)
 	var spacer := Control.new()
 	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	shape_bar.add_child(spacer)
@@ -610,10 +629,17 @@ func _height() -> int:
 func _on_height_changed(_v: float) -> void:
 	if _refuse_if_inherited():
 		_height_spin.set_value_no_signal(int(_cfg.get("height", 2)))
+		_sync_auto_height()
 		return
 	_cfg["height"] = _height()
 	_save()
 	_refresh()
+	_sync_auto_height()
+
+
+func _sync_auto_height() -> void:
+	if _auto_height_spin != null:
+		_auto_height_spin.set_value_no_signal(_height())
 
 
 func _on_slot_pressed(key: String) -> void:
@@ -1952,12 +1978,15 @@ func _open_autoassign() -> void:
 		return
 	_pane.visible = false
 	_auto_page.visible = true
+	_sync_auto_height()
+	_auto_height_box.visible = true
 	Chrome.open_at(_split, 0.62)
 	_auto_page.open(tile_set, _bt, terrain_index)
 
 
 func _close_autoassign() -> void:
 	_auto_page.visible = false
+	_auto_height_box.visible = false
 	_pane.visible = true
 	Chrome.open_at(_split, 0.30)
 	_auto_cfg = {}
@@ -2282,6 +2311,14 @@ func _save_as_shape(shape_name: String) -> void:
 	_status.text = "[color=#7ec87e]Saved as \"%s\".[/color]  It is in the shape list, and editing is closed." % shape_name
 
 
+func _shape_index_named(shape_name: String) -> int:
+	var all_shapes := CliffData.shapes()
+	for i in all_shapes.size():
+		if str(all_shapes[i].name) == shape_name:
+			return i
+	return 0
+
+
 func _select_shape_named(shape_name: String) -> void:
 	if _fixture_pick == null:
 		return
@@ -2517,6 +2554,7 @@ func reload_config() -> void:
 	_simple_mode = _kind == KIND_SIMPLE
 	_kind_pick.select(_kind)
 	_height_spin.set_value_no_signal(int(_cfg.get("height", 2)))
+	_sync_auto_height()
 	_selected = ""
 	_pattern_armed = ""
 	_refresh_mask()

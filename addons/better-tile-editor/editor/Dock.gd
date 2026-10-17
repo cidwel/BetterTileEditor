@@ -3104,6 +3104,17 @@ func _add_map_select_button() -> void:
 	_map_target_layer.tooltip_text = "Read the block on the topmost visible layer under the cursor and make\nthat TileMapLayer the edited one, so the wand works on the tile you clicked."
 	_map_target_layer.focus_mode = Control.FOCUS_NONE
 	_map_target_layer.hide()
+	_map_contiguous = CheckBox.new()
+	_map_contiguous.name = "Contiguous"
+	_map_contiguous.text = "Contiguous"
+	_map_contiguous.tooltip_text = "Select only the touching block. Off, the wand takes every tile of the layer\nwith the same terrain, or the same tile if it has none."
+	_map_contiguous.focus_mode = Control.FOCUS_NONE
+	_map_contiguous.button_pressed = true
+	_map_contiguous.hide()
+	_map_contiguous.toggled.connect(func(_on: bool) -> void:
+		_wand_cache = {}
+		_wand_preview = {}
+		update_overlay.emit())
 	_map_wand.toggled.connect(func(_on: bool) -> void: _sync_map_target_layer())
 	toolbar.add_child(_map_select_shapes)
 	toolbar.move_child(_map_select_shapes, _map_select.get_index() + 1)
@@ -3118,10 +3129,13 @@ func _add_map_select_button() -> void:
 	toolbar.move_child(_map_all_layers, _map_select_shapes.get_index() + 1)
 	toolbar.add_child(_map_target_layer)
 	toolbar.move_child(_map_target_layer, _map_all_layers.get_index() + 1)
+	toolbar.add_child(_map_contiguous)
+	toolbar.move_child(_map_contiguous, _map_target_layer.get_index() + 1)
 
 
 func _sync_map_target_layer() -> void:
 	_map_target_layer.visible = _map_select_active() and _map_wand_active()
+	_map_contiguous.visible = _map_target_layer.visible
 
 
 var _picker: Button
@@ -3691,6 +3705,7 @@ var _map_select: Button
 var _map_select_shapes: HBoxContainer
 var _map_wand: Button
 var _map_target_layer: CheckBox
+var _map_contiguous: CheckBox
 var _map_clear_cliffs: CheckBox
 var _map_select_from := Vector2i.ZERO
 var _map_selecting := false
@@ -5101,6 +5116,13 @@ func _wand_flood(layer: TileMapLayer, start: Vector2i) -> Dictionary:
 	if key == null:
 		return found
 	found[start] = true
+	if _map_contiguous != null and not _map_contiguous.button_pressed:
+		var cells: Array = layer.get_used_cells_by_id(key[0], key[1], key[2]) if key.size() == 3 \
+			else layer.get_used_cells()
+		for c: Vector2i in cells:
+			if key.size() == 3 or _wand_key(layer, c) == key:
+				found[c] = true
+		return found
 	var queue: Array[Vector2i] = [start]
 	while not queue.is_empty():
 		for n in layer.get_surrounding_cells(queue.pop_back()):
@@ -6548,6 +6570,7 @@ func _arrange_toolbar() -> void:
 	_map_select_shapes.reparent(context)
 	_map_all_layers.reparent(context)
 	_map_target_layer.reparent(context)
+	_map_contiguous.reparent(context)
 	var terrain_options := HBoxContainer.new()
 	terrain_options.name = "TerrainOptions"
 	context.add_child(terrain_options)
