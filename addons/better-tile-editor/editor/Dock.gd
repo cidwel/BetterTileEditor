@@ -6761,7 +6761,7 @@ func _map_selection_mesh(visible_rect: Rect2, transform: Transform2D) -> Diction
 
 #region Quick terrains from a single-tile block
 
-enum QuickKind { MATCH, PATCH, OBJECT, SCATTER }
+enum QuickKind { MATCH, PATCH, OBJECT, SCATTER, STRETCH }
 
 # Bank all round plus 3×3 of water, so every inner role exists.
 const PATCH_MIN_SIZE := Vector2i(5, 5)
@@ -6772,6 +6772,8 @@ const QUICK_LABELS := {
 		"Create a Patch terrain that reads the selected block like a pond: the outer ring is\nthe bank around the painted shape, the inside is the water and its rim (5×5 or more).\nEmpty cells in the block (a rounded drawing's corners) are made into tiles first."],
 	QuickKind.OBJECT: ["Create Object", "ObjectTerrain.svg",
 		"Create an Object terrain whose drawing is the whole selection, e.g. a tree.\nEmpty cells in it are made into tiles first. Mark a joined block later to let objects fuse."],
+	QuickKind.STRETCH: ["Create Stretch", "Stretch.svg",
+		"Create a Stretch terrain from the selected block, e.g. a waterfall: painting grows it to fit,\nrepeating its middle row and column. Empty cells in it are made into tiles first."],
 	QuickKind.SCATTER: ["Create quick scatter", "Scatter.svg",
 		"Create a Scatter terrain whose bag holds every tile of the selection (two or more)."],
 }
@@ -6780,8 +6782,9 @@ const QUICK_TYPES := {
 	QuickKind.PATCH: BetterTileEditor.TerrainType.EXEMPLAR,
 	QuickKind.OBJECT: BetterTileEditor.TerrainType.OBJECT,
 	QuickKind.SCATTER: BetterTileEditor.TerrainType.SCATTER,
+	QuickKind.STRETCH: BetterTileEditor.TerrainType.STRETCH,
 }
-const QUICK_SUFFIX := {QuickKind.MATCH: "", QuickKind.PATCH: " patch", QuickKind.OBJECT: " object", QuickKind.SCATTER: " scatter"}
+const QUICK_SUFFIX := {QuickKind.MATCH: "", QuickKind.PATCH: " patch", QuickKind.OBJECT: " object", QuickKind.SCATTER: " scatter", QuickKind.STRETCH: " stretch"}
 # Sides only. Setting the diagonals too fills the whole interior.
 const SQUARE_SIDES := {
 	TileSet.CELL_NEIGHBOR_RIGHT_SIDE: Vector2i(1, 0),
@@ -6864,7 +6867,7 @@ func _quick_refusal(kind: int, block: Dictionary) -> String:
 						found[at] = true
 			if found.size() < 2:
 				return "Select at least two tiles to scatter."
-		QuickKind.OBJECT:
+		QuickKind.OBJECT, QuickKind.STRETCH:
 			if rect.size.x * rect.size.y < 2:
 				return "Select the whole drawing, at least two tiles."
 			if not whole:
@@ -6970,8 +6973,8 @@ func _create_quick_terrain(kind: int, options := {}) -> void:
 	var chosen: Dictionary = options.get("bits", {})
 	if kind == QuickKind.MATCH:
 		tiles = tiles.filter(func(c: Vector2i): return chosen.has(c) or not QUICK_MATCH.blank(src, c))
-	# Patch and Object read the whole rectangle, so empty cells become tiles.
-	var new_tiles: Array = _atlas_gaps(src, rect) if kind in [QuickKind.PATCH, QuickKind.OBJECT] else []
+	# Patch, Object and Stretch read the whole rectangle, so empty cells become tiles.
+	var new_tiles: Array = _atlas_gaps(src, rect) if kind in [QuickKind.PATCH, QuickKind.OBJECT, QuickKind.STRETCH] else []
 	if kind == QuickKind.MATCH:
 		new_tiles = _atlas_gaps(src, rect).filter(func(c: Vector2i): return chosen.has(c) and _can_create_tile(src, c))
 	if tiles.is_empty() and new_tiles.is_empty():
@@ -7050,6 +7053,8 @@ func perform_quick_terrain(kind: int, terrain_name: String, color: Color, source
 			var table := EXEMPLAR_DATA.learn_from_block(tileset, id, source_id)
 			if not table.is_empty():
 				EXEMPLAR_DATA.store_table(tileset, terrain_name, table)
+		QuickKind.STRETCH:
+			STRETCH_TERRAIN.record_block(tileset, id, source_id, rect)
 	rebuild_terrain_list()
 	_select_terrain(id)
 
