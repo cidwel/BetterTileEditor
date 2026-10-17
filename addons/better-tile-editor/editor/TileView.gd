@@ -531,7 +531,8 @@ func _is_untiled(source: TileSetAtlasSource, coord: Vector2i) -> bool:
 		return false
 	if source.get_tile_at_coords(coord) != Vector2i(-1, -1):
 		return false
-	return _art_cells(source, grid)[coord.y * grid.x + coord.x] == 1
+	# Painting types takes empty cells too: a see-through tile can be a terrain's centre.
+	return paint_mode == PaintMode.PAINT_TYPE or _art_cells(source, grid)[coord.y * grid.x + coord.x] == 1
 
 
 ## The untiled cell under a _texture_at hit: {coord, region}, or {}.
