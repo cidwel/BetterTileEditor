@@ -61,6 +61,11 @@ var _summary_detail: Label
 var _turn_checks := {}
 var _light_warning: TextureRect
 var _quarters_check: CheckBox
+var _rebuild_check: CheckBox
+## The generated atlases holding this terrain's pieces, and where each of their masks is:
+## {mask: [source_id, coord]}.
+var _generated := []
+var _homes := {}
 var _corners_check: CheckBox
 ## Each section is part of what Apply does only while its title's tick is on; collision
 ## starts off every time, so nothing gets shapes unasked.
@@ -205,6 +210,13 @@ func _build_make_section() -> Control:
 	_quarters_check.tooltip_text = "Put the rest together from quarters of your drawn tiles, saved as a new sheet."
 	_quarters_check.toggled.connect(func(on): EditorInterface.get_editor_settings().set_setting(QUARTERS_SETTING, on); _fill())
 	column.add_child(_quarters_check)
+	_rebuild_check = CheckBox.new()
+	_rebuild_check.text = "Rebuild generated pieces"
+	_rebuild_check.tooltip_text = ("Make the pieces in the generated sheets again from the art as it is now,\n"
+		+ "over the same tiles, so maps painted with them change too.")
+	_rebuild_check.button_pressed = true
+	_rebuild_check.toggled.connect(func(_on): _fill())
+	column.add_child(_rebuild_check)
 	_corners_check = CheckBox.new()
 	_corners_check.text = "Inner corners"
 	_corners_check.tooltip_text = ("This terrain has no inner corner drawn. Make them from its edges, bent round\n"
@@ -513,7 +525,20 @@ func _fill() -> void:
 	_builds.clear()
 	_missing_cards = 0
 	# Off, Missing pieces changes nothing, inner corners included: the terrain shows as it is.
-	_report = Coverage.analyse(_ts, _terrain_id, _other, _corners_check.button_pressed and _make_on.button_pressed)
+	var corners := _corners_check.button_pressed and _make_on.button_pressed
+	_report = Coverage.analyse(_ts, _terrain_id, _other, corners)
+	var full := _report
+	_generated = Quarters.generated_among(_ts, _report.tiles) if _report.error.is_empty() else []
+	_homes = {}
+	_rebuild_check.visible = not _generated.is_empty() and _make_on.button_pressed and _quarters_check.button_pressed
+	if _rebuilding():
+		# The generated pieces count as missing, to be made again from the drawn tiles alone.
+		_report = Coverage.analyse(_ts, _terrain_id, _other, corners, _generated)
+		if _report.error.is_empty():
+			for tile: Dictionary in full.tiles:
+				var home_mask := Coverage.normalize(tile.mask, _report.type, _report.with_corners)
+				if tile.alt == 0 and tile.source_id in _generated and not _homes.has(home_mask):
+					_homes[home_mask] = [tile.source_id, tile.coord]
 	_corners_check.get_parent().visible = _report.get("type") == BetterTileEditor.TerrainType.MATCH_TILES and not _report.get("drawn_corners", true)
 	_bend_pick.disabled = not _corners_check.button_pressed
 	if not _report.error.is_empty():
@@ -546,7 +571,9 @@ func _fill() -> void:
 	var shape := "blob" if _report.with_corners and _report.type == BetterTileEditor.TerrainType.MATCH_TILES else "sides only"
 	if _report.type == BetterTileEditor.TerrainType.MATCH_VERTICES:
 		shape = "corners"
-	_summary.text = "%d / %d pieces (%s)" % [need - missing.size(), need, shape]
+	var lacking: int = full.missing.size() if full.error.is_empty() else missing.size()
+	var rebuilt := built.keys().filter(func(m): return _homes.has(m))
+	_summary.text = "%d / %d pieces (%s)" % [need - lacking, need, shape]
 	var draw := missing.size() - suggestions.size() - built.size()
 	if _report.tiles.is_empty():
 		_summary_detail.text = "No tile has this terrain yet."
@@ -555,19 +582,22 @@ func _fill() -> void:
 	elif not making:
 		_summary_detail.text = "%d missing" % missing.size()
 	else:
-		var parts := ["%d missing" % missing.size()]
+		var parts := ["%d missing" % lacking] if lacking > 0 else []
+		if not rebuilt.is_empty():
+			parts.append("%d to rebuild" % rebuilt.size())
 		if not suggestions.is_empty():
 			parts.append("%d by transform" % suggestions.size())
-		if not built.is_empty():
-			parts.append("%d can be built" % built.size())
+		if built.size() > rebuilt.size():
+			parts.append("%d can be built" % (built.size() - rebuilt.size()))
 		if draw > 0:
 			parts.append("%d need drawing" % draw)
 		_summary_detail.text = " · ".join(parts)
 	var transformed := missing.filter(func(m): return by_mask.has(m))
-	var from_quarters := missing.filter(func(m): return built.has(m))
+	var from_quarters := missing.filter(func(m): return built.has(m) and not _homes.has(m))
 	var to_draw := missing.filter(func(m): return not by_mask.has(m) and not built.has(m))
 	_group("Transformed", transformed.map(func(m): return _card(m, by_mask[m], true)))
 	_group("From quarters", from_quarters.map(func(m): return _card(m, built[m], true)))
+	_group("Rebuilt", rebuilt.map(func(m): return _card(m, built[m], true)))
 	_group("Needs drawing", to_draw.map(func(m): return _card(m, {}, true)))
 	_group("Transforms in use", (_report.turns as Array).map(func(t): return _card(t.mask, t, false)))
 	_missing_cards = missing.size()
@@ -614,18 +644,28 @@ func _settle() -> void:
 		size -= Vector2i(0, 1)
 
 
-## The OK button says what it adds; the footer, where new art is saved.
+func _rebuilding() -> bool:
+	return _rebuild_check.visible and _rebuild_check.button_pressed
+
+
+## The OK button says what it adds or updates; the footer, where the art is saved.
 func _sync_apply() -> void:
 	var count := 0
 	var building := false
+	var updating := false
 	for checks: Dictionary in [_adds, _builds]:
 		for check: CheckBox in checks:
 			if check.button_pressed:
 				count += 1
 				building = building or checks == _builds
-	ok_button_text = ("Add %d piece%s" % [count, "" if count == 1 else "s"]) if count > 0 else "Apply"
+				updating = updating or checks == _builds and _homes.has(checks[check].mask)
+	var pieces := "%d piece%s" % [count, "" if count == 1 else "s"]
+	ok_button_text = ("Update " if updating else "Add ") + pieces if count > 0 else "Apply"
 	_where.text = ""
-	if building:
+	if building and _rebuilding():
+		var path: String = (_ts.get_source(_generated[0]) as TileSetAtlasSource).texture.resource_path
+		_where.text = "Saves over %s" % path if path.begins_with("res://") else ""
+	elif building:
 		var first: Dictionary = _builds.values()[0].quarters[0]
 		_where.text = "Saves to %s" % Quarters.file_for(_ts, BetterTileEditor.get_terrain(_ts, _terrain_id).name,
 			first.source_id, BetterTileEditor.get_terrain(_ts, _other).name if _other >= 0 else "")
@@ -944,7 +984,8 @@ func _on_confirmed() -> void:
 			masks = built.map(func(b): return b.mask).filter(func(m): return _reaches(m))})
 	applied.emit({added = added, removed = removed, built = built, variety = variety, collision = collision,
 		other = _other, with_corners = _report.with_corners, corners = _report.upgrade if _make_on.button_pressed else [],
-		shapes_off = not _collision_on.button_pressed})
+		shapes_off = not _collision_on.button_pressed,
+		rebuild = {sources = _generated, homes = _homes} if _rebuilding() and not built.is_empty() else {}})
 
 
 ## A folding section whose header has its on/off tick before its name, where it is seen:

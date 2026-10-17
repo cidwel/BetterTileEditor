@@ -435,16 +435,8 @@ static func build_source(ts: TileSet, terrain_id: int, pieces: Array, size: Vect
 	for i in pieces.size():
 		var image := compose(ts, pieces[i].quarters, size, sheets)
 		sheet.blit_rect(image, Rect2i(Vector2i.ZERO, size), cells[i] * size)
-	var texture: Texture2D = null
-	if not path.is_empty() and sheet.save_png(path) == OK:
-		var fs := EditorInterface.get_resource_filesystem()
-		fs.update_file(path)
-		fs.reimport_files(PackedStringArray([path]))
-		texture = ResourceLoader.load(path, "Texture2D", ResourceLoader.CACHE_MODE_REPLACE) as Texture2D
-	if texture == null:
-		texture = ImageTexture.create_from_image(sheet)
 	var src := TileSetAtlasSource.new()
-	src.texture = texture
+	src.texture = _save_sheet(sheet, path)
 	src.texture_region_size = size
 	src.set_meta(GENERATED_META, {terrain = BetterTileEditor.get_terrain(ts, terrain_id).name, file = path})
 	for cell in cells:
@@ -452,10 +444,120 @@ static func build_source(ts: TileSet, terrain_id: int, pieces: Array, size: Vect
 	return src
 
 
+## The sheet saved as a PNG at path and imported, or an ImageTexture when that fails.
+static func _save_sheet(sheet: Image, path: String) -> Texture2D:
+	if not path.is_empty() and sheet.save_png(path) == OK:
+		var fs := EditorInterface.get_resource_filesystem()
+		fs.update_file(path)
+		fs.reimport_files(PackedStringArray([path]))
+		var texture := ResourceLoader.load(path, "Texture2D", ResourceLoader.CACHE_MODE_REPLACE) as Texture2D
+		if texture != null:
+			return texture
+	return ImageTexture.create_from_image(sheet)
+
+
+static func generated_among(ts: TileSet, tiles: Array) -> Array:
+	var out := []
+	for tile: Dictionary in tiles:
+		if not tile.source_id in out and ts.get_source(tile.source_id).has_meta(GENERATED_META):
+			out.append(tile.source_id)
+	return out
+
+
+static func _sheet_path(src: TileSetAtlasSource) -> String:
+	var path := src.texture.resource_path if src.texture != null else ""
+	return path if path.begins_with("res://") else ""
+
+
+## Cells in a generated atlas for pieces made again: where each mask already is (homes:
+## {mask: [source_id, coord]}), else its template place or the first free cell below.
+static func cells_in(src: TileSetAtlasSource, source_id: int, pieces: Array, homes: Dictionary, type: int) -> Array[Vector2i]:
+	var with_corners := false
+	for piece: Dictionary in pieces:
+		for corner in Coverage.CORNERS:
+			with_corners = with_corners or int(piece.mask) & (1 << corner) != 0
+	var template := layout_template(type, with_corners)
+	var out: Array[Vector2i] = []
+	var taken := {}
+	for piece: Dictionary in pieces:
+		var home: Array = homes.get(piece.mask, [])
+		var cell := Vector2i(-1, -1)
+		if not home.is_empty() and home[0] == source_id:
+			cell = home[1]
+		else:
+			cell = template.get(int(piece.mask), Vector2i(-1, -1))
+			if cell.x < 0 or src.has_tile(cell) or taken.has(cell):
+				cell = Vector2i(0, LAYOUT_REST_ROW)
+				while src.has_tile(cell) or taken.has(cell):
+					cell.x += 1
+					if cell.x == COLUMNS:
+						cell = Vector2i(0, cell.y + 1)
+		taken[cell] = true
+		out.append(cell)
+	return out
+
+
+## What rewrite_source changes on a generated atlas, for undo.
+static func snapshot(ts: TileSet, src: TileSetAtlasSource, cells: Array) -> Dictionary:
+	var shapes := {}
+	var made := []
+	for cell: Vector2i in cells:
+		if not src.has_tile(cell):
+			made.append(cell)
+			continue
+		var td := src.get_tile_data(cell, 0)
+		var layers := []
+		for layer in ts.get_physics_layers_count():
+			layers.append(get_shapes(td, layer))
+		shapes[cell] = layers
+	var image := src.texture.get_image()
+	var path := _sheet_path(src)
+	if not path.is_empty():
+		var on_disk := Image.load_from_file(ProjectSettings.globalize_path(path))
+		if on_disk != null:
+			image = on_disk
+	return {image = image, path = path, made = made, shapes = shapes}
+
+
+## Makes pieces again over their cells in a generated atlas (adding the cells it lacks), the
+## sheet saved over its file, so painted maps show the new art.
+static func rewrite_source(ts: TileSet, src: TileSetAtlasSource, terrain_id: int, pieces: Array, cells: Array,
+		before: Dictionary, shapes := {}, other := -1, with_corners := true) -> void:
+	var size := src.texture_region_size
+	var old: Image = before.image.duplicate()
+	old.convert(Image.FORMAT_RGBA8)
+	var extent := old.get_size()
+	for cell: Vector2i in cells:
+		extent = extent.max((cell + Vector2i.ONE) * size)
+	var sheet := Image.create(extent.x, extent.y, false, Image.FORMAT_RGBA8)
+	sheet.blit_rect(old, Rect2i(Vector2i.ZERO, old.get_size()), Vector2i.ZERO)
+	var sheets := {}
+	for i in pieces.size():
+		sheet.blit_rect(compose(ts, pieces[i].quarters, size, sheets), Rect2i(Vector2i.ZERO, size), cells[i] * size)
+	src.texture = _save_sheet(sheet, before.path)
+	for cell: Vector2i in cells:
+		if not src.has_tile(cell):
+			src.create_tile(cell)
+	fill_source(ts, src, terrain_id, pieces, shapes, other, with_corners, cells)
+
+
+static func restore_source(ts: TileSet, src: TileSetAtlasSource, before: Dictionary) -> void:
+	for cell: Vector2i in before.made:
+		if src.has_tile(cell):
+			src.remove_tile(cell)
+	for cell: Vector2i in before.shapes:
+		var td := src.get_tile_data(cell, 0)
+		var layers: Array = before.shapes[cell]
+		for layer in mini(layers.size(), ts.get_physics_layers_count()):
+			set_shapes(ts, td, layer, layers[layer])
+	src.texture = _save_sheet(before.image, before.path)
+
+
 ## Sets the new atlas's terrain, peering bits (open ones facing `other`) and shapes, once it is
-## in the tile set. shapes: {mode, layer, only, strip, type, with_corners}.
+## in the tile set. shapes: {mode, layer, only, strip, type, with_corners}; at: their cells, when
+## not the layout's.
 static func fill_source(ts: TileSet, src: TileSetAtlasSource, terrain_id: int, pieces: Array, shapes := {},
-		other := -1, with_corners := true) -> void:
+		other := -1, with_corners := true, at: Array = []) -> void:
 	var sheets := {}
 	var type: int = BetterTileEditor.get_terrain(ts, terrain_id).type
 	var facing := []
@@ -463,7 +565,7 @@ static func fill_source(ts: TileSet, src: TileSetAtlasSource, terrain_id: int, p
 		for bit in BetterTileEditor.data.get_terrain_peering_cells(ts, type):
 			if type == BetterTileEditor.TerrainType.MATCH_VERTICES or Coverage.SIDES.has(bit) or with_corners:
 				facing.append(bit)
-	var cells := layout(pieces, type)
+	var cells: Array = at if not at.is_empty() else layout(pieces, type)
 	for i in pieces.size():
 		var td := src.get_tile_data(cells[i], 0)
 		BetterTileEditor.set_tile_terrain_type(ts, td, terrain_id)

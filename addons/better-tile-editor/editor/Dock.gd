@@ -8516,7 +8516,8 @@ func _apply_coverage_turns(added: Array, removed: Array, built: Array = [], terr
 
 
 ## Applies the window's plan as one undoable step: turns added to and taken from tiles, the
-## fill tiles' variety, and the pieces put together from quarters, in a new atlas.
+## fill tiles' variety, and the pieces put together from quarters, in a new atlas or, rebuilding,
+## over the generated ones.
 func _apply_coverage(plan: Dictionary, terrain_id: int) -> void:
 	# {TileData: [transforms before, weight before, transforms after, weight after]}
 	var lists := {}
@@ -8552,7 +8553,8 @@ func _apply_coverage(plan: Dictionary, terrain_id: int) -> void:
 	var corners: Array = plan.get("corners", [])
 	if lists.is_empty() and (built.is_empty() or terrain_id < 0) and collision.is_empty() and corners.is_empty():
 		return
-	undo_manager.create_action("Make missing pieces", UndoRedo.MERGE_DISABLE, tileset)
+	undo_manager.create_action("Update generated pieces" if plan.get("rebuild", {}).has("sources") else "Make missing pieces",
+		UndoRedo.MERGE_DISABLE, tileset)
 	# A terrain of sides only read with corners: its drawn tiles, unnotched, get their corner bits.
 	for tile: Dictionary in corners:
 		var corner_src := tileset.get_source(tile.source_id) as TileSetAtlasSource
@@ -8580,12 +8582,7 @@ func _apply_coverage(plan: Dictionary, terrain_id: int) -> void:
 				undo_manager.add_do_method(QUARTER_PIECES, &"set_shapes", tileset, td, shape_layer, QUARTER_PIECES.piece_shapes(image, mask, collision))
 				undo_manager.add_undo_method(QUARTER_PIECES, &"set_shapes", tileset, td, shape_layer, before)
 	if not built.is_empty() and terrain_id >= 0:
-		var first: Dictionary = built[0].quarters[0]
 		var other: int = plan.get("other", -1)
-		var other_name: String = BetterTileEditor.get_terrain(tileset, other).name if other >= 0 else ""
-		var path: String = QUARTER_PIECES.file_for(tileset, BetterTileEditor.get_terrain(tileset, terrain_id).name, first.source_id, other_name)
-		var src: TileSetAtlasSource = QUARTER_PIECES.build_source(tileset, terrain_id, built, built[0].size, path)
-		var source_id := tileset.get_next_source_id()
 		var shapes := {}
 		if plan.get("shapes_off", false):
 			shapes = {off = true}
@@ -8596,9 +8593,36 @@ func _apply_coverage(plan: Dictionary, terrain_id: int) -> void:
 			# No list means every new piece.
 			if collision.has("masks"):
 				shapes.only = collision.masks
-		undo_manager.add_do_method(self, &"_add_quarter_source", src, source_id, terrain_id, built, shapes,
-			other, plan.get("with_corners", true))
-		undo_manager.add_undo_method(tileset, &"remove_source", source_id)
+		var rebuild: Dictionary = plan.get("rebuild", {})
+		var homes: Dictionary = rebuild.get("homes", {})
+		var into := {}
+		# Rebuilding: each piece goes back where its mask is, new ones into the first generated atlas.
+		for piece: Dictionary in built:
+			if not rebuild.has("sources"):
+				break
+			var home: Array = homes.get(piece.mask, [])
+			var source_id: int = home[0] if not home.is_empty() and tileset.has_source(home[0]) else rebuild.sources[0]
+			if tileset.has_source(source_id):
+				if not into.has(source_id):
+					into[source_id] = []
+				into[source_id].append(piece)
+		if not into.is_empty():
+			for source_id: int in into:
+				var src := tileset.get_source(source_id) as TileSetAtlasSource
+				var cells := QUARTER_PIECES.cells_in(src, source_id, into[source_id], homes, BetterTileEditor.get_terrain(tileset, terrain_id).type)
+				var before: Dictionary = QUARTER_PIECES.snapshot(tileset, src, cells)
+				undo_manager.add_do_method(QUARTER_PIECES, &"rewrite_source", tileset, src, terrain_id, into[source_id], cells,
+					before, shapes, other, plan.get("with_corners", true))
+				undo_manager.add_undo_method(QUARTER_PIECES, &"restore_source", tileset, src, before)
+		else:
+			var first: Dictionary = built[0].quarters[0]
+			var other_name: String = BetterTileEditor.get_terrain(tileset, other).name if other >= 0 else ""
+			var path: String = QUARTER_PIECES.file_for(tileset, BetterTileEditor.get_terrain(tileset, terrain_id).name, first.source_id, other_name)
+			var src: TileSetAtlasSource = QUARTER_PIECES.build_source(tileset, terrain_id, built, built[0].size, path)
+			var source_id := tileset.get_next_source_id()
+			undo_manager.add_do_method(self, &"_add_quarter_source", src, source_id, terrain_id, built, shapes,
+				other, plan.get("with_corners", true))
+			undo_manager.add_undo_method(tileset, &"remove_source", source_id)
 	undo_manager.add_do_method(tile_view, &"queue_redraw")
 	undo_manager.add_undo_method(tile_view, &"queue_redraw")
 	undo_manager.commit_action()

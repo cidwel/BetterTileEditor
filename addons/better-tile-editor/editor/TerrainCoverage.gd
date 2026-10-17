@@ -192,8 +192,9 @@ static func neighbours(ts: TileSet, terrain_id: int) -> Dictionary:
 
 
 ## {error, type, required, pieces, missing, tiles, turns, fill, variety, upgrade, ...}; a source
-## is {source_id, coord, alt, flags}. corners: read a sides-only terrain as a blob.
-static func analyse(ts: TileSet, terrain_id: int, other := -1, corners := false) -> Dictionary:
+## is {source_id, coord, alt, flags}. corners: read a sides-only terrain as a blob. skip: sources
+## left out.
+static func analyse(ts: TileSet, terrain_id: int, other := -1, corners := false, skip: Array = []) -> Dictionary:
 	var error := unsupported(ts, terrain_id)
 	if not error.is_empty():
 		return {error = error}
@@ -203,7 +204,7 @@ static func analyse(ts: TileSet, terrain_id: int, other := -1, corners := false)
 	for s in ts.get_source_count():
 		var source_id := ts.get_source_id(s)
 		var src := ts.get_source(source_id) as TileSetAtlasSource
-		if src == null:
+		if src == null or source_id in skip:
 			continue
 		for t in src.get_tiles_count():
 			var coord := src.get_tile_id(t)
