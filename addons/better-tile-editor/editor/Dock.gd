@@ -4048,9 +4048,10 @@ func _refresh_lock_icons() -> void:
 
 
 func _map_status_line() -> String:
-	var out := "%s  %s" % [tilemap.name, current_position]
 	var atlas := _atlas_hover_text()
-	out += atlas if not atlas.is_empty() else _map_cell_text()
+	if not atlas.is_empty():
+		return atlas
+	var out := "%s  %s" % [tilemap.name, current_position] + _map_cell_text()
 	if SUPPORT_LAYERS.is_locked(tilemap):
 		out += "   generated and locked: click to unlock it for hand editing"
 	elif SUPPORT_LAYERS.is_frozen(tilemap):
@@ -4067,11 +4068,12 @@ func _map_status_line() -> String:
 	return out
 
 
-## The tile under the cursor: its atlas coords, the atlas and the tile set it comes from.
+## The tile under the cursor: its atlas coords and the atlas it comes from.
 func _map_cell_text() -> String:
 	var source_id := tilemap.get_cell_source_id(current_position)
-	return _tile_text(tilemap.tile_set, source_id, tilemap.get_cell_atlas_coords(current_position),
+	var text := _tile_text(tilemap.tile_set, source_id, tilemap.get_cell_atlas_coords(current_position),
 		tilemap.get_cell_alternative_tile(current_position), "tile")
+	return "   " + text if not text.is_empty() else ""
 
 
 ## The atlas tile under the mouse in the tiles panel, said the same way, or "".
@@ -4086,12 +4088,10 @@ func _atlas_hover_text() -> String:
 func _tile_text(ts: TileSet, source_id: int, coord: Vector2i, alt: int, what: String) -> String:
 	if source_id < 0 or ts == null or not ts.has_source(source_id):
 		return ""
-	var set_name := ts.resource_path.get_file() if ts.resource_path.begins_with("res://") else "built-in tile set"
 	var source := ts.get_source(source_id)
 	if source is TileSetAtlasSource:
-		return "   %s %s%s · %s · %s" % [what, coord, " alt %d" % alt if alt != 0 else "",
-			tile_view.source_label(source, source_id), set_name]
-	return "   scene %d · scenes (ID: %d) · %s" % [alt, source_id, set_name]
+		return "%s %s%s · %s" % [what, coord, " alt %d" % alt if alt != 0 else "", tile_view.source_label(source, source_id)]
+	return "scene %d · scenes (ID: %d)" % [alt, source_id]
 
 
 func _lift(coords: Array, origin: Vector2i) -> Array:
