@@ -3657,8 +3657,7 @@ func _raw_modifier_down() -> bool:
 
 ## True when a left click would pick instead of paint.
 func picker_armed() -> bool:
-	# In Collisions the picker takes a tile's shape in Stamp and finds the tile in the atlas in the
-	# other modes; Custom data's picker click takes a tile's fields.
+	# In Collisions the picker takes a tile's shape; in Custom data it takes a tile's fields.
 	if tilemap == null or _map_select_active():
 		return false
 	# In Inspect the key adds to the selection instead.
@@ -3667,9 +3666,9 @@ func picker_armed() -> bool:
 	return _picker_active() or picker_modifier_down()
 
 
-## Custom data picks from the atlas too, so the eyedropper shows over it.
-func mouse_over_data_atlas() -> bool:
-	if not _data_mode() or not tile_view.is_visible_in_tree():
+## Collisions and Custom data pick from the atlas too, so the eyedropper shows over it.
+func mouse_over_pick_atlas() -> bool:
+	if not (_collision_mode() or _data_mode()) or not tile_view.is_visible_in_tree():
 		return false
 	var frame := tile_view.get_parent() as Control
 	return frame.get_global_rect().has_point(frame.get_global_mouse_position())

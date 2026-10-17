@@ -232,7 +232,7 @@ func _process(delta: float) -> void:
 		return
 	var editing: bool = was_visible and dock.tilemap != null and _canvas_active()
 	dock.set_picker_lit(editing and dock.picker_modifier_down())
-	var want: bool = editing and (_mouse_over_canvas() or dock.mouse_over_data_atlas()) and dock.picker_armed()
+	var want: bool = editing and (_mouse_over_canvas() or dock.mouse_over_pick_atlas()) and dock.picker_armed()
 	if want != _picker_cursor_on:
 		_set_picker_cursor(want)
 
