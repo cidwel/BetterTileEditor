@@ -207,7 +207,8 @@ func _build_make_section() -> Control:
 	turns.add_child(_light_warning)
 	_quarters_check = CheckBox.new()
 	_quarters_check.text = "Build from quarters"
-	_quarters_check.tooltip_text = "Put the rest together from quarters of your drawn tiles, saved as a new sheet."
+	_quarters_check.tooltip_text = ("Put the rest together from quarters of your drawn tiles, saved as a new sheet.\n"
+		+ "Art drawn as a line through the middle (a fence, nothing on the fill) is put together from the line instead.")
 	_quarters_check.toggled.connect(func(on): EditorInterface.get_editor_settings().set_setting(QUARTERS_SETTING, on); _fill())
 	column.add_child(_quarters_check)
 	_rebuild_check = CheckBox.new()
@@ -556,18 +557,21 @@ func _fill() -> void:
 	for found: Dictionary in suggestions:
 		by_mask[found.mask] = found
 	var built := {}
+	var line := {}
 	if making and _quarters_check.button_pressed:
 		var found := Quarters.catalog(_ts, _report, _turns())
 		found.bend = _bend_pick.get_selected_id()
+		line = Quarters.line_art(_ts, _report)
+		var size: Vector2i = line.get("size", found.region_size)
 		var sheets := {}
 		var images := {}
 		for mask: int in missing:
 			if by_mask.has(mask):
 				continue
-			var quarters := Quarters.plan(_ts, found, mask, _report.with_corners, images)
+			var quarters := Quarters.line_plan(line, mask) if not line.is_empty() else Quarters.plan(_ts, found, mask, _report.with_corners, images)
 			if not quarters.is_empty():
-				built[mask] = {mask = mask, quarters = quarters, size = found.region_size,
-					image = ImageTexture.create_from_image(Quarters.compose(_ts, quarters, found.region_size, sheets))}
+				built[mask] = {mask = mask, quarters = quarters, size = size,
+					image = ImageTexture.create_from_image(Quarters.compose(_ts, quarters, size, sheets))}
 	var shape := "blob" if _report.with_corners and _report.type == BetterTileEditor.TerrainType.MATCH_TILES else "sides only"
 	if _report.type == BetterTileEditor.TerrainType.MATCH_VERTICES:
 		shape = "corners"
@@ -596,7 +600,7 @@ func _fill() -> void:
 	var from_quarters := missing.filter(func(m): return built.has(m) and not _homes.has(m))
 	var to_draw := missing.filter(func(m): return not by_mask.has(m) and not built.has(m))
 	_group("Transformed", transformed.map(func(m): return _card(m, by_mask[m], true)))
-	_group("From quarters", from_quarters.map(func(m): return _card(m, built[m], true)))
+	_group("Along the line" if not line.is_empty() else "From quarters", from_quarters.map(func(m): return _card(m, built[m], true)))
 	_group("Rebuilt", rebuilt.map(func(m): return _card(m, built[m], true)))
 	_group("Needs drawing", to_draw.map(func(m): return _card(m, {}, true)))
 	_group("Transforms in use", (_report.turns as Array).map(func(t): return _card(t.mask, t, false)))
@@ -696,7 +700,14 @@ func _card(mask: int, source: Dictionary, adding: bool) -> Control:
 		return card
 	var check := CheckBox.new()
 	check.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	if source.has("quarters"):
+	if source.has("quarters") and source.quarters[0].has("arms"):
+		var names := {TileSet.CELL_NEIGHBOR_TOP_SIDE: "up", TileSet.CELL_NEIGHBOR_RIGHT_SIDE: "right",
+			TileSet.CELL_NEIGHBOR_BOTTOM_SIDE: "down", TileSet.CELL_NEIGHBOR_LEFT_SIDE: "left"}
+		var arms: Array = source.quarters[0].arms.keys().map(func(b): return names[b])
+		check.tooltip_text = ("The line through the middle, from the centre %s" % ", ".join(arms)) if not arms.is_empty() else "No line: nothing drawn"
+		check.button_pressed = true
+		_builds[check] = {mask = source.mask, quarters = source.quarters, size = source.size, image = source.image}
+	elif source.has("quarters"):
 		var parts := []
 		for quarter in 4:
 			var from: Dictionary = source.quarters[quarter]

@@ -270,9 +270,106 @@ static func _image(ts: TileSet, source: Dictionary, images: Dictionary) -> Image
 
 
 static func _key(source: Dictionary) -> String:
+	if source.has("arms"):
+		return "arms|%s" % str(source.arms)
 	if source.has("synth"):
 		return "inner|%d|%d|%s|%s|%s" % [source.synth, source.get("bend", Bend.ROUND), _key(source.fill), _key(source.edge_v), _key(source.edge_h)]
 	return "%d|%s|%d" % [source.source_id, source.coord, source.flags]
+
+
+const _LEFT_EDGE := [TileSet.CELL_NEIGHBOR_TOP_SIDE, TileSet.CELL_NEIGHBOR_TOP_RIGHT_CORNER, TileSet.CELL_NEIGHBOR_RIGHT_SIDE,
+	TileSet.CELL_NEIGHBOR_BOTTOM_RIGHT_CORNER, TileSet.CELL_NEIGHBOR_BOTTOM_SIDE]
+## Each line family: the edge tile it is drawn in, as the left edge turned, and whether it runs down.
+const _LINES := {
+	&"left": [0, true], &"right": [Coverage.H, true],
+	&"top": [Coverage.T | Coverage.H, false], &"bottom": [Coverage.T | Coverage.V, false],
+}
+
+
+## A fence drawn through the middle of the edge tiles, empty fill (quarters would cut it in two):
+## {size, left/right/top/bottom: [source_id, coord, from, to]}, or {} when the art is not like that.
+static func line_art(ts: TileSet, report: Dictionary) -> Dictionary:
+	if report.type != BetterTileEditor.TerrainType.MATCH_TILES or not report.with_corners:
+		return {}
+	var sheets := {}
+	for tile: Dictionary in report.fill_tiles:
+		var fill := tile_image(ts, {source_id = tile.source_id, coord = tile.coord, flags = 0}, sheets)
+		if fill.get_used_rect().has_area():
+			return {}
+	var left := 0
+	for bit: int in _LEFT_EDGE:
+		left |= 1 << bit
+	var out := {}
+	for family: StringName in _LINES:
+		var mask := Coverage.normalize(Coverage.transform_mask(left, _LINES[family][0]), report.type, true)
+		var found: Array = report.tiles.filter(func(t): return t.alt == 0 and Coverage.normalize(t.mask, report.type, true) == mask)
+		if found.is_empty():
+			return {}
+		var image := tile_image(ts, {source_id = found[0].source_id, coord = found[0].coord, flags = 0}, sheets)
+		var used := image.get_used_rect()
+		var size := image.get_size()
+		var down: bool = _LINES[family][1]
+		var from := used.position.x if down else used.position.y
+		var to := (used.end.x if down else used.end.y) - 1
+		var span := size.x if down else size.y
+		# Away from the open side, and not over the whole tile: a line through the middle.
+		if not used.has_area() or to - from >= span / 2 or (family in [&"left", &"top"] and from < span / 4) \
+				or (family in [&"right", &"bottom"] and to >= span - span / 4):
+			return {}
+		out[family] = [found[0].source_id, found[0].coord, from, to]
+		out.size = size
+	return out
+
+
+## A piece of line art: the line goes from the centre to each joined side the fence runs along
+## (one with an open side or notch beside it), as the four quarters compose takes.
+static func line_plan(line: Dictionary, mask: int) -> Array:
+	var has := func(bit: int) -> bool: return mask & (1 << bit) != 0
+	var open := func(bits: Array) -> bool: return bits.any(func(b): return not has.call(b))
+	var arms := {}
+	for arm: Array in [
+		[TileSet.CELL_NEIGHBOR_TOP_SIDE, [TileSet.CELL_NEIGHBOR_LEFT_SIDE, TileSet.CELL_NEIGHBOR_TOP_LEFT_CORNER], [TileSet.CELL_NEIGHBOR_RIGHT_SIDE, TileSet.CELL_NEIGHBOR_TOP_RIGHT_CORNER], &"left", &"right"],
+		[TileSet.CELL_NEIGHBOR_BOTTOM_SIDE, [TileSet.CELL_NEIGHBOR_LEFT_SIDE, TileSet.CELL_NEIGHBOR_BOTTOM_LEFT_CORNER], [TileSet.CELL_NEIGHBOR_RIGHT_SIDE, TileSet.CELL_NEIGHBOR_BOTTOM_RIGHT_CORNER], &"left", &"right"],
+		[TileSet.CELL_NEIGHBOR_RIGHT_SIDE, [TileSet.CELL_NEIGHBOR_TOP_SIDE, TileSet.CELL_NEIGHBOR_TOP_RIGHT_CORNER], [TileSet.CELL_NEIGHBOR_BOTTOM_SIDE, TileSet.CELL_NEIGHBOR_BOTTOM_RIGHT_CORNER], &"top", &"bottom"],
+		[TileSet.CELL_NEIGHBOR_LEFT_SIDE, [TileSet.CELL_NEIGHBOR_TOP_SIDE, TileSet.CELL_NEIGHBOR_TOP_LEFT_CORNER], [TileSet.CELL_NEIGHBOR_BOTTOM_SIDE, TileSet.CELL_NEIGHBOR_BOTTOM_LEFT_CORNER], &"top", &"bottom"],
+	]:
+		if has.call(arm[0]) and (open.call(arm[1]) or open.call(arm[2])):
+			arms[arm[0]] = line[arm[3] if open.call(arm[1]) else arm[4]]
+	var first: Array = line.left
+	var source := {arms = arms, size = line.size, source_id = first[0], coord = first[1], flags = 0}
+	return [source, source, source, source]
+
+
+## A line piece as a whole tile: each arm cut from its edge tile, from the side to the centre or
+## on to the far edge of the line it meets there.
+static func _line_image(ts: TileSet, source: Dictionary, sheets: Dictionary) -> Image:
+	var size: Vector2i = source.size
+	var out := Image.create(size.x, size.y, false, Image.FORMAT_RGBA8)
+	var centre := size / 2
+	var reach := {x0 = centre.x, x1 = centre.x, y0 = centre.y, y1 = centre.y}
+	for bit: int in source.arms:
+		var arm: Array = source.arms[bit]
+		if bit in [TileSet.CELL_NEIGHBOR_TOP_SIDE, TileSet.CELL_NEIGHBOR_BOTTOM_SIDE]:
+			reach.x0 = mini(reach.x0, arm[2])
+			reach.x1 = maxi(reach.x1, arm[3] + 1)
+		else:
+			reach.y0 = mini(reach.y0, arm[2])
+			reach.y1 = maxi(reach.y1, arm[3] + 1)
+	for bit: int in source.arms:
+		var arm: Array = source.arms[bit]
+		var image := tile_image(ts, {source_id = arm[0], coord = arm[1], flags = 0}, sheets)
+		var rect: Rect2i
+		match bit:
+			TileSet.CELL_NEIGHBOR_TOP_SIDE:
+				rect = Rect2i(0, 0, size.x, reach.y1)
+			TileSet.CELL_NEIGHBOR_BOTTOM_SIDE:
+				rect = Rect2i(0, reach.y0, size.x, size.y - reach.y0)
+			TileSet.CELL_NEIGHBOR_LEFT_SIDE:
+				rect = Rect2i(0, 0, reach.x1, size.y)
+			_:
+				rect = Rect2i(reach.x0, 0, size.x - reach.x0, size.y)
+		out.blend_rect(image, rect, rect.position)
+	return out
 
 
 ## Made inner corner quarters: the fill with the edges bent round the corner, a few of each to
@@ -366,6 +463,8 @@ static func _differs(edge: Image, fill: Image, at: int, column: bool) -> bool:
 
 ## A tile's art turned the way the solver turns it: transposed first, then flipped.
 static func tile_image(ts: TileSet, source: Dictionary, sheets: Dictionary) -> Image:
+	if source.has("arms"):
+		return _line_image(ts, source, sheets)
 	if source.has("synth"):
 		return _inner_image(ts, source, sheets)
 	var src := ts.get_source(source.source_id) as TileSetAtlasSource
@@ -597,7 +696,7 @@ static func quarter_shapes(ts: TileSet, quarters: Array, size: Vector2i, layer: 
 	for quarter in 4:
 		var from: Dictionary = quarters[quarter]
 		var from_src := ts.get_source(from.source_id) as TileSetAtlasSource
-		if from_src == null or layer >= ts.get_physics_layers_count():
+		if from_src == null or layer >= ts.get_physics_layers_count() or from.has("arms"):
 			continue
 		var from_td := from_src.get_tile_data(from.coord, 0)
 		var r := Rect2(rects[quarter].position, rects[quarter].size)
