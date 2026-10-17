@@ -133,6 +133,7 @@ static func get_objects(ts: TileSet) -> Array:
 			"size": size,
 			"fused": fused["rect"].position,
 			"closed": lone["rect"].position,
+			"solid_inside": bool(cfg.get("solid_inside", false)),
 		})
 	_objects_cache[ts] = out
 	return out
@@ -173,14 +174,17 @@ static func has_objects(ts: TileSet) -> bool:
 	return r
 
 
-static func make_config(size: Vector2i, lone: Vector2i, mass := false, base := Rect2i()) -> Dictionary:
-	return {
+static func make_config(size: Vector2i, lone: Vector2i, mass := false, base := Rect2i(), solid_inside := false) -> Dictionary:
+	var cfg := {
 		"size": [size.x, size.y],
 		"lone": [lone.x, lone.y],
 		"mass": mass,
 		"base": [base.position.x, base.position.y, base.size.x, base.size.y] if base.has_area() \
 				else [0, 0, size.x, size.y],
 	}
+	if solid_inside:
+		cfg["solid_inside"] = true
+	return cfg
 
 
 ## Base coordinates are relative to the drawing top-left, in tiles.
@@ -301,7 +305,77 @@ static func _rebuild(tm: TileMapLayer, anchor: Vector2i, o: Dictionary, objects:
 			if not has[side]:
 				fused = false
 				break
-		tm.set_cell(anchor + c["off"], source, (o["fused"] if fused else o["closed"]) + c["off"], 0)
+		var coord: Vector2i = (o["fused"] if fused else o["closed"]) + c["off"]
+		# With another object right above, the top row is inside the group, so it is solid whole.
+		var alt := 0
+		if o.get("solid_inside", false) and has["n"] and c["off"].y == 0:
+			alt = covered_alternative(tm.tile_set, source, coord)
+		tm.set_cell(anchor + c["off"], source, coord, alt)
+
+
+const COVERED_META := &"_better_terrain_covered"
+
+
+## The alternative of [param coord] with a whole-tile collision, made the first time it is needed;
+## 0 when the tile has no collision or is solid whole already.
+static func covered_alternative(ts: TileSet, source_id: int, coord: Vector2i) -> int:
+	var src := ts.get_source(source_id) as TileSetAtlasSource
+	if src == null or not src.has_tile(coord):
+		return 0
+	for i in src.get_alternative_tiles_count(coord):
+		var id := src.get_alternative_tile_id(coord, i)
+		if id != 0 and src.get_tile_data(coord, id).has_meta(COVERED_META):
+			return id
+	var base := src.get_tile_data(coord, 0)
+	var half := Vector2(src.texture_region_size * src.get_tile_size_in_atlas(coord)) / 2.0
+	var whole := PackedVector2Array([-half, Vector2(half.x, -half.y), half, Vector2(-half.x, half.y)])
+	var layers := []
+	for layer in ts.get_physics_layers_count():
+		var count := base.get_collision_polygons_count(layer)
+		if count == 0:
+			continue
+		if count == 1 and _same_rect(base.get_collision_polygon_points(layer, 0), whole):
+			continue
+		layers.append(layer)
+	if layers.is_empty():
+		return 0
+	var id := src.create_alternative_tile(coord)
+	var td := src.get_tile_data(coord, id)
+	for p in base.get_property_list():
+		if p.usage & PROPERTY_USAGE_STORAGE and p.name != "script":
+			td.set(p.name, base.get(p.name))
+	for m in base.get_meta_list():
+		td.set_meta(m, base.get_meta(m))
+	td.set_meta(COVERED_META, true)
+	for layer: int in layers:
+		td.set_collision_polygons_count(layer, 1)
+		td.set_collision_polygon_points(layer, 0, whole)
+		td.set_collision_polygon_one_way(layer, 0, false)
+	return id
+
+
+static func _same_rect(points: PackedVector2Array, rect: PackedVector2Array) -> bool:
+	if points.size() != 4:
+		return false
+	for p in rect:
+		if not points.has(p):
+			return false
+	return true
+
+
+## Rebuilds every placed object of [param terrain_id], after its options change.
+static func refresh_object(tm: TileMapLayer, terrain_id: int) -> void:
+	if tm == null or tm.tile_set == null:
+		return
+	invalidate(tm.tile_set)
+	var objects := get_objects(tm.tile_set)
+	var anchors := {}
+	for cell in tm.get_used_cells():
+		var o := object_of_cell(tm, cell, objects)
+		if not o.is_empty() and o["id"] == terrain_id:
+			anchors[anchor_of(cell, o["size"])] = o
+	for anchor in anchors:
+		_rebuild(tm, anchor, anchors[anchor], objects)
 
 
 static func _block_has_seam(seams: Dictionary, anchor: Vector2i, block_cells: Array) -> bool:

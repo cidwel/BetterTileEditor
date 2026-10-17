@@ -1979,9 +1979,13 @@ func perform_edit_terrain(index: int, terrain_name: String, color: Color, type: 
 	if icon.has("path") and icon.path.is_empty():
 		var terrain = BetterTileEditor.get_terrain(tileset, index)
 		valid_icon = terrain.icon
+	var solid_before := bool(ObjectTerrain.object_config(tileset, index).get("solid_inside", false))
 	if BetterTileEditor.set_terrain(tileset, index, terrain_name, color, type, categories, valid_icon, group, object):
 		rebuild_terrain_list()
 		tile_view.queue_redraw()
+		if bool(object.get("solid_inside", false)) != solid_before and tilemap != null:
+			for layer: TileMapLayer in _collision_layers():
+				ObjectTerrain.refresh_object(layer, index)
 	_warn_duplicate_name(terrain_name)
 
 

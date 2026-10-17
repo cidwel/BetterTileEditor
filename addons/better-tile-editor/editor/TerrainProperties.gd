@@ -59,7 +59,8 @@ var terrain_object : Dictionary:
 		if terrain_type != BetterTileEditor.TerrainType.OBJECT:
 			return {}
 		return ObjectTerrain.make_config(object_size, _lone_coord,
-				_object_preview != null and _object_preview.mass, _base_rect())
+				_object_preview != null and _object_preview.mass, _base_rect(),
+				_solid_inside != null and _solid_inside.button_pressed)
 
 var terrain_categories : Array: set = set_categories, get = get_categories
 
@@ -91,6 +92,8 @@ var _help_window : Window
 var _pending_group := ""
 var _pending_object := {}
 var _obj_rows := []
+var _solid_inside: CheckBox
+var _solid_rows := []
 var _size_spin := [null, null]
 var _base_selection := Rect2i(0, 0, 2, 2)
 var _base_rows := []
@@ -398,6 +401,11 @@ func set_object_data(ts: TileSet, terrain_id: int = -1) -> void:
 			_refresh_blocks())
 		_add_object_row(grid, "Placement base", _base_editor)
 		_base_rows.append(_obj_rows.back())
+		_solid_inside = CheckBox.new()
+		_solid_inside.text = "Solid inside groups"
+		_add_object_row(grid, "Collision", _solid_inside,
+			"Where another object sits right above, the top row gets a whole-tile collision, so a group is solid on its sides and only its north edge keeps the drawing's shape.")
+		_solid_rows.append(_obj_rows.back())
 		_obj_status = Label.new()
 		_obj_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		_obj_status.custom_minimum_size.x = 260
@@ -553,6 +561,8 @@ func _sync_object_row() -> void:
 		_lone_coord = Vector2i(at[0], at[1]) if at.size() == 2 else Vector2i(-1, -1)
 		if _object_preview != null:
 			_object_preview.mass = bool(cfg.get("mass", false))
+		if _solid_inside != null:
+			_solid_inside.button_pressed = bool(cfg.get("solid_inside", false))
 	if visible_rows:
 		_refresh_blocks()
 
@@ -587,6 +597,9 @@ func _refresh_blocks() -> void:
 	var as_area: bool = _object_preview != null and _object_preview.mass
 	for row in _base_rows:
 		row[0].visible = as_area and terrain_type == BetterTileEditor.TerrainType.OBJECT
+		row[1].visible = row[0].visible
+	for row in _solid_rows:
+		row[0].visible = not as_area and terrain_type == BetterTileEditor.TerrainType.OBJECT
 		row[1].visible = row[0].visible
 	var tall: bool = object_size.y > object_size.x
 	if _terrain_id < 0:

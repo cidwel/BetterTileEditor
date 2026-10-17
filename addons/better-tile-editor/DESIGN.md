@@ -3920,3 +3920,18 @@ after each stroke and with the full rebuild, and rewrites the whole layer's stre
 only writes cells that change). A region is every cell holding a block tile or a tile
 marked as the terrain, minus hand-placed cells and seams. A change moves tiles only along the
 runs through it, so `affected()` adds those runs to the stroke's undo restore point.
+
+### AV. Objects solid inside groups
+
+`ObjectTerrain.gd` → `covered_alternative()`, `refresh_object()`; `TerrainProperties.gd` → "Solid inside groups"
+
+A tree's top row often has a collision shaped like its canopy, open at the top and cut on a
+diagonal. In a group of stacked trees that leaves a notch at every row on the group's sides,
+and the player catches on them. With the Object option `solid_inside`, a block with another
+block of the same object right above it (its `n` neighbour, the same test joining uses) puts
+its top row down as an alternative tile whose collision is the whole tile. Only the group's
+north edge keeps the drawing's shape. The alternative copies the base tile's stored properties
+and metas, carries `_better_terrain_covered`, and is made the first time it is needed and reused
+after that. Tiles with no collision, or already solid whole, get none. Changing the option
+rebuilds that object's blocks on the layers of the open scene, and other scenes catch up when
+painted. Area (mass) objects do not use it yet.
