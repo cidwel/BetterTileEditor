@@ -64,7 +64,6 @@ const TOOL_MODES := {
 	"object_joined": [BT_SCRIPT.TerrainType.OBJECT],
 	"object_bake": [BT_SCRIPT.TerrainType.OBJECT],
 	"exemplar": [BT_SCRIPT.TerrainType.EXEMPLAR],
-	"stretch": [BT_SCRIPT.TerrainType.STRETCH],
 	"cliff": [BT_SCRIPT.TerrainType.MATCH_TILES, BT_SCRIPT.TerrainType.MATCH_VERTICES,
 		BT_SCRIPT.TerrainType.EXEMPLAR],
 }
@@ -1212,7 +1211,6 @@ func _tool_button(mode_name: String) -> Button:
 		"object_joined": return object_joined
 		"object_bake": return _oven_button
 		"exemplar": return _exemplar_button
-		"stretch": return _stretch_button
 		"cliff": return _cliff_button
 	return null
 
@@ -1239,6 +1237,8 @@ func _open_terrain_context(group: String, id: int = -1) -> void:
 			item.call("Slope.svg", "Set up slopes…", 5)
 		if COVERAGE.unsupported(tileset, id).is_empty():
 			item.call("MatchTiles.svg", "Complete terrain…", 6)
+		if terrain.type == BetterTileEditor.TerrainType.STRETCH:
+			item.call("Stretch.svg", "Choose what repeats…", 7)
 		var move := PopupMenu.new()
 		move.name = "MoveTo"
 		menu.add_child(move)
@@ -1270,6 +1270,7 @@ func _open_terrain_context(group: String, id: int = -1) -> void:
 				3: _on_remove_terrain_pressed()
 				5: _open_slope_roles()
 				6: _open_coverage(id)
+				7: _open_stretch_editor()
 	)
 	menu.popup_hide.connect(menu.queue_free)
 	menu.position = Vector2i(get_screen_transform() * get_local_mouse_position())
@@ -5234,20 +5235,7 @@ func _add_exemplar_button(toolbar: Node) -> void:
 	_exemplar_button = lookup
 
 
-var _stretch_button: Button = null
 var _stretch_window: Window = null
-
-
-func _add_stretch_button(toolbar: Node) -> void:
-	_stretch_button = Button.new()
-	_stretch_button.name = "StretchRepeat"
-	_icon_or_text(_stretch_button, ICON_DIR + "Stretch.svg", ["Tools"], "Repeat")
-	_stretch_button.tooltip_text = "Choose which row and column of the block repeat."
-	_stretch_button.focus_mode = Control.FOCUS_NONE
-	_stretch_button.pressed.connect(_open_stretch_editor)
-	toolbar.add_child(_stretch_button)
-	if _exemplar_button != null:
-		toolbar.move_child(_stretch_button, _exemplar_button.get_index() + 1)
 
 
 func _open_stretch_editor() -> void:
@@ -5387,7 +5375,6 @@ func _add_cliff_button() -> void:
 
 
 	_add_exemplar_button(toolbar)
-	_add_stretch_button(toolbar)
 	_add_oven_button()
 
 	_level_spin = SpinBox.new()
@@ -6666,7 +6653,7 @@ func _arrange_toolbar() -> void:
 	var terrain_options := HBoxContainer.new()
 	terrain_options.name = "TerrainOptions"
 	context.add_child(terrain_options)
-	for control: Control in [_picker, _fill_rule, _fill_seen, _fill_layer, _slope_autofill, _slope_freehand, _slope_smooth, _add_favorite_button, _quick_terrain_box, select_tiles, paint_type, paint_terrain, object_lone, object_joined, _oven_button, _exemplar_button, _stretch_button, paint_symmetry, symmetry_options, _cliff_button, live_test_button, _collision_mode_box, _data_panel.mode_bar]:
+	for control: Control in [_picker, _fill_rule, _fill_seen, _fill_layer, _slope_autofill, _slope_freehand, _slope_smooth, _add_favorite_button, _quick_terrain_box, select_tiles, paint_type, paint_terrain, object_lone, object_joined, _oven_button, _exemplar_button, paint_symmetry, symmetry_options, _cliff_button, live_test_button, _collision_mode_box, _data_panel.mode_bar]:
 		control.reparent(terrain_options)
 	_picker_select_layer.reparent(terrain_options)
 	terrain_options.move_child(_picker_select_layer, _picker.get_index() + 1)

@@ -3905,7 +3905,7 @@ row bands.
 terrain's config as `stretch = {source, rect, row, col}`. Only a fully marked rectangle
 replaces a pinned one, as in Patch. `row` and `col` are the ones that repeat and default to
 the middle ones. They are picked in a window, not on the atlas: it opens right after
-Create Stretch and from the Repeat button in the toolbar. Clicking a block tile takes its row
+Create Stretch and from the terrain's right-click menu (Choose what repeats…). Clicking a block tile takes its row
 and column, and a preview shows the block grown by 2×3. Apply is one undo step.
 
 **Each cell picks its tile by position**, rows and columns on their own: count the region

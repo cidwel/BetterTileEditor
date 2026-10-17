@@ -178,8 +178,8 @@ const MODE_STEPS := {
 		 + "a bridge, a rug. Paint any region and each cell takes the block tile for "
 		 + "its place in it: the first rows of the block at the top, the last rows "
 		 + "at the bottom, the edge columns at the sides.\n\nOne row and one column "
-		 + "repeat to fill the rest. They start as the middle ones; the Repeat "
-		 + "button in the toolbar shows the block and lets you pick another tile.", "stretch"],
+		 + "repeat to fill the rest. They start as the middle ones; right-click "
+		 + "the terrain and Choose what repeats to pick another tile.", "stretch"],
 		["Smaller than the block",
 		 "A region shorter than the block drops middle rows first, so the top and "
 		 + "the bottom always show; narrower drops middle columns. Every column of "
