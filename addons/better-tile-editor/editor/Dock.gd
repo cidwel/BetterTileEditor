@@ -4048,7 +4048,7 @@ func _refresh_lock_icons() -> void:
 
 
 func _map_status_line() -> String:
-	var out := "%s  %s" % [tilemap.name, current_position]
+	var out := "%s  %s" % [tilemap.name, current_position] + _map_cell_text()
 	if SUPPORT_LAYERS.is_locked(tilemap):
 		out += "   generated and locked: click to unlock it for hand editing"
 	elif SUPPORT_LAYERS.is_frozen(tilemap):
@@ -4063,6 +4063,21 @@ func _map_status_line() -> String:
 		out += "   seam" if BetterTileEditor.is_seam(tilemap, current_position) else ""
 		out += "   %d seam%s on this layer" % [count, "" if count == 1 else "s"]
 	return out
+
+
+## The tile under the cursor: its atlas coords, the atlas and the tile set it comes from.
+func _map_cell_text() -> String:
+	var source_id := tilemap.get_cell_source_id(current_position)
+	var ts := tilemap.tile_set
+	if source_id < 0 or ts == null or not ts.has_source(source_id):
+		return ""
+	var set_name := ts.resource_path.get_file() if ts.resource_path.begins_with("res://") else "built-in tile set"
+	var source := ts.get_source(source_id)
+	if source is TileSetAtlasSource:
+		var alt := tilemap.get_cell_alternative_tile(current_position)
+		return "   tile %s%s · %s · %s" % [tilemap.get_cell_atlas_coords(current_position), " alt %d" % alt if alt != 0 else "",
+			tile_view.source_label(source, source_id), set_name]
+	return "   scene %d · scenes (ID: %d) · %s" % [tilemap.get_cell_alternative_tile(current_position), source_id, set_name]
 
 
 func _lift(coords: Array, origin: Vector2i) -> Array:
