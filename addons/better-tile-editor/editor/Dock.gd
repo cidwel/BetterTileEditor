@@ -3706,6 +3706,8 @@ func _update_picker_tooltip() -> void:
 	if _picker == null:
 		return
 	var text := "Pick from the map what is under the cursor (I): a terrain tile selects\nits terrain, any other tile switches to the single-tile brush with it.\nAfter one pick it goes back to the previous tool."
+	if _collision_mode():
+		text = "Pick a tile's collision shape (I), on the map or in the atlas.\nThe next clicks stamp it on other tiles."
 	text += "\n\n%s+click picks with any tool. Change the key in Options." % PICKER_MODIFIER_NAMES[_picker_modifier()]
 	_picker.tooltip_text = text
 
@@ -7427,6 +7429,12 @@ func _copy_collision(source_id: int, coords: Vector2i) -> void:
 	var lay: Dictionary = SHAPES.layout(src, coords, cells)
 	var found: Dictionary = SHAPES.gather(src, tileset, lay, _collision_physics_layer())
 	SHAPES.clipboard = SHAPES.make_clip(found.normal, found.one_way, found.margin, lay, cells)
+	# A pick with the picker tool goes on to stamping it, with the tool used before.
+	if _collision_mode() and _picker_active():
+		if _collision_stamp_button != null:
+			_collision_stamp_button.button_pressed = true
+		if _tool_before_pick != null:
+			_tool_before_pick.button_pressed = true
 	_sync_collision_clipboard()
 
 
@@ -7451,8 +7459,8 @@ func _sync_collision_clipboard() -> void:
 
 ## Stamp takes the shape of the tile clicked: with nothing copied yet, or with the picker's key.
 func _collision_takes_shape(event: InputEventWithModifiers) -> bool:
-	return _collision_mode() and _collision_stamp_mode \
-		and (SHAPES.clipboard.is_empty() or _picker_modifier_held(event))
+	return _collision_mode() and (_picker_active() or _collision_stamp_mode \
+		and (SHAPES.clipboard.is_empty() or _picker_modifier_held(event)))
 
 
 func _open_collision_shape(source_id: int, origin: Vector2i, cells: Vector2i) -> void:
@@ -7630,9 +7638,10 @@ func _sync_collision_mode() -> void:
 	if on:
 		select_tiles.visible = false
 		tile_view.dim_unassigned_tiles = false
-	# The toolbar's picker picks brushes for painting terrain; these tools have none to pick.
+	# Collisions pick a tile's shape; custom data has no use for the picker.
 	if _picker != null:
-		_picker.visible = not on
+		_picker.visible = not data
+		_update_picker_tooltip()
 	_sync_select_layer()
 	# Only the pencil and the rectangle make sense for marking tiles.
 	for button in _tools_off_for_collisions:
@@ -7684,13 +7693,16 @@ func _collision_canvas_input(event: InputEvent) -> bool:
 			return true
 		if event.pressed and _data_inspecting():
 			return true
+		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _collision_mode() and _picker_active():
+			var picked := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))
+			if not picked.is_empty():
+				_copy_collision(picked[0], picked[1])
+			return true
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _collision_mode() \
-				and not _collision_stamp_mode and (_picker_modifier_held(event) or _picker_active()):
+				and not _collision_stamp_mode and _picker_modifier_held(event):
 			var hit := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))
 			if not hit.is_empty():
 				_show_in_atlas(hit[0], hit[1])
-			if _picker_active() and _tool_before_pick != null:
-				_tool_before_pick.button_pressed = true
 			return true
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _collision_takes_shape(event):
 			var source := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))

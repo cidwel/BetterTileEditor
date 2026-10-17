@@ -2040,16 +2040,17 @@ func _collision_input(event: InputEvent) -> bool:
 				collision_paste_requested.emit(highlighted_tile_part.source_id, highlighted_tile_part.coord)
 				accept_event()
 		return true
+	if event is InputEventMouseButton and not data_mode and event.pressed and event.button_index == MOUSE_BUTTON_LEFT \
+			and collision_pick_check.is_valid() and collision_pick_check.call(event):
+		accept_event()
+		var taken := tile_part_from_position(event.position)
+		if taken.valid:
+			collision_copy_requested.emit(taken.source_id, taken.coord)
+		return true
 	if collision_shape_mode or data_inspect:
 		return false
 	if event is InputEventMouseButton and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
 		accept_event()
-		if not data_mode and event.pressed and event.button_index == MOUSE_BUTTON_LEFT \
-				and collision_pick_check.is_valid() and collision_pick_check.call(event):
-			var taken := tile_part_from_position(event.position)
-			if taken.valid:
-				collision_copy_requested.emit(taken.source_id, taken.coord)
-			return true
 		if data_mode and event.pressed and event.button_index == MOUSE_BUTTON_LEFT \
 				and data_pick_check.is_valid() and data_pick_check.call(event):
 			var picked := tile_part_from_position(event.position)
