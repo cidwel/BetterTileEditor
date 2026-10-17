@@ -22,6 +22,8 @@ signal collision_copy_requested(source_id: int, coord: Vector2i)
 signal collision_paste_requested(source_id: int, coord: Vector2i)
 signal data_pick_requested(source_id: int, coord: Vector2i)
 signal data_preset_key(index: int)
+## The atlas tile under the mouse changed (highlighted_tile_part), or the mouse left.
+signal hover_changed
 
 ## Collisions tool: clicks mark tiles solid or clear, and each tile shows its polygons.
 var collision_mode := false
@@ -1310,6 +1312,7 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_MOUSE_EXIT and highlighted_tile_part.valid:
 		highlighted_tile_part = {valid = false}
 		queue_redraw()
+		_sync_hover()
 
 
 # Grid lines, and a dark cover over cells that are not tiles.
@@ -1606,7 +1609,18 @@ var shortcuts_blocked := false
 func _gui_input(event) -> void:
 	var t := PERF.begin()
 	_gui_input_timed(event)
+	_sync_hover()
 	PERF.end("tileview.gui_input", t)
+
+
+var _hover_key := []
+
+func _sync_hover() -> void:
+	var part := highlighted_tile_part
+	var key := [part.source_id, part.coord, part.get("alternate", 0)] if part.get("valid", false) else []
+	if key != _hover_key:
+		_hover_key = key
+		hover_changed.emit()
 
 
 func _gui_input_timed(event) -> void:

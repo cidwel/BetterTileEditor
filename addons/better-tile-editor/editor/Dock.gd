@@ -4048,7 +4048,9 @@ func _refresh_lock_icons() -> void:
 
 
 func _map_status_line() -> String:
-	var out := "%s  %s" % [tilemap.name, current_position] + _map_cell_text()
+	var out := "%s  %s" % [tilemap.name, current_position]
+	var atlas := _atlas_hover_text()
+	out += atlas if not atlas.is_empty() else _map_cell_text()
 	if SUPPORT_LAYERS.is_locked(tilemap):
 		out += "   generated and locked: click to unlock it for hand editing"
 	elif SUPPORT_LAYERS.is_frozen(tilemap):
@@ -4068,16 +4070,28 @@ func _map_status_line() -> String:
 ## The tile under the cursor: its atlas coords, the atlas and the tile set it comes from.
 func _map_cell_text() -> String:
 	var source_id := tilemap.get_cell_source_id(current_position)
-	var ts := tilemap.tile_set
+	return _tile_text(tilemap.tile_set, source_id, tilemap.get_cell_atlas_coords(current_position),
+		tilemap.get_cell_alternative_tile(current_position), "tile")
+
+
+## The atlas tile under the mouse in the tiles panel, said the same way, or "".
+func _atlas_hover_text() -> String:
+	var part: Dictionary = tile_view.highlighted_tile_part
+	if not part.get("valid", false):
+		return ""
+	return _tile_text(tileset, part.source_id, part.coord, part.get("alternate", 0),
+		"atlas cell" if part.get("untiled", false) else "atlas tile")
+
+
+func _tile_text(ts: TileSet, source_id: int, coord: Vector2i, alt: int, what: String) -> String:
 	if source_id < 0 or ts == null or not ts.has_source(source_id):
 		return ""
 	var set_name := ts.resource_path.get_file() if ts.resource_path.begins_with("res://") else "built-in tile set"
 	var source := ts.get_source(source_id)
 	if source is TileSetAtlasSource:
-		var alt := tilemap.get_cell_alternative_tile(current_position)
-		return "   tile %s%s · %s · %s" % [tilemap.get_cell_atlas_coords(current_position), " alt %d" % alt if alt != 0 else "",
+		return "   %s %s%s · %s · %s" % [what, coord, " alt %d" % alt if alt != 0 else "",
 			tile_view.source_label(source, source_id), set_name]
-	return "   scene %d · scenes (ID: %d) · %s" % [tilemap.get_cell_alternative_tile(current_position), source_id, set_name]
+	return "   scene %d · scenes (ID: %d) · %s" % [alt, source_id, set_name]
 
 
 func _lift(coords: Array, origin: Vector2i) -> Array:
@@ -6176,6 +6190,7 @@ func _build_scatter_bag() -> void:
 	toolbar.add_child(_add_favorite_button)
 	toolbar.move_child(_add_favorite_button, replace_button.get_index() + 1)
 	tile_view.favorite_requested.connect(_favorite_from_atlas)
+	tile_view.hover_changed.connect(func() -> void: update_overlay.emit())
 	_build_quick_terrain_buttons(toolbar, _add_favorite_button.get_index() + 1)
 	_single_bag.hide()
 	_bag_column.hide()
