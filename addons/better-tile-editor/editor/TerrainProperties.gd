@@ -78,6 +78,7 @@ var _object_preview: Control = null
 var _base_editor: Control = null
 const ObjectBaseEditor := preload("res://addons/better-tile-editor/editor/ObjectBaseEditor.gd")
 const ObjectPreview := preload("res://addons/better-tile-editor/editor/ObjectPreview.gd")
+const SOLID_INSIDE_HELP := preload("res://addons/better-tile-editor/editor/SolidInsideHelp.gd")
 
 var _icon_tile := {}
 var _icon_button : Button
@@ -403,7 +404,17 @@ func set_object_data(ts: TileSet, terrain_id: int = -1) -> void:
 		_base_rows.append(_obj_rows.back())
 		_solid_inside = CheckBox.new()
 		_solid_inside.text = "Solid inside groups"
-		_add_object_row(grid, "Collision", _solid_inside,
+		var solid_row := HBoxContainer.new()
+		solid_row.add_child(_solid_inside)
+		var solid_help := Button.new()
+		solid_help.name = "SolidInsideHelp"
+		solid_help.text = "?"
+		solid_help.focus_mode = Control.FOCUS_NONE
+		solid_help.custom_minimum_size = Vector2(26, 0)
+		solid_help.tooltip_text = "Show it on this object's drawing, off and on."
+		solid_help.pressed.connect(_open_solid_inside_help)
+		solid_row.add_child(solid_help)
+		_add_object_row(grid, "Collision", solid_row,
 			"Where another object sits right above, the top row gets a whole-tile collision, so a group is solid on its sides and only its north edge keeps the drawing's shape.")
 		_solid_rows.append(_obj_rows.back())
 		_obj_status = Label.new()
@@ -412,6 +423,15 @@ func set_object_data(ts: TileSet, terrain_id: int = -1) -> void:
 		_add_object_row(grid, "", _obj_status)
 
 	_sync_object_row()
+
+
+func _open_solid_inside_help() -> void:
+	var help := SOLID_INSIDE_HELP.new()
+	add_child(help)
+	help.setup(_tileset, _terrain_id)
+	help.confirmed.connect(help.queue_free)
+	help.close_requested.connect(help.queue_free)
+	help.popup_centered()
 
 
 func _wrap_type_row() -> void:
