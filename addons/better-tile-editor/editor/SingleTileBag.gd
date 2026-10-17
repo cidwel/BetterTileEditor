@@ -310,7 +310,7 @@ func _add_entry(grid: Container, index: int) -> void:
 		button.clip_text = true
 		button.add_theme_font_size_override("font_size", 11)
 	button.add_theme_constant_override("icon_max_width", side - 16)
-	button.tooltip_text = "%s\n%d × %d tiles — source %d, (%d, %d)\nClick to select. Drag to move. Right-click for options.\nCtrl + wheel: cell size. Wheel: scroll." % [entry.get("name", "Favorite"), entry.size.x, entry.size.y, entry.source, entry.origin.x, entry.origin.y]
+	button.tooltip_text = "%s\n%d × %d tiles — source %d, (%d, %d)\nClick to select. Double-click to rename. Drag to move. Right-click for options.\nCtrl + wheel: cell size. Wheel: scroll." % [entry.get("name", "Favorite"), entry.size.x, entry.size.y, entry.source, entry.origin.x, entry.origin.y]
 	if button.icon == null:
 		button.text = "?"
 		button.tooltip_text += "\nThe source or tile is no longer available."
@@ -320,7 +320,10 @@ func _add_entry(grid: Container, index: int) -> void:
 	button.gui_input.connect(func(event: InputEvent):
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 			button.accept_event()
-			_entry_menu(index))
+			_entry_menu(index)
+		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.double_click:
+			button.accept_event()
+			_rename_entry(index))
 	button.set_meta("favorite_index", index)
 	_wire_drop(button, func(_at): return _entry_drag(index, button))
 	grid.add_child(button)
@@ -472,15 +475,18 @@ func _popup_menu() -> void:
 	_menu.position = Vector2i(get_screen_transform() * get_local_mouse_position())
 	_menu.popup()
 
+func _rename_entry(index: int) -> void:
+	_ask_name("Rename favorite", _entries[index].get("name", ""), func(value):
+		_entries[index]["name"] = value
+		_commit()
+		return true)
+
 func _entry_menu(index: int) -> void:
 	_start_menu()
 	_action("Select", func():
 		if _thumbnail(_tileset, _entries[index]) != null:
 			entry_selected.emit(_entries[index]))
-	_action("Rename…", func(): _ask_name("Rename favorite", _entries[index].get("name", ""), func(value):
-		_entries[index]["name"] = value
-		_commit()
-		return true))
+	_action("Rename…", func(): _rename_entry(index))
 	_menu.add_separator()
 	_move_menu.clear()
 	_move_entry_index = index
