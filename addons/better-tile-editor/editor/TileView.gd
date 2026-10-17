@@ -21,6 +21,7 @@ signal collision_marked(source_id: int, coord: Vector2i, solid: bool, alternate:
 signal collision_stroke_ended
 signal collision_copy_requested(source_id: int, coord: Vector2i)
 signal collision_paste_requested(source_id: int, coord: Vector2i)
+signal collision_pick_requested(source_id: int, coord: Vector2i)
 signal data_pick_requested(source_id: int, coord: Vector2i)
 signal data_preset_key(index: int)
 ## The atlas tile under the mouse changed (highlighted_tile_part), or the mouse left.
@@ -2045,7 +2046,7 @@ func _collision_input(event: InputEvent) -> bool:
 		accept_event()
 		var taken := tile_part_from_position(event.position)
 		if taken.valid:
-			collision_copy_requested.emit(taken.source_id, taken.coord)
+			collision_pick_requested.emit(taken.source_id, taken.coord)
 		return true
 	if collision_shape_mode or data_inspect:
 		return false

@@ -7429,13 +7429,18 @@ func _copy_collision(source_id: int, coords: Vector2i) -> void:
 	var lay: Dictionary = SHAPES.layout(src, coords, cells)
 	var found: Dictionary = SHAPES.gather(src, tileset, lay, _collision_physics_layer())
 	SHAPES.clipboard = SHAPES.make_clip(found.normal, found.one_way, found.margin, lay, cells)
-	# A pick with the picker tool goes on to stamping it, with the tool used before.
-	if _collision_mode() and _picker_active():
-		if _collision_stamp_button != null:
-			_collision_stamp_button.button_pressed = true
-		if _tool_before_pick != null:
-			_tool_before_pick.button_pressed = true
 	_sync_collision_clipboard()
+
+
+## A pick (picker tool or its key) copies the shape and goes on to stamping it.
+func _pick_collision(source_id: int, coords: Vector2i) -> void:
+	_copy_collision(source_id, coords)
+	if SHAPES.clipboard.is_empty():
+		return
+	if _collision_stamp_button != null:
+		_collision_stamp_button.button_pressed = true
+	if _picker_active() and _tool_before_pick != null:
+		_tool_before_pick.button_pressed = true
 
 
 func _sync_collision_clipboard() -> void:
@@ -7454,13 +7459,13 @@ func _sync_collision_clipboard() -> void:
 	elif _collision_stamp_mode:
 		_collision_panel.set_keys([["Left click", "paste the shape"], ["Right click", "clear"], ["%s + click" % pick, "take another shape"]])
 	else:
-		_collision_panel.set_keys([["Left click", "solid"], ["Right click", "clear"]])
+		_collision_panel.set_keys([["Left click", "solid"], ["Right click", "clear"], ["%s + click" % pick, "copy its shape"]])
 
 
-## Stamp takes the shape of the tile clicked: with nothing copied yet, or with the picker's key.
+## A click takes the tile's shape with the picker or its key, or in Stamp with nothing copied.
 func _collision_takes_shape(event: InputEventWithModifiers) -> bool:
-	return _collision_mode() and (_picker_active() or _collision_stamp_mode \
-		and (SHAPES.clipboard.is_empty() or _picker_modifier_held(event)))
+	return _collision_mode() and (_picker_active() or _picker_modifier_held(event) \
+		or _collision_stamp_mode and SHAPES.clipboard.is_empty())
 
 
 func _open_collision_shape(source_id: int, origin: Vector2i, cells: Vector2i) -> void:
@@ -7593,6 +7598,7 @@ func _build_collision_panel() -> void:
 	tile_view.collision_stroke_ended.connect(_collision_end)
 	tile_view.collision_pick_check = func(event: InputEventWithModifiers) -> bool: return _collision_takes_shape(event)
 	tile_view.collision_copy_requested.connect(_copy_collision)
+	tile_view.collision_pick_requested.connect(_pick_collision)
 	tile_view.collision_paste_requested.connect(func(source_id: int, coord: Vector2i) -> void:
 		if SHAPES.clipboard.is_empty():
 			return
@@ -7693,21 +7699,11 @@ func _collision_canvas_input(event: InputEvent) -> bool:
 			return true
 		if event.pressed and _data_inspecting():
 			return true
-		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _collision_mode() and _picker_active():
-			var picked := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))
-			if not picked.is_empty():
-				_copy_collision(picked[0], picked[1])
-			return true
-		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _collision_mode() \
-				and not _collision_stamp_mode and _picker_modifier_held(event):
-			var hit := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))
-			if not hit.is_empty():
-				_show_in_atlas(hit[0], hit[1])
-			return true
 		if event.pressed and event.button_index == MOUSE_BUTTON_LEFT and _collision_takes_shape(event):
 			var source := _collision_tile_at(_collision_layers(), tilemap.to_global(tilemap.map_to_local(cell)))
 			if not source.is_empty():
-				_copy_collision(source[0], source[1])
+				_pick_collision(source[0], source[1])
+				_show_in_atlas(source[0], source[1])
 			return true
 		if event.pressed and _collision_shape_mode and _collision_mode():
 			if event.button_index == MOUSE_BUTTON_LEFT:
