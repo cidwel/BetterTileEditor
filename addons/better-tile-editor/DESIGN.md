@@ -3719,8 +3719,9 @@ taken away; things moved:
   slot or piece, and whether it has its own tile, borrows one or has none. The hidden
   line is still what Copy slot info copies.
 - "Repeat from the bottom" (Simple/Advanced) and "build the middle from the ground
-  up" (Pattern) share one label, Anchor the repeat to the ground, in a folded Options
-  section with Pattern's offsets. The offsets say what they move, and a note appears
+  up" (Pattern) sit in a folded Options section with Pattern's offsets, labelled
+  "Repeat tile blocks from the bottom up" and "Repeat the middle rows from the bottom
+  up": "Anchor the repeat to the ground" said nothing of what repeats or which way. The offsets say what they move, and a note appears
   only when one is set and moves nothing.
 - Repeating block sits in the preview bar, since it changes what dragging there does.
   Narrow shapes and drawing your own shape are in the preview's ⋮; drawing shows a

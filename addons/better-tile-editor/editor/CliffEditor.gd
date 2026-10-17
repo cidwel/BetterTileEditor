@@ -133,7 +133,6 @@ var _build_strip: Control
 var _strip_label: Label
 var _hover_label: Label
 var _pattern_options: Control
-const ANCHOR_LABEL := "Anchor the repeat to the ground"
 enum { MORE_INHERIT = 10, MORE_LOCAL, MORE_COPY, MORE_CLEAR }
 enum { SHAPE_NARROW = 20, SHAPE_DRAW, SHAPE_EDIT, SHAPE_CLEAR }
 
@@ -310,10 +309,11 @@ func _build() -> void:
 	options_box.add_theme_constant_override("separation", 6)
 	_options.add_child(options_box)
 	_bottom_check = CheckBox.new()
-	_bottom_check.text = ANCHOR_LABEL
-	_bottom_check.tooltip_text = ("Off: a slot's block repeats down from the top row, which keeps its own tile.\n"
-		+ "On: it repeats up from above the ground, so every height ends the same at the bottom;\n"
-		+ "an empty top slot then borrows the body's block. Only slots holding a block of tiles change.")
+	_bottom_check.text = "Repeat tile blocks from the bottom up"
+	_bottom_check.tooltip_text = ("For slots holding a block of several tiles, when the wall is taller than the block.\n"
+		+ "Off: the block repeats downwards from the top, so the bottom of the wall changes with its height.\n"
+		+ "On: it repeats upwards from the ground, so the bottom always looks the same;\n"
+		+ "an empty top slot then borrows the body's block.")
 	_bottom_check.toggled.connect(_on_from_bottom_toggled)
 	options_box.add_child(_bottom_check)
 	_build_pattern_options(options_box)
@@ -1439,10 +1439,10 @@ func _build_pattern_options(parent: Control) -> void:
 		_save(); _commit("Change cliff row offset", before); _refresh())
 	offs.add_child(_row_off)
 	_rows_up = CheckBox.new()
-	_rows_up.text = ANCHOR_LABEL
-	_rows_up.tooltip_text = ("Off: the middle repeats down from under the top row, so the row above the ground\n"
-		+ "depends on the height. On: it builds up from above the ground row, so every height\n"
-		+ "ends the same. The top and ground rows are anchored already.")
+	_rows_up.text = "Repeat the middle rows from the bottom up"
+	_rows_up.tooltip_text = ("Off: the middle rows repeat downwards from the top row, so the row just above the\n"
+		+ "ground changes with the wall's height. On: they repeat upwards from the ground row, so\n"
+		+ "it always looks the same. The top and ground rows never move.")
 	_rows_up.toggled.connect(func(v):
 		if _pattern_syncing: return
 		if _refuse_if_inherited():
@@ -1940,7 +1940,7 @@ func _pending_unit_text() -> String:
 	var count: int = _matrix_target.slots.size()
 	var note := ""
 	if target_size.y > 1 and not bool(_cfg.get("from_bottom", false)):
-		note = " [color=#e0a34a](turns on “%s”)[/color]" % ANCHOR_LABEL
+		note = " [color=#e0a34a](turns on “%s”)[/color]" % _bottom_check.text
 	return "[b]%d×%d block[/b] over %d slot%s%s · pick its top-left tile below" % [
 		target_size.x, target_size.y, count, "" if count == 1 else "s", note]
 
