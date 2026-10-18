@@ -43,6 +43,14 @@ static func z_for_level(level: int) -> int:
 	return LEVEL_Z_BASE + level * LEVEL_Z_STRIDE
 
 
+## A layer with this meta keeps the z index set on it; its level no longer moves it.
+const FIXED_Z_META := &"_better_terrain_fixed_z"
+
+
+static func z_fixed(tm: Node) -> bool:
+	return tm != null and bool(tm.get_meta(FIXED_Z_META, false))
+
+
 static func _terrain_indices(bt, ts: TileSet, name: String) -> Array:
 	var out := []
 	for i in bt.terrain_count(ts):
@@ -252,7 +260,7 @@ static func rebuild(tm: TileMapLayer, bt, dry_run := false) -> Dictionary:
 	PERF.end("cliff.covering", tp)
 	var rows := rows_for(tm)
 
-	if not dry_run and is_level(tm):
+	if not dry_run and is_level(tm) and not z_fixed(tm):
 		var ground_z := z_for_level(level)
 		if ground_z > 9:
 			push_warning("[BetterTerrain] %s is level %d, which puts its ground at z=%d, outside the 0-9 band (it holds 5 levels). Wall height is the terrain's cliff height, not the level." % [tm.name, level, ground_z])

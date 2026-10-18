@@ -5409,6 +5409,14 @@ func _add_cliff_button() -> void:
 	toolbar.add_child(level_reset)
 	_level_reset = level_reset
 
+	_fixed_z = CheckBox.new()
+	_fixed_z.name = "CliffFixedZ"
+	_fixed_z.text = "Fixed Z"
+	_fixed_z.focus_mode = Control.FOCUS_NONE
+	_fixed_z.tooltip_text = "Keep the z index set on this layer in the Inspector.\nIts level no longer changes it."
+	_fixed_z.toggled.connect(_on_cliff_fixed_z_toggled)
+	toolbar.add_child(_fixed_z)
+
 	_rows_spin = SpinBox.new()
 	_rows_spin.name = "CliffRows"
 	_rows_spin.min_value = 0
@@ -5442,6 +5450,7 @@ func _add_cliff_button() -> void:
 		toolbar.move_child(reset, anchor.get_index() + 3)
 		toolbar.move_child(_level_spin, anchor.get_index() + 4)
 		toolbar.move_child(level_reset, anchor.get_index() + 5)
+		toolbar.move_child(_fixed_z, anchor.get_index() + 6)
 	_sync_cliff_rows()
 
 
@@ -5449,6 +5458,7 @@ var _rows_spin: SpinBox
 var _rows_reset: Button
 var _level_spin: SpinBox
 var _level_reset: Button
+var _fixed_z: CheckBox
 var _rows_syncing := false
 
 
@@ -5461,7 +5471,7 @@ func _sync_cliff_rows() -> void:
 		relevant = t.valid and CLIFF_DATA.all_configs(tileset).has(str(t.name))
 	if not relevant and tilemap != null:
 		relevant = CLIFF_TERRAIN.find_faces(tilemap) != null
-	for c in [_level_spin, _level_reset, _rows_spin, _rows_reset]:
+	for c in [_level_spin, _level_reset, _rows_spin, _rows_reset, _fixed_z]:
 		if c != null:
 			c.visible = relevant
 	if not relevant:
@@ -5481,6 +5491,9 @@ func _sync_cliff_rows() -> void:
 		_level_spin.editable = takes_part
 		_level_spin.value = CLIFF_TERRAIN.level_of(tilemap) if takes_part else 0
 		_level_reset.disabled = level_override == null or int(level_override) < 0
+	if _fixed_z != null:
+		_fixed_z.disabled = tilemap == null
+		_fixed_z.set_pressed_no_signal(CLIFF_TERRAIN.z_fixed(tilemap))
 	_rows_syncing = false
 	_rows_spin.tooltip_text = \
 		"How many rows tall this layer's wall is. Empty means the layer's level,\n" + \
@@ -5506,6 +5519,24 @@ func _on_cliff_level_changed(v: float) -> void:
 	if faces == null:
 		return
 	faces.set("cliffLevel", int(v))
+	_rebuild_cliffs_now()
+	_sync_cliff_rows()
+
+
+func _on_cliff_fixed_z_toggled(on: bool) -> void:
+	if _rows_syncing or tilemap == null:
+		return
+	undo_manager.create_action(tr("Fixed Z") if on else tr("Z from level"), UndoRedo.MERGE_DISABLE, tilemap)
+	undo_manager.add_do_method(self, &"_set_fixed_z", tilemap, on)
+	undo_manager.add_undo_method(self, &"_set_fixed_z", tilemap, not on)
+	undo_manager.commit_action()
+
+
+func _set_fixed_z(layer: TileMapLayer, on: bool) -> void:
+	if on:
+		layer.set_meta(CLIFF_TERRAIN.FIXED_Z_META, true)
+	else:
+		layer.remove_meta(CLIFF_TERRAIN.FIXED_Z_META)
 	_rebuild_cliffs_now()
 	_sync_cliff_rows()
 
@@ -6668,7 +6699,7 @@ func _arrange_toolbar() -> void:
 	var view_options := HBoxContainer.new()
 	view_options.name = "LayerAndView"
 	toolbar.add_child(view_options)
-	for control: Control in [_rows_spin, _rows_reset, _level_spin, _level_reset, zoom_slider_container, source_selector]:
+	for control: Control in [_rows_spin, _rows_reset, _level_spin, _level_reset, _fixed_z, zoom_slider_container, source_selector]:
 		control.reparent(view_options)
 	var spacer: Control = toolbar.get_node("Spacer")
 	toolbar.move_child(spacer, toolbar.get_child_count() - 1)
