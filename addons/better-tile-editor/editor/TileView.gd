@@ -527,8 +527,8 @@ func is_tile_in_source(source: TileSetAtlasSource, coord: Vector2i) -> bool:
 #region Untiled cells
 
 ## True when the cell holds art in the texture but no tile.
-func _is_untiled(source: TileSetAtlasSource, coord: Vector2i) -> bool:
-	if not show_untiled or source.texture == null:
+func _is_untiled(source: TileSetAtlasSource, coord: Vector2i, even_hidden := false) -> bool:
+	if not (show_untiled or even_hidden) or source.texture == null:
 		return false
 	var grid := source.get_atlas_grid_size()
 	if coord.x < 0 or coord.y < 0 or coord.x >= grid.x or coord.y >= grid.y:
@@ -592,7 +592,8 @@ func _drop_tiles(ts: TileSet, list: Array) -> void:
 ## Makes the tile of an untiled cell, for the interactions that need one. The first one of a
 ## click or drag opens an undo step that the rest of them join, so undo steps back over the
 ## edit first and the tiles after it.
-func ensure_tile(source_id: int, coord: Vector2i) -> bool:
+## [param even_hidden]: also when untiled cells are hidden, for a pick that must land on a tile.
+func ensure_tile(source_id: int, coord: Vector2i, even_hidden := false) -> bool:
 	if tileset == null or not tileset.has_source(source_id):
 		return false
 	var source := tileset.get_source(source_id) as TileSetAtlasSource
@@ -600,7 +601,7 @@ func ensure_tile(source_id: int, coord: Vector2i) -> bool:
 		return false
 	if source.get_tile_at_coords(coord) != Vector2i(-1, -1):
 		return true
-	if not _is_untiled(source, coord):
+	if not _is_untiled(source, coord, even_hidden):
 		return false
 	source.create_tile(coord)
 	if undo_manager != null:
@@ -617,12 +618,12 @@ func ensure_tile(source_id: int, coord: Vector2i) -> bool:
 
 
 ## Makes the tiles of every untiled cell in a box of an atlas.
-func ensure_tiles_in(source_id: int, box: Rect2i) -> void:
+func ensure_tiles_in(source_id: int, box: Rect2i, even_hidden := false) -> void:
 	if tileset == null or not tileset.has_source(source_id):
 		return
 	for y in range(box.position.y, box.end.y):
 		for x in range(box.position.x, box.end.x):
-			ensure_tile(source_id, Vector2i(x, y))
+			ensure_tile(source_id, Vector2i(x, y), even_hidden)
 
 
 ## A click or drag is on: the cells it touches become tiles. Picking blocks leaves them be,
@@ -1771,7 +1772,7 @@ func _gui_input_timed(event) -> void:
 			var to := _pick_target()
 			var lo := Vector2i(mini(_pick_from.x, to.x), mini(_pick_from.y, to.y))
 			var hi := Vector2i(maxi(_pick_from.x, to.x), maxi(_pick_from.y, to.y))
-			ensure_tiles_in(_pick_source, Rect2i(lo, hi - lo + Vector2i.ONE))
+			ensure_tiles_in(_pick_source, Rect2i(lo, hi - lo + Vector2i.ONE), true)
 			var box := _trim_to_tiles(_pick_source, Rect2i(lo, hi - lo + Vector2i.ONE))
 			tile_picked.emit(_pick_source, box.position, box.size)
 			_pick_from = Vector2i(-1, -1)
