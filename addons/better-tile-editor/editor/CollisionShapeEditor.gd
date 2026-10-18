@@ -439,9 +439,10 @@ func setup(ts: TileSet, source: int, from: Vector2i, size_cells: Vector2i, layer
 
 func load_block(source: int, from: Vector2i, size_cells: Vector2i) -> void:
 	source_id = source
-	origin = from
-	cells = size_cells
 	_src = tile_set.get_source(source) as TileSetAtlasSource
+	var box := Shapes.cover(_src, from, size_cells)
+	origin = box.position
+	cells = box.size
 	_lay = Shapes.layout(_src, origin, cells)
 	_image = Shapes.block_image(_src, _lay)
 	var found := Shapes.gather(_src, tile_set, _lay, physics_layer)

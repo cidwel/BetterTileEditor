@@ -23,6 +23,17 @@ const DEFAULTS := {
 
 
 ## The tiles whose origin lies in the block: [{coords, rect (block px)}], and the block size in px.
+## The cell box grown to hold every tile it touches whole, as a tile can span several cells.
+static func cover(src: TileSetAtlasSource, origin: Vector2i, cells: Vector2i) -> Rect2i:
+	var box := Rect2i(origin, cells)
+	for y in cells.y:
+		for x in cells.x:
+			var at := src.get_tile_at_coords(origin + Vector2i(x, y))
+			if at != Vector2i(-1, -1):
+				box = box.merge(Rect2i(at, src.get_tile_size_in_atlas(at)))
+	return box
+
+
 static func layout(src: TileSetAtlasSource, origin: Vector2i, cells: Vector2i) -> Dictionary:
 	var region := Vector2(src.texture_region_size)
 	var tiles := []
