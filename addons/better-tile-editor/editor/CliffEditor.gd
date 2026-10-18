@@ -6,6 +6,7 @@ signal clear_requested(ts: TileSet, name: String)
 
 const CliffData := preload("res://addons/better-tile-editor/CliffData.gd")
 const CliffAutoassign := preload("res://addons/better-tile-editor/editor/CliffAutoassign.gd")
+const CliffLonePieces := preload("res://addons/better-tile-editor/editor/CliffLonePieces.gd")
 const CliffPattern := preload("res://addons/better-tile-editor/CliffPattern.gd")
 const Chrome := preload("res://addons/better-tile-editor/editor/Chrome.gd")
 
@@ -2004,13 +2005,18 @@ func _on_autoassign_block(source_id: int, block: Rect2i) -> void:
 
 func _on_autoassign_chosen(source_id: int, block: Rect2i) -> void:
 	_close_autoassign()
+	# Made first: the new atlas changes the tile set, which reloads the config.
+	var made := CliffLonePieces.make(tile_set, terrain_name, source_id, block)
 	var before := _cfg.duplicate(true)
 	var count := CliffData.autoassign(_cfg, source_id, block)
+	var lone := CliffLonePieces.assign(_cfg, made, block)
 	_selected = ""
 	_save()
 	_commit("Autoassign cliff face", before)
 	_refresh()
 	_status.text = "[color=#7ec87e]%d slots filled from the %d×%d block.[/color] Ctrl+Z undoes it." % [count, block.size.x, block.size.y]
+	if lone > 0:
+		_status.text += " One-column walls use pieces made from both ends."
 
 
 func _sync_more_menu() -> void:

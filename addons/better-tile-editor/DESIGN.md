@@ -3935,3 +3935,18 @@ and metas, carries `_better_terrain_covered`, and is made the first time it is n
 after that. Tiles with no collision, or already solid whole, get none. Changing the option
 rebuilds that object's blocks on the layers of the open scene, and other scenes catch up when
 painted. Area (mass) objects do not use it yet.
+
+### AW. One-column walls get a piece made from both ends
+
+`editor/CliffLonePieces.gd`; `CliffEditor.gd` → `_on_autoassign_chosen()`
+
+A block of wall art drawn as left end, middle and right end has nothing for a wall one column
+wide that is open on both sides. Autoassign used to give it the middle piece, so the wall ended
+in a straight cut on both sides. That happens wherever seams cut a wall into a lone column,
+next to stairs for example. Autoassign now also makes, for each row of the block, a piece from
+the left half of the left end and the right half of the right end. Collisions are cut the same
+way, and everything else comes from the left end. The pieces go in a small generated atlas
+beside the sheet (`<sheet>_<terrain>_lone_pieces.png`, marked `lone_of`, reused the next time).
+Every case whose two sides are ends (`E` in `side_class`) points at them. The atlas is made
+before the config is edited, because adding it changes the tile set and the cliff editor
+reloads the config when that happens.
