@@ -336,7 +336,36 @@ static func gather(src: TileSetAtlasSource, ts: TileSet, lay: Dictionary, layer:
 
 static func make_clip(normal: Array, one_way: Array, margin: float, lay: Dictionary, cells: Vector2i) -> Dictionary:
 	return {cells = cells, region = lay.region, normal = normal.duplicate(true),
-		one_way = one_way.duplicate(true), margin = margin}
+		one_way = one_way.duplicate(true), margin = margin, tiles = tile_grid(lay)}
+
+
+## Where each tile of a block sits and how many cells it spans: [[offset, size], ...] in cells.
+static func tile_grid(lay: Dictionary) -> Array:
+	var out := []
+	for t: Dictionary in lay.tiles:
+		out.append([Vector2i((t.rect.position / lay.region).round()), Vector2i((t.rect.size / lay.region).round())])
+	out.sort_custom(func(a, b): return a[0].y < b[0].y or a[0].y == b[0].y and a[0].x < b[0].x)
+	return out
+
+
+## Why the copied shape can't be pasted on a block, or "" when it can: the tiles must be laid
+## out the same, or the shape lands cut across tiles it wasn't drawn for.
+static func paste_problem(copied: Dictionary, lay: Dictionary) -> String:
+	if not copied.has("tiles"):
+		return ""
+	var here := tile_grid(lay)
+	# No tile there: nothing is written, nothing to explain.
+	if here.is_empty() or here == copied.tiles:
+		return ""
+	return "Can't paste here: the copied shape is from %s, and this is %s. Paste it on tiles laid out like the copy." \
+		% [_describe_grid(copied.tiles, copied.cells), _describe_grid(here, Vector2i((lay.size / lay.region).round()))]
+
+
+static func _describe_grid(grid: Array, cells: Vector2i) -> String:
+	if grid.size() == 1:
+		var size: Vector2i = grid[0][1]
+		return "a tile of one cell" if size == Vector2i.ONE else "a tile of %d×%d cells" % [size.x, size.y]
+	return "%d tiles over %d×%d cells" % [grid.size(), cells.x, cells.y]
 
 
 ## The copied shapes fitted to another block: scaled if its tiles are another size, cut to it.

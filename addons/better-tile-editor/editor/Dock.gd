@@ -7417,6 +7417,7 @@ var _collision_shape_mode := false
 ## Stamp: clicks write the copied shape (Shapes.clipboard) instead of a full square.
 var _collision_stamp_mode := false
 var _collision_stamp_button: Button
+var _collision_paste_warned := false
 var _collision_action := ""
 var _collision_shape_window: Window
 const COLLISION_SHAPE_EDITOR_SCRIPT := preload("res://addons/better-tile-editor/editor/CollisionShapeEditor.gd")
@@ -7825,6 +7826,7 @@ func _collision_tile_at(layers: Array, point: Vector2) -> Array:
 
 
 func _collision_begin() -> void:
+	_collision_paste_warned = false
 	_collision_stroke.clear()
 	_collision_stroking = true
 	_collision_added_layer = false
@@ -7866,6 +7868,13 @@ func _collision_stamp(source_id: int, coords: Vector2i) -> void:
 		return
 	var src := tileset.get_source(source_id) as TileSetAtlasSource
 	var lay: Dictionary = SHAPES.layout(src, coords, copied.cells)
+	var problem: String = SHAPES.paste_problem(copied, lay)
+	if not problem.is_empty():
+		# Once per stroke: a drag over many tiles would stack a warning for each.
+		if not _collision_paste_warned:
+			_collision_paste_warned = true
+			EditorInterface.get_editor_toaster().push_toast(problem, EditorToaster.SEVERITY_WARNING)
+		return
 	_collision_action = tr("Paste collision shape")
 	var per_tile: Dictionary = SHAPES.clip_per_tile(copied, src, tileset, lay)
 	for tile_coords: Vector2i in per_tile:

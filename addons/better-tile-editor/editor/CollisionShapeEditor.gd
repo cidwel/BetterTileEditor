@@ -912,6 +912,18 @@ func _copy() -> void:
 func _paste() -> void:
 	if Shapes.clipboard.is_empty():
 		return
+	var problem := Shapes.paste_problem(Shapes.clipboard, _lay)
+	if not problem.is_empty():
+		var warning := AcceptDialog.new()
+		warning.title = "Paste collision shape"
+		warning.dialog_text = problem
+		warning.dialog_autowrap = true
+		warning.size.x = 420
+		warning.confirmed.connect(warning.queue_free)
+		warning.canceled.connect(warning.queue_free)
+		add_child(warning)
+		warning.popup_centered()
+		return
 	_remember()
 	var groups := Shapes.fit_clip(Shapes.clipboard, _lay)
 	_set_groups(_editable_part(groups[0]), _editable_part(groups[1]))
