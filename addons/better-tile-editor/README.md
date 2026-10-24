@@ -20,6 +20,7 @@ A fork of [BetterTerrain](https://github.com/Portponky/better-terrain) by
 - Live terrain updates
 - Floating editor dock
 - Must-not-match peering, from [BetterTerrain PR #144](https://github.com/Portponky/better-terrain/pull/144)
+- Stretch terrains: one block of tiles that grows to fill any region
 - A slope tool for 2×1 and 1×1 slopes
 - Quick tile animations from a selection of frames, looping or ping-pong
 - A Collisions tool: click tiles, in the atlas or on the map, to make them solid
@@ -32,6 +33,8 @@ A fork of [BetterTerrain](https://github.com/Portponky/better-terrain) by
 ## Highlights
 
 - **Patch:** paint a region from a sample, keeping its borders and end pieces.
+- **Stretch:** mark a waterfall, a bridge or a rug and paint it at any size. One row
+  and one column repeat, and a smaller region drops middle rows first.
 - **Multi-tile objects:** paint whole trees and other multi-tile objects. Separate
   and joined variants keep the pieces together, even when objects touch.
 - **Forest painting:** paint an area to fill it with overlapping trees, including
@@ -102,6 +105,17 @@ To track the latest changes instead, copy `addons/better-tile-editor` from
 - Extra runtime steps for Object, Patch, Scatter and cliffs: see [technical notes](DESIGN.md)
 
 ## Changelog
+
+### 0.4.0 (2026-10-24)
+
+- Stretch terrain: mark one block of tiles (a waterfall, a bridge, a rug) and paint any region with it. One row and one column repeat, picked in its own window with a preview.
+- Quick animation can loop ping-pong. The frames back go into a new sheet beside yours, and cells of the open scene move to the animated tiles.
+- Objects can be solid inside groups: a tree with another one right above gets a whole-tile collision, so only the group's north edge keeps the canopy shape.
+- Complete terrain rebuilds the pieces it generated from the current art, and handles fences drawn through the middle of the tiles.
+- Collisions: the picker copies a tile's shape and switches to Stamp, big tiles open whole in the shape editor, and pasting onto tiles laid out differently warns instead of cutting the shape.
+- Hill layers have a Fixed Z option, and Autoassign gives walls one column wide proper ends.
+- Paint terrain types, Single tile and scatter bags turn empty or see-through atlas cells into tiles. The magic wand has a Contiguous toggle.
+- The status line names the tile under the cursor, and cliff faces rebuild about twice as fast after each edit.
 
 ### 0.3.1 (2026-10-14)
 
