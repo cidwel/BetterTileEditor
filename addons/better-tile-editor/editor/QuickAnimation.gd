@@ -2,7 +2,7 @@
 extends ConfirmationDialog
 ## Splits a block of atlas tiles into equal blocks, one per frame, and animates the first one.
 
-signal animation_accepted(frame_cells: Vector2i, frames: int, speed: float, mode: int)
+signal animation_accepted(frame_cells: Vector2i, frames: int, speed: float, mode: int, ping_pong: bool)
 
 const DEFAULT_SPEED := 5.0
 const SHEET_HEIGHT := 72.0
@@ -17,6 +17,7 @@ var _blocks_pick: OptionButton
 var _split := Vector2i.ONE
 var _speed_spin: SpinBox
 var _mode_pick: OptionButton
+var _loop_pick: OptionButton
 var _preview: Control
 var _sheet: Control
 var _note: Label
@@ -46,6 +47,11 @@ func setup(src: TileSetAtlasSource, origin: Vector2i, tile_size: Vector2i, grid:
 
 func blocks() -> int:
 	return _blocks_pick.get_selected_id() if _blocks_pick.selected >= 0 else 0
+
+
+## Ping-pong picked and enough frames for a way back: with two, it is the full cycle.
+func ping_pong() -> bool:
+	return _loop_pick.get_selected_id() == 1 and blocks() > 2
 
 
 func frame_cells() -> Vector2i:
@@ -126,13 +132,22 @@ func _init() -> void:
 	_mode_pick.tooltip_text = "In sync: every cell shows the same frame.\nRandom start times: each cell starts at a random frame, e.g. for water or grass."
 	_add_row(grid, "Mode", _mode_pick)
 
+	_loop_pick = OptionButton.new()
+	_loop_pick.add_item("Full cycle", 0)
+	_loop_pick.add_item("Ping-pong", 1)
+	_loop_pick.tooltip_text = ("Full cycle: the last frame goes back to the first.\n"
+		+ "Ping-pong: the frames play forward, then back. Godot animations only step forward\n"
+		+ "through the atlas, so the frames back are drawn into a new sheet beside this one.")
+	_loop_pick.item_selected.connect(func(_i): _sync())
+	_add_row(grid, "Loop", _loop_pick)
+
 	_note = Label.new()
 	_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_note.custom_minimum_size.x = 340
 	box.add_child(_note)
 
 	confirmed.connect(func():
-		animation_accepted.emit(frame_cells(), blocks(), _speed_spin.value, _mode_pick.get_selected_id())
+		animation_accepted.emit(frame_cells(), blocks(), _speed_spin.value, _mode_pick.get_selected_id(), ping_pong())
 	)
 	visibility_changed.connect(func():
 		if not visible:
@@ -159,8 +174,13 @@ func _sync() -> void:
 		_note.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45))
 		return
 	_split = split_for(_grid, count)
-	_note.text = ("The first block plays the animation; the other %d stop being tiles of their own, "
-		+ "so map cells that use them will turn empty.") % (count - 1)
+	if ping_pong():
+		_note.text = ("The %d frames forward and back go into a new sheet beside this one, which is left as it is. "
+			+ "Cells of the open scene that use these tiles switch to the animated ones, which copy their "
+			+ "collisions and data once: from then on, edit them in the new atlas.") % (count * 2 - 2)
+	else:
+		_note.text = ("The first block plays the animation; the other %d stop being tiles of their own, "
+			+ "so map cells that use them will turn empty.") % (count - 1)
 	_note.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
 
 
@@ -171,7 +191,11 @@ func _process(delta: float) -> void:
 
 
 func _current_frame() -> int:
-	return int(_time * _speed_spin.value) % maxi(1, blocks())
+	var count := maxi(1, blocks())
+	if not ping_pong():
+		return int(_time * _speed_spin.value) % count
+	var step := int(_time * _speed_spin.value) % (count * 2 - 2)
+	return step if step < count else count * 2 - 2 - step
 
 
 func _cells_region(from: Vector2i, cells: Vector2i) -> Rect2:

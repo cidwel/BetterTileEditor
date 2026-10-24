@@ -7282,9 +7282,12 @@ func _open_quick_animation() -> void:
 	dialog.popup_centered()
 
 
-func _create_quick_animation(frame_cells: Vector2i, frames: int, speed: float, mode: int, block: Dictionary) -> void:
+func _create_quick_animation(frame_cells: Vector2i, frames: int, speed: float, mode: int, ping_pong: bool, block: Dictionary) -> void:
 	var plan := _quick_animation_plan(block, frame_cells, frames)
 	if plan.has("error"):
+		return
+	if ping_pong and frames > 2:
+		await _create_ping_pong_animation(frame_cells, frames, speed, mode, block, plan)
 		return
 	var busy := _show_busy(tr("Creating animation…"))
 	# Let the notice paint before the work holds the editor.
@@ -7309,6 +7312,173 @@ func _create_quick_animation(frame_cells: Vector2i, frames: int, speed: float, m
 	undo_manager.commit_action()
 	busy.hide()
 	busy.queue_free()
+
+
+## Godot steps forward through the atlas only, so the frames back are drawn: a new sheet holds
+## the frames forward and back, its tiles copy the first frame's and play them, and cells of the
+## open scene that use those tiles move to the copies. The source sheet is left as it is.
+func _create_ping_pong_animation(frame_cells: Vector2i, frames: int, speed: float, mode: int, block: Dictionary, plan: Dictionary) -> void:
+	var busy := _show_busy(tr("Creating animation…"))
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var src := tileset.get_source(block.source) as TileSetAtlasSource
+	var order: Array[int] = []
+	for i in frames:
+		order.append(i)
+	for i in range(frames - 2, 0, -1):
+		order.append(i)
+	var path := _ping_pong_file(src, block.origin)
+	var sheet := _ping_pong_sheet(src, block.origin, frame_cells, plan.columns, order)
+	if sheet == null:
+		busy.hide()
+		busy.queue_free()
+		return
+	var copy := TileSetAtlasSource.new()
+	copy.texture_region_size = src.texture_region_size
+	copy.texture = QUARTER_PIECES._save_sheet(sheet, path)
+	copy.set_meta(PING_PONG_META, {source = block.source, origin = block.origin, file = path})
+	var copy_id := tileset.get_next_source_id()
+	var snapshots := _tile_snapshots(src, plan.bases)
+	# Each copy sits where its tile sits in the first frame, without the old animation.
+	var tiles := []
+	var old_meta := []
+	var moves := {}
+	for c: Vector2i in plan.bases:
+		var at: Vector2i = c - block.origin
+		moves[c] = at
+		var prefix := "%d:%d" % [c.x, c.y]
+		var renamed := "%d:%d" % [at.x, at.y]
+		var snapshot := []
+		for p: Array in snapshots[c]:
+			var rest: String = str(p[0]).trim_prefix(prefix)
+			if not rest.get_slice("/", 1).begins_with("animation_"):
+				snapshot.append([renamed + rest, p[1]])
+		tiles.append(snapshot)
+		var meta := {}
+		for alt in src.get_alternative_tiles_count(c):
+			var td := src.get_tile_data(c, src.get_alternative_tile_id(c, alt))
+			if td.has_meta(BetterTileEditor.TERRAIN_META):
+				meta[src.get_alternative_tile_id(c, alt)] = td.get_meta(BetterTileEditor.TERRAIN_META).duplicate(true)
+		old_meta.append([c, meta])
+	var cells := _ping_pong_cells(block.source, moves)
+	var was: Dictionary = BetterTileEditor.single_block_of(tileset, selected_entry)
+	var root := EditorInterface.get_edited_scene_root()
+	# Moving map cells belongs to the scene, so saving it keeps them.
+	var context: Object = root if not cells.is_empty() and root != null else tileset
+	undo_manager.create_action(tr("Create ping-pong tile animation"), UndoRedo.MERGE_DISABLE, context)
+	undo_manager.add_do_method(self, &"perform_ping_pong_animation", copy, copy_id, tiles, plan.bases, moves, block.origin,
+		frame_cells, order.size(), speed, mode, block.source)
+	undo_manager.add_do_method(self, &"_move_ping_pong_cells", cells, copy_id, true)
+	undo_manager.add_do_method(BetterTileEditor, &"set_single_tile", tileset, copy_id, Vector2i.ZERO, 0, frame_cells, false)
+	undo_manager.add_undo_method(self, &"_move_ping_pong_cells", cells, block.source, false)
+	undo_manager.add_undo_method(self, &"_restore_ping_pong_animation", copy_id, block.source, old_meta, was)
+	undo_manager.add_do_method(self, &"_after_single_pick")
+	undo_manager.add_undo_method(self, &"_after_single_pick")
+	undo_manager.commit_action()
+	busy.hide()
+	busy.queue_free()
+
+
+const PING_PONG_META := &"_better_tile_editor_ping_pong"
+
+
+## Beside the source sheet, named after it and the first frame.
+func _ping_pong_file(src: TileSetAtlasSource, origin: Vector2i) -> String:
+	var base := src.texture.resource_path if src.texture != null else ""
+	var dir := base.get_base_dir() if base.begins_with("res://") else "res://"
+	var stem := base.get_file().get_basename() if not base.is_empty() else "tiles"
+	var path := dir.path_join("%s_pingpong_%d_%d.png" % [stem, origin.x, origin.y])
+	var n := 2
+	while FileAccess.file_exists(path):
+		path = dir.path_join("%s_pingpong_%d_%d_%d.png" % [stem, origin.x, origin.y, n])
+		n += 1
+	return path
+
+
+## The frames in [param order], one row of frame blocks, cell by cell so the sheet's margins and
+## separation drop out.
+func _ping_pong_sheet(src: TileSetAtlasSource, origin: Vector2i, frame_cells: Vector2i, columns: int, order: Array[int]) -> Image:
+	var art := src.texture.get_image() if src.texture != null else null
+	if art == null:
+		return null
+	if art.is_compressed():
+		art.decompress()
+	art.convert(Image.FORMAT_RGBA8)
+	var size := src.texture_region_size
+	var step := size + src.separation
+	var sheet := Image.create(size.x * frame_cells.x * order.size(), size.y * frame_cells.y, false, Image.FORMAT_RGBA8)
+	for k in order.size():
+		@warning_ignore("integer_division")
+		var corner := origin + Vector2i(order[k] % columns, order[k] / columns) * frame_cells
+		for y in frame_cells.y:
+			for x in frame_cells.x:
+				var from := Rect2i(src.margins + (corner + Vector2i(x, y)) * step, size)
+				sheet.blit_rect(art, from, Vector2i(k * frame_cells.x + x, y) * size)
+	return sheet
+
+
+## Cells of the open scene's layers drawn with a moved tile: [layer, cell, from, to, alternative].
+func _ping_pong_cells(source_id: int, moves: Dictionary) -> Array:
+	var root := EditorInterface.get_edited_scene_root()
+	if root == null:
+		return []
+	var layers: Array = root.find_children("*", "TileMapLayer", true, false)
+	if root is TileMapLayer:
+		layers.push_front(root)
+	var out := []
+	for layer: TileMapLayer in layers:
+		# Layers inside instanced scenes are saved with their own scene.
+		if layer.tile_set != tileset or (layer != root and layer.owner != root and not SUPPORT_LAYERS.is_support(layer)):
+			continue
+		for cell in layer.get_used_cells_by_id(source_id):
+			var coord := layer.get_cell_atlas_coords(cell)
+			if moves.has(coord):
+				out.append([layer, cell, coord, moves[coord], layer.get_cell_alternative_tile(cell)])
+	return out
+
+
+func _move_ping_pong_cells(cells: Array, source_id: int, forward: bool) -> void:
+	for c: Array in cells:
+		var layer: TileMapLayer = c[0]
+		if is_instance_valid(layer):
+			layer.set_cell(c[1], source_id, c[3] if forward else c[2], c[4])
+
+
+func perform_ping_pong_animation(copy: TileSetAtlasSource, copy_id: int, tiles: Array, bases: Array, moves: Dictionary,
+		origin: Vector2i, frame_cells: Vector2i, frames: int, speed: float, mode: int, source_id: int) -> void:
+	tileset.add_source(copy, copy_id)
+	# Added first: the copied collisions and custom data need the tile set's layers.
+	for snapshot: Array in tiles:
+		_apply_snapshot(copy, snapshot)
+	for c: Vector2i in bases:
+		var at: Vector2i = moves[c]
+		copy.set_tile_animation_separation(at, frame_cells - copy.get_tile_size_in_atlas(at))
+		copy.set_tile_animation_columns(at, 0)
+		copy.set_tile_animation_speed(at, speed)
+		copy.set_tile_animation_mode(at, mode)
+		copy.set_tile_animation_frames_count(at, frames)
+		for i in frames:
+			copy.set_tile_animation_frame_duration(at, i, 1.0)
+	# The terrains take the animated copy, not the still tile left behind.
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	for c: Vector2i in bases:
+		for alt in src.get_alternative_tiles_count(c):
+			var td := src.get_tile_data(c, src.get_alternative_tile_id(c, alt))
+			if td.has_meta(BetterTileEditor.TERRAIN_META):
+				td.remove_meta(BetterTileEditor.TERRAIN_META)
+	_after_atlas_change()
+
+
+func _restore_ping_pong_animation(copy_id: int, source_id: int, old_meta: Array, was: Dictionary) -> void:
+	# The brush leaves the copy before it goes, or redrawing the tiles panel looks for it.
+	BetterTileEditor.set_single_tile(tileset, was.source, was.origin, was.alt, was.size, false)
+	if tileset.has_source(copy_id):
+		tileset.remove_source(copy_id)
+	var src := tileset.get_source(source_id) as TileSetAtlasSource
+	for entry: Array in old_meta:
+		for alt: int in entry[1]:
+			src.get_tile_data(entry[0], alt).set_meta(BetterTileEditor.TERRAIN_META, entry[1][alt].duplicate(true))
+	_after_atlas_change()
 
 
 func _show_busy(text: String) -> PopupPanel:
